@@ -52,7 +52,7 @@ npm run dist
 |---|---|---|
 | `Tab` / `Shift+Tab` | everywhere (even inside an embedded page) | Cycle the focus ring — only the zones that matter: panes → notes → chat, wrapping around. Landing on the chat puts the caret in the message box. Inside dialogs and small forms, Tab stays field-to-field. |
 | `Ctrl+1` … `Ctrl+9` | everywhere | Jump straight to zone N. Workspace: `1` left pane, `2` right pane, `3` chat. Home: `1` workspace list, `2` browser, `3` notes, `4` chat. |
-| `Ctrl+K` | everywhere | Open the ⚡ quick assistant, cursor ready. `Esc` closes it and returns focus where you were. |
+| `Ctrl+K` | everywhere | Toggle the ⚡ quick assistant — opens with the cursor ready; pressing it again (or `Esc`) closes it and returns focus where you were. |
 | `Ctrl+L` | home | Focus the browser address bar, text selected. `Esc` returns. |
 | `↑` / `↓`, `Enter` | workspace list | Walk the list, open the selected workspace. |
 | `Enter` / `Shift+Enter` | chat + assistant | Send / newline. While a `/` or `./` popup is open, `↑↓` pick, `Enter` or `Tab` insert, `Esc` dismisses. |
