@@ -6,3 +6,11 @@ dist/
 .DS_Store
 .claude/
 .devtest/
+
+# Never commit app data, even if a file ends up in the repo folder by accident.
+# (Real user data lives outside the repo: Documents\ASIT + %APPDATA%\asit.)
+*.db
+*.sqlite*
+*.zip
+.asit/
+asit-backup-*
