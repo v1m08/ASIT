@@ -100,10 +100,18 @@ function jumpTo(index: number): void {
 // Where Ctrl+K / Ctrl+L jumped from, so Escape can hand focus back.
 let returnZone: HTMLElement | null = null
 
-// The assistant is closed by default now, so its input may not exist yet.
-function openAssistant(): void {
+// Ctrl+K toggles: open with the cursor ready, or close and hand focus back
+// to wherever the user was. (The panel may not be mounted yet when opening.)
+function toggleAssistant(): void {
+  const store = useStore.getState()
+  if (store.assistantOpen) {
+    store.setAssistantOpen(false)
+    if (returnZone?.isConnected) focusZone(returnZone)
+    returnZone = null
+    return
+  }
   returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
-  useStore.getState().setAssistantOpen(true)
+  store.setAssistantOpen(true)
   requestAnimationFrame(() => {
     const el = document.querySelector<HTMLInputElement>('.assistant-panel input')
     el?.focus()
@@ -147,7 +155,7 @@ export function installFocusRing(): () => void {
     const k = e.key.toLowerCase()
     if (k === 'k') {
       e.preventDefault()
-      openAssistant()
+      toggleAssistant()
     } else if (k === 'l') {
       e.preventDefault()
       focusSelector('.browser-address')
@@ -177,7 +185,7 @@ export function installFocusRing(): () => void {
       mark(document.querySelector<HTMLElement>(`[data-focus-pane="${CSS.escape(p.paneId)}"]`))
     } else if (p.type === 'cycle-focus') cycle(!!p.back)
     else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
-    else if (p.type === 'focus-assistant') openAssistant()
+    else if (p.type === 'focus-assistant') toggleAssistant()
     else if (p.type === 'focus-address') focusSelector('.browser-address')
     else if (p.type === 'focus-chat') focusSelector('.chat-input-box textarea')
   })
