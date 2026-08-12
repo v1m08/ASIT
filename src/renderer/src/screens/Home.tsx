@@ -404,6 +404,7 @@ export default function Home(): JSX.Element {
         {scratch && (
           <>
             <ScratchBrowser
+              ownerId={scratch.id}
               onApi={(api) => {
                 browserApi.current = api
               }}

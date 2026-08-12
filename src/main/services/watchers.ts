@@ -70,12 +70,13 @@ function sendWhenFree(sessionId: string, prompt: string, attempts = 90): void {
   void chat.sendChat(sessionId, prompt, win.webContents)
 }
 
-async function conditionMet(opts: WatchOpts): Promise<boolean> {
+async function conditionMet(taskId: string, opts: WatchOpts): Promise<boolean> {
   if (opts.label || opts.text) {
-    return paneManager.existsCondition({ label: opts.label, text: opts.text }, opts.page)
+    return paneManager.existsCondition(taskId, { label: opts.label, text: opts.text }, opts.page)
   }
   if (opts.gone_label || opts.gone_text) {
     const present = await paneManager.existsCondition(
+      taskId,
       { label: opts.gone_label, text: opts.gone_text },
       opts.page
     )
@@ -113,7 +114,7 @@ export async function startWatch(taskId: string, opts: WatchOpts): Promise<strin
   // Arm-time sanity: a condition that's ALREADY met would fire instantly —
   // that's always a mis-chosen condition for a "wait" (e.g. Continue exists
   // but you meant "when the quiz appears"). Reject with guidance instead.
-  if (await conditionMet(opts)) {
+  if (await conditionMet(taskId, opts)) {
     return `watch REJECTED: the condition (${describe}) is ALREADY met right now — it would fire immediately. Pick something that only becomes true when the wait is over: the text that appears AFTER the video (quiz heading, "completed"), or gone_label of the player's current control.`
   }
 
@@ -137,7 +138,7 @@ export async function startWatch(taskId: string, opts: WatchOpts): Promise<strin
     }
     let met = false
     try {
-      met = await conditionMet(opts)
+      met = await conditionMet(taskId, opts)
     } catch {
       met = false
     }

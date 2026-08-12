@@ -36,8 +36,8 @@ const api = {
       ipcRenderer.invoke(IPC.RESOURCES_REORDER, taskId, orderedIds)
   },
   panes: {
-    open: (paneId: string, target: { url?: string; filePath?: string }) =>
-      ipcRenderer.invoke(IPC.PANES_OPEN, paneId, target),
+    open: (paneId: string, target: { url?: string; filePath?: string }, ownerId: string) =>
+      ipcRenderer.invoke(IPC.PANES_OPEN, paneId, target, ownerId),
     setBounds: (paneId: string, bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke(IPC.PANES_SET_BOUNDS, paneId, bounds),
     setVisible: (paneId: string | null, visible: boolean) =>

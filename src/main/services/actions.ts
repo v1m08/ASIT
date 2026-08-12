@@ -164,7 +164,7 @@ async function processNewLines(taskId: string, file: string): Promise<void> {
   if (mutated) {
     await new Promise((r) => setTimeout(r, 1200)) // let the page react
     try {
-      if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath)
+      if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
     } catch {
       // snapshot refresh is best-effort
     }
@@ -299,32 +299,33 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
     // reload-proof, a LABEL matched against aria-label/visible text at
     // execution time. Labels are what make recorded flows replayable.
     case 'page_fill': {
-      if (action.label) return paneManager.fillByLabel(action.label, action.value ?? '', action.page)
+      if (action.label)
+        return paneManager.fillByLabel(taskId, action.label, action.value ?? '', action.page)
       if (!action.ref) return 'page_fill: no ref or label'
-      return paneManager.interact(action.ref, 'fill', action.value ?? '')
+      return paneManager.interact(taskId, action.ref, 'fill', action.value ?? '')
     }
     case 'page_click': {
-      if (action.label) return paneManager.clickByLabel(action.label, action.page)
+      if (action.label) return paneManager.clickByLabel(taskId, action.label, action.page)
       if (!action.ref) return 'page_click: no ref or label'
-      return paneManager.interact(action.ref, 'click')
+      return paneManager.interact(taskId, action.ref, 'click')
     }
     case 'page_select': {
       if (!action.ref) return 'page_select: no ref'
-      return paneManager.interact(action.ref, 'select', action.value ?? '')
+      return paneManager.interact(taskId, action.ref, 'select', action.value ?? '')
     }
     case 'page_key': {
       if (!action.key) return 'page_key: no key'
-      if (action.ref) return paneManager.sendKey(action.ref, action.key)
-      return paneManager.keyToPage(action.page, action.key)
+      if (action.ref) return paneManager.sendKey(taskId, action.ref, action.key)
+      return paneManager.keyToPage(taskId, action.page, action.key)
     }
     case 'page_type': {
       if (action.value === undefined) return 'page_type: no value'
-      if (action.ref) return paneManager.typeText(action.ref, action.value)
-      return paneManager.typeToPage(action.page, action.value)
+      if (action.ref) return paneManager.typeText(taskId, action.ref, action.value)
+      return paneManager.typeToPage(taskId, action.page, action.value)
     }
     case 'navigate': {
       if (!action.url) return 'navigate: no url'
-      return paneManager.navigateFlow(action.url, action.page)
+      return paneManager.navigateFlow(taskId, action.url, action.page)
     }
     case 'wait': {
       const requested = Math.max(0, Number(action.ms) || 0)
@@ -335,7 +336,7 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
         : `waited ${ms}ms`
     }
     case 'page_snapshot': {
-      const n = await paneManager.snapshotAll(task.folderPath)
+      const n = await paneManager.snapshotAll(task.folderPath, taskId)
       return `${n} page snapshots refreshed`
     }
     case 'watch': {
@@ -394,7 +395,7 @@ export async function runFlow(taskId: string, steps: AppAction[]): Promise<strin
   }
   try {
     const task = getTask(taskId)
-    if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath)
+    if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
   } catch {
     // snapshot refresh is best-effort
   }

@@ -138,7 +138,7 @@ export default function PaneGrid({
           openedPanes.current.add(id)
           const target =
             id === BUILTIN_SEARCH ? { url: searchUrlRef.current } : paneTargetFor(tab)
-          window.asit.panes.open(id, target)
+          window.asit.panes.open(id, target, task.id)
         }
       }
     }

@@ -111,6 +111,10 @@ app.whenReady().then(() => {
     runTransferSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_PANES === '1') {
+    runPanesSmokeTest()
+    return
+  }
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -247,6 +251,92 @@ async function runTransferSmokeTest(): Promise<void> {
   } catch (err) {
     settingsSvc.setSettings({ escapePhrase: originalPhrase })
     console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless pane-isolation check: ASIT_SMOKE_PANES=1 electron out/main/index.js
+// Proves the ownership boundary: a task's snapshot/click/key/type surface can
+// see and drive ONLY its own panes — never another workspace's (or the
+// scratchpad's) tabs, even via a ref leaked from another task's snapshot.
+async function runPanesSmokeTest(): Promise<void> {
+  const { createServer } = await import('http')
+  const { mkdirSync, readdirSync, readFileSync } = await import('fs')
+  const { join } = await import('path')
+  const { tmpdir } = await import('os')
+
+  const fail = (msg: string): never => {
+    console.error('[panes-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    const server = createServer((req, res) => {
+      const which = req.url === '/b' ? 'Beta' : 'Alpha'
+      res.setHeader('content-type', 'text/html')
+      res.end(`<title>${which}</title><button aria-label="${which} Button">${which} Button</button>`)
+    })
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        resolve((server.address() as { port: number }).port)
+      })
+    })
+
+    const win = new BrowserWindow({ show: false, width: 800, height: 600 })
+    paneManager.attach(win)
+    paneManager.open('pane-a', { url: `http://127.0.0.1:${port}/a` }, 'task-a')
+    paneManager.open('pane-b', { url: `http://127.0.0.1:${port}/b` }, 'task-b')
+
+    const folderA = join(tmpdir(), 'asit-panes-smoke', 'a')
+    const folderB = join(tmpdir(), 'asit-panes-smoke', 'b')
+    mkdirSync(folderA, { recursive: true })
+    mkdirSync(folderB, { recursive: true })
+
+    // Pages need a moment to load; snapshot until this task's one pane shows.
+    let countA = 0
+    for (let i = 0; i < 20 && countA !== 1; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      countA = await paneManager.snapshotAll(folderA, 'task-a')
+    }
+    if (countA !== 1) fail(`task-a snapshot saw ${countA} pages, expected exactly its own 1`)
+    const pagesA = readdirSync(join(folderA, '.asit', 'pages'))
+    const contentA = readFileSync(join(folderA, '.asit', 'pages', pagesA[0]), 'utf-8')
+    if (!contentA.includes('Alpha Button')) fail('task-a snapshot missing its own page content')
+    if (contentA.includes('Beta')) fail("task-a snapshot leaked task-b's page")
+    console.log('[panes-smoke] snapshot sees only the owner task’s panes')
+
+    // Cross-owner label targeting must find nothing…
+    const crossClick = await paneManager.clickByLabel('task-a', 'Beta Button')
+    if (!crossClick.startsWith('no visible element'))
+      fail(`task-a clicked into task-b's pane: "${crossClick}"`)
+    // …while the owner reaches its own page fine (positive control).
+    const ownClick = await paneManager.clickByLabel('task-b', 'Beta Button')
+    if (!ownClick.startsWith('clicked')) fail(`owner click failed: "${ownClick}"`)
+    console.log('[panes-smoke] label click: cross-owner refused, own-pane works')
+
+    // A ref captured in task-a's snapshot must be dead when task-b replays it.
+    const ref = contentA.match(/\[(p\d+f\d+e\d+)\]/)?.[1]
+    if (!ref) fail('no ref found in task-a snapshot')
+    const crossRef = await paneManager.interact('task-b', ref!, 'click')
+    if (!crossRef.startsWith('unknown ref')) fail(`cross-owner ref accepted: "${crossRef}"`)
+    console.log('[panes-smoke] snapshot refs are dead outside their owner')
+
+    // Un-indexed key/type land on the OWNER's first pane — and nowhere at all
+    // for a task that has no panes (this exact path once sent Ctrl+P to an
+    // unrelated personal tab).
+    const keyOwnerless = paneManager.keyToPage('task-c', undefined, 'Ctrl+P')
+    if (!keyOwnerless.startsWith('no browser pane open'))
+      fail(`ownerless key was sent somewhere: "${keyOwnerless}"`)
+    const keyOwned = paneManager.keyToPage('task-b', undefined, 'Escape')
+    if (!keyOwned.startsWith('sent')) fail(`owner key refused: "${keyOwned}"`)
+    console.log('[panes-smoke] keys go to the owner’s panes or nowhere')
+
+    server.close()
+    console.log('[panes-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[panes-smoke] FAIL:', err)
     app.exit(1)
   }
 }

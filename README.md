@@ -94,7 +94,7 @@ Alt+Tab briefly escapes before the window re-grabs focus (~1s). Ctrl+Alt+Del, Ta
 npm run build
 ```
 
-Then run `npx electron out/main/index.js` with one of: `ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad), `ASIT_SMOKE_CHAT=1` (Claude streaming + context + resume), `ASIT_SMOKE_QGEN=1` (question generation + SM-2 + usage), `ASIT_SMOKE_AGENT=1` (agent file tools + app actions), `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit). Smoke runs are isolated from real user data.
+Then run `npx electron out/main/index.js` with one of: `ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad), `ASIT_SMOKE_CHAT=1` (Claude streaming + context + resume), `ASIT_SMOKE_QGEN=1` (question generation + SM-2 + usage), `ASIT_SMOKE_AGENT=1` (agent file tools + app actions), `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit), `ASIT_SMOKE_PANES=1` (pane ownership: an agent can only see/drive its own workspace's tabs). Smoke runs are isolated from real user data.
 
 ## License
 

@@ -24,6 +24,14 @@ interface Pane {
   view: WebContentsView
   desiredVisible: boolean
   lastActive: number
+  // The task whose workspace opened this pane. Panes are parked, not closed,
+  // when the user navigates away — so at any moment the manager holds panes
+  // from several workspaces plus the scratchpad. Every AI-facing operation
+  // (snapshot, click, fill, key, type, navigate, watch-probe) REQUIRES the
+  // acting task's id and only ever sees panes with a matching owner. A
+  // workspace agent must never be able to read or drive another workspace's
+  // tabs — least of all the user's personal scratchpad browser.
+  owner: string
 }
 
 // Panes are PARKED (hidden, alive) when navigating away, not destroyed — so
@@ -117,11 +125,14 @@ class PaneManager {
     this.syncNavKeys()
   }
 
-  open(paneId: string, target: PaneTarget): void {
+  open(paneId: string, target: PaneTarget, owner: string): void {
     if (!this.win) return
     const existing = this.panes.get(paneId)
     if (existing) {
       existing.lastActive = Date.now() // revived from parking — no reload
+      // Re-stamp: "save session" moves scratch resources into a new task, and
+      // the revived pane now belongs to that task.
+      existing.owner = owner
       return
     }
 
@@ -213,7 +224,7 @@ class PaneManager {
 
     view.setVisible(false) // hidden until the renderer sends bounds
     this.win.contentView.addChildView(view)
-    this.panes.set(paneId, { view, desiredVisible: false, lastActive: Date.now() })
+    this.panes.set(paneId, { view, desiredVisible: false, lastActive: Date.now(), owner })
   }
 
   setBounds(paneId: string, bounds: PaneBounds): void {
@@ -365,7 +376,7 @@ class PaneManager {
     })()`
   }
 
-  async snapshotAll(taskFolder: string): Promise<number> {
+  async snapshotAll(taskFolder: string, owner: string): Promise<number> {
     const pagesDir = join(taskFolder, '.asit', 'pages')
     mkdirSync(pagesDir, { recursive: true })
     for (const f of readdirSync(pagesDir)) rmSync(join(pagesDir, f), { force: true })
@@ -375,6 +386,7 @@ class PaneManager {
     let count = 0
     let paneIndex = 0
     for (const [paneId, pane] of this.panes) {
+      if (pane.owner !== owner) continue // other workspaces' tabs are invisible
       const url = pane.view.webContents.getURL()
       if (!/^https?:/i.test(url)) continue
       paneIndex++
@@ -489,6 +501,7 @@ class PaneManager {
   }
 
   async interact(
+    owner: string,
     ref: string,
     op: 'fill' | 'click' | 'select',
     value?: string
@@ -502,6 +515,7 @@ class PaneManager {
     if (!paneId) return `unknown ref ${ref} — run page_snapshot first`
     const pane = this.panes.get(paneId)
     if (!pane) return `pane for ${ref} is gone`
+    if (pane.owner !== owner) return `unknown ref ${ref} — run page_snapshot first` // stale ref from another workspace's snapshot
     const frames = pane.view.webContents.mainFrame.framesInSubtree
     const frame = frames[frameIndex]
     if (!frame) return `frame ${frameIndex} is gone — run page_snapshot`
@@ -638,8 +652,12 @@ class PaneManager {
     })()`
   }
 
-  private urlViews(pageIndex?: number): WebContentsView[] {
+  // The acting task's browser panes, in snapshot order — page N here is the
+  // same pane as "Page N" in that task's .asit/pages/. Owner-filtering is what
+  // keeps one workspace's agent out of every other workspace's tabs.
+  private urlViews(owner: string, pageIndex?: number): WebContentsView[] {
     const views = [...this.panes.values()]
+      .filter((p) => p.owner === owner)
       .map((p) => p.view)
       .filter((v) => /^https?:/i.test(v.webContents.getURL()))
     if (pageIndex && pageIndex >= 1 && pageIndex <= views.length) return [views[pageIndex - 1]]
@@ -653,6 +671,7 @@ class PaneManager {
   //   but disabled during the video; counting it made watches fire instantly).
   // 'text': the string appears anywhere in the page's visible text.
   async existsCondition(
+    owner: string,
     cond: { label?: string; text?: string },
     pageIndex?: number
   ): Promise<boolean> {
@@ -678,7 +697,7 @@ class PaneManager {
           if (!target || !document.body) return false
           return document.body.innerText.toLowerCase().includes(target)
         })()`
-    for (const view of this.urlViews(pageIndex)) {
+    for (const view of this.urlViews(owner, pageIndex)) {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (const frame of frames) {
         try {
@@ -691,12 +710,12 @@ class PaneManager {
     return false
   }
 
-  async existsByLabel(label: string, pageIndex?: number): Promise<boolean> {
-    return this.existsCondition({ label }, pageIndex)
+  async existsByLabel(owner: string, label: string, pageIndex?: number): Promise<boolean> {
+    return this.existsCondition(owner, { label }, pageIndex)
   }
 
-  async clickByLabel(label: string, pageIndex?: number): Promise<string> {
-    for (const view of this.urlViews(pageIndex)) {
+  async clickByLabel(owner: string, label: string, pageIndex?: number): Promise<string> {
+    for (const view of this.urlViews(owner, pageIndex)) {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (let fi = 0; fi < frames.length; fi++) {
         try {
@@ -739,8 +758,8 @@ class PaneManager {
     return `no visible element matching "${label}"`
   }
 
-  async fillByLabel(label: string, value: string, pageIndex?: number): Promise<string> {
-    for (const view of this.urlViews(pageIndex)) {
+  async fillByLabel(owner: string, label: string, value: string, pageIndex?: number): Promise<string> {
+    for (const view of this.urlViews(owner, pageIndex)) {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (const frame of frames) {
         try {
@@ -754,31 +773,33 @@ class PaneManager {
     return `no visible field matching "${label}"`
   }
 
-  keyToPage(pageIndex: number | undefined, key: string): string {
-    const views = this.urlViews(pageIndex)
-    if (views.length === 0) return 'no browser pane open'
+  keyToPage(owner: string, pageIndex: number | undefined, key: string): string {
+    const views = this.urlViews(owner, pageIndex)
+    if (views.length === 0) return 'no browser pane open in this workspace'
     return this.sendKeyToView(views[0], key)
   }
 
-  typeToPage(pageIndex: number | undefined, text: string): Promise<string> {
-    const views = this.urlViews(pageIndex)
-    if (views.length === 0) return Promise.resolve('no browser pane open')
+  typeToPage(owner: string, pageIndex: number | undefined, text: string): Promise<string> {
+    const views = this.urlViews(owner, pageIndex)
+    if (views.length === 0) return Promise.resolve('no browser pane open in this workspace')
     return this.typeToView(views[0], text)
   }
 
-  async navigateFlow(url: string, pageIndex?: number): Promise<string> {
-    const views = this.urlViews(pageIndex)
-    if (views.length === 0) return 'no browser pane open to navigate'
+  async navigateFlow(owner: string, url: string, pageIndex?: number): Promise<string> {
+    const views = this.urlViews(owner, pageIndex)
+    if (views.length === 0) return 'no browser pane open in this workspace to navigate'
     const wc = views[0].webContents
     await wc.loadURL(url).catch(() => undefined)
     return `navigated to ${url}`
   }
 
-  private paneForRef(refOrPrefix: string): WebContentsView | null {
+  private paneForRef(owner: string, refOrPrefix: string): WebContentsView | null {
     const prefix = refOrPrefix.match(/^p\d{1,4}/)?.[0]
     if (!prefix) return null
     const paneId = this.refToPane.get(refOrPrefix) ?? this.prefixToPane.get(prefix)
-    return paneId ? (this.panes.get(paneId)?.view ?? null) : null
+    if (!paneId) return null
+    const pane = this.panes.get(paneId)
+    return pane && pane.owner === owner ? pane.view : null
   }
 
   // Keyboard shortcut as REAL input (e.g. "Ctrl+Shift+P", "Enter", "F1") —
@@ -817,14 +838,14 @@ class PaneManager {
     return `typed ${chars.length} chars`
   }
 
-  async sendKey(refOrPrefix: string, key: string): Promise<string> {
-    const view = this.paneForRef(refOrPrefix)
+  async sendKey(owner: string, refOrPrefix: string, key: string): Promise<string> {
+    const view = this.paneForRef(owner, refOrPrefix)
     if (!view) return `no pane matching "${refOrPrefix}" — run page_snapshot first`
     return this.sendKeyToView(view, key)
   }
 
-  async typeText(refOrPrefix: string, text: string): Promise<string> {
-    const view = this.paneForRef(refOrPrefix)
+  async typeText(owner: string, refOrPrefix: string, text: string): Promise<string> {
+    const view = this.paneForRef(owner, refOrPrefix)
     if (!view) return `no pane matching "${refOrPrefix}" — run page_snapshot first`
     return this.typeToView(view, text)
   }

@@ -175,7 +175,7 @@ export async function sendChat(
   // Snapshot the open web panes (text + interactive element refs) into
   // .asit/pages/ so "this page" always means something to the model.
   try {
-    await paneManager.snapshotAll(task.folderPath)
+    await paneManager.snapshotAll(task.folderPath, task.id)
   } catch (err) {
     console.error('page snapshot failed:', err)
   }

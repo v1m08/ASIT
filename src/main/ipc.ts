@@ -115,8 +115,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
 
   // --- panes ---
-  ipcMain.handle(IPC.PANES_OPEN, (_e, paneId: string, target: PaneTarget) =>
-    paneManager.open(paneId, target)
+  ipcMain.handle(IPC.PANES_OPEN, (_e, paneId: string, target: PaneTarget, ownerId: string) =>
+    paneManager.open(paneId, target, ownerId)
   )
   ipcMain.handle(IPC.PANES_SET_BOUNDS, (_e, paneId: string, bounds: PaneBounds) =>
     paneManager.setBounds(paneId, bounds)

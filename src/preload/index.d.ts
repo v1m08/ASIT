@@ -41,7 +41,11 @@ declare global {
         reorder: (taskId: string, orderedIds: string[]) => Promise<void>
       }
       panes: {
-        open: (paneId: string, target: { url?: string; filePath?: string }) => Promise<void>
+        open: (
+          paneId: string,
+          target: { url?: string; filePath?: string },
+          ownerId: string
+        ) => Promise<void>
         setBounds: (
           paneId: string,
           bounds: { x: number; y: number; width: number; height: number }

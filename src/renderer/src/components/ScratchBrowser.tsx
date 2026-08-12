@@ -42,9 +42,13 @@ function hostOf(url: string): string {
 let tabCounter = 0
 
 export default function ScratchBrowser({
+  ownerId,
   onPin,
   onApi
 }: {
+  /** The scratch task's id — stamped on every pane so only the scratchpad's
+   *  own chat can see or drive these tabs. */
+  ownerId: string
   onPin: (title: string, url: string) => void
   onApi?: (api: ScratchBrowserApi) => void
 }): JSX.Element {
@@ -60,14 +64,17 @@ export default function ScratchBrowser({
 
   const newTabId = (): string => `scratch-tab-${Date.now()}-${++tabCounter}`
 
-  const openTab = useCallback((url: string): void => {
-    const id = newTabId()
-    const navUrl = toNavUrl(url || HOME_URL)
-    window.asit.panes.open(id, { url: navUrl })
-    setTabs((prev) => [...prev, { id, url: navUrl, title: hostOf(navUrl) }])
-    setActiveId(id)
-    setAddress(null)
-  }, [])
+  const openTab = useCallback(
+    (url: string): void => {
+      const id = newTabId()
+      const navUrl = toNavUrl(url || HOME_URL)
+      window.asit.panes.open(id, { url: navUrl }, ownerId)
+      setTabs((prev) => [...prev, { id, url: navUrl, title: hostOf(navUrl) }])
+      setActiveId(id)
+      setAddress(null)
+    },
+    [ownerId]
+  )
 
   // Restore tabs — REUSING stored pane ids, so panes parked while you were in
   // a task revive without reloading.
@@ -84,7 +91,7 @@ export default function ScratchBrowser({
       openTab(HOME_URL)
     } else {
       const created: BrowserTab[] = stored.map((t) => {
-        window.asit.panes.open(t.id, { url: t.url }) // no-op if the pane is parked
+        window.asit.panes.open(t.id, { url: t.url }, ownerId) // no-op if the pane is parked
         return { id: t.id, url: t.url, title: t.title || hostOf(t.url) }
       })
       setTabs(created)
