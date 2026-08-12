@@ -44,6 +44,46 @@ npm run dist
 
 **Backup.** Settings → Export produces a zip of workspaces, files, and questions with SR state; sensitive data (escape phrase, logins, usage) is excluded. Import restores everything as new workspaces.
 
+## Cheat sheet
+
+### Keyboard
+
+| Keys | Where | What |
+|---|---|---|
+| `Tab` / `Shift+Tab` | everywhere (even inside an embedded page) | Cycle the focus ring — only the zones that matter: panes → notes → chat, wrapping around. Landing on the chat puts the caret in the message box. Inside dialogs and small forms, Tab stays field-to-field. |
+| `Ctrl+1` … `Ctrl+9` | everywhere | Jump straight to zone N. Workspace: `1` left pane, `2` right pane, `3` chat. Home: `1` workspace list, `2` browser, `3` notes, `4` chat. |
+| `Ctrl+K` | everywhere | Open the ⚡ quick assistant, cursor ready. `Esc` closes it and returns focus where you were. |
+| `Ctrl+L` | home | Focus the browser address bar, text selected. `Esc` returns. |
+| `↑` / `↓`, `Enter` | workspace list | Walk the list, open the selected workspace. |
+| `Enter` / `Shift+Enter` | chat + assistant | Send / newline. While a `/` or `./` popup is open, `↑↓` pick, `Enter` or `Tab` insert, `Esc` dismisses. |
+| `Ctrl+E` | notes | Toggle live preview ↔ raw markdown (also the `⟨⟩` hover button, top-right). |
+| 30-second hold, or typed escape phrase | lockdown | The only two ways out of a focus session. |
+
+### Text triggers
+
+| Type | Where | What happens |
+|---|---|---|
+| `to-do: buy poster board` | any notes line | Captured into the global to-do list (sidebar ☑). Checking it off strikes the line through; deleting the line removes the to-do. Works after bullets, `#` headings, and `- [ ]` checkboxes too. |
+| `Polymorphism: one interface, many types` | any notes line | Becomes a key term in the workspace's 🧠 Review → Key terms tab (blur-to-reveal, one click to add all to spaced repetition). |
+| `/` | notes, chat | Reference popup: workspace files (inserts a clickable link that opens the file) and snippets. |
+| `/KEY ` (trailing space) | chat, notes, assistant, **and any web form in a pane** | Expands the snippet you defined in Settings → Snippets (e.g. `/gtem ` → your email). |
+| `./` | chat | Skill popup. ⚡ skills replay a saved flow instantly with zero tokens; 🤖 skills brief the agent. The agent saves new skills after a successful run. |
+| `?keywords` | assistant | Agentless grep of your default mail source (Gmail) in a hidden logged-in page — no tokens. First word = source name to target another (`?outlook interview time`). |
+| `?otp` | assistant | Pulls the newest login code from mail → clipboard, and auto-types it into the visible page. |
+| `?g query` | assistant | Instant Google answer, extractive (built for speed: deadlines, dates, numbers). |
+| paste an image | notes | Saved into the workspace's `files/` and shown inline. |
+
+### Places
+
+| Name | What it is |
+|---|---|
+| **Scratchpad** (home) | The free browser + notes + chat on the home screen. 💾 *Save session* turns it into a named workspace and resets it. |
+| **Status cluster** (header, right side) | Running background work (click a pill to jump to its workspace), question-job progress, transient results, and the ⚡ assistant launcher. |
+| **Resource rail** (workspace, left edge) | The workspace's tabs/PDFs/notes/files; ✨ on a PDF for question extraction/generation; 📎 attaches from the global library. |
+| **🧠 Review** (workspace tab) | Due questions, all questions, key terms. |
+| **⋯ menu** (workspace row) | Rename, due date, priority, 🔒 private (no-AI), coding mode, archive, delete (files go to a trash folder, never erased). |
+| **`Documents\ASIT\`** | All your real data: `tasks\` (one folder per workspace — also the AI's context), `private\`, `library\`, `skills\`, `.trash\`. The app's database and logins live in `%APPDATA%\asit`. Neither is part of this repo. |
+
 ## Honest lockdown limitations (by design)
 
 Alt+Tab briefly escapes before the window re-grabs focus (~1s). Ctrl+Alt+Del, Task Manager, and Win+L are untouched — this is strong friction, not a jail. Lockdown state is never persisted, so a crash can never lock you out of your machine.
