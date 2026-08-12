@@ -1,0 +1,43 @@
+{
+  "name": "asit",
+  "version": "1.0.0",
+  "description": "ASIT — a local-first study workspace: instant task context, embedded browser panes, focus lockdown, spaced repetition, and AI through your Claude Code subscription",
+  "main": "./out/main/index.js",
+  "author": "Vedansh Mannem",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "postinstall": "electron-builder install-app-deps",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "better-sqlite3": "^11.7.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@types/adm-zip": "^0.5.8",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "@types/pdf-parse": "^1.1.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "codemirror": "^6.0.1",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "zustand": "^5.0.2"
+  }
+}

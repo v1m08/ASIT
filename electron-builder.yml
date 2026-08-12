@@ -1,0 +1,26 @@
+appId: com.vedansh.asit
+productName: ASIT
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+  # pdf-parse ships 34MB of test PDFs and four bundled pdf.js versions;
+  # only v1.10.100 (its default) is ever loaded.
+  - '!node_modules/pdf-parse/test/**'
+  - '!node_modules/pdf-parse/lib/pdf.js/v1.9.426/**'
+  - '!node_modules/pdf-parse/lib/pdf.js/v1.10.88/**'
+  - '!node_modules/pdf-parse/lib/pdf.js/v2.0.550/**'
+asarUnpack:
+  - node_modules/better-sqlite3/**
+win:
+  target:
+    - nsis
+  # Skips the winCodeSign toolchain, whose extraction needs symlink privileges
+  # (fails without Windows Developer Mode). We don't sign the exe anyway.
+  signAndEditExecutable: false
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  shortcutName: ASIT

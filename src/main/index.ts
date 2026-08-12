@@ -1,0 +1,587 @@
+import { app, BrowserWindow, globalShortcut, shell } from 'electron'
+import { existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
+import { join } from 'path'
+import { getDb, closeDb } from './db'
+import { registerIpc } from './ipc'
+import { paneManager } from './services/panes'
+import { lockdown } from './services/lockdown'
+import { timer } from './services/timer'
+import { initQuestions } from './services/questions'
+import { initActions } from './services/actions'
+import { initUsage } from './services/usage'
+import { initActivity } from './services/activity'
+import { initWatchers } from './services/watchers'
+import { initTodos } from './services/todos'
+import {
+  getOrCreateScratch,
+  listTasks,
+  refreshClaudeMd,
+  tasksRoot,
+  trashRoot,
+  writeTasksIndex
+} from './services/tasks'
+
+let mainWindow: BrowserWindow | null = null
+
+// One instance only — a second launch focuses the existing window instead of
+// opening a rival process against the same database.
+// Strict '1' check: a leftover ASIT_SMOKE=0 in a shell must not silently
+// redirect the real app's data folders.
+const isSmokeMode = Object.entries(process.env).some(
+  ([k, v]) => k.startsWith('ASIT_SMOKE') && v === '1'
+)
+if (!isSmokeMode && !app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.show()
+      mainWindow.focus()
+    }
+  })
+}
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1000,
+    minHeight: 700,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#12141a',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true
+    }
+  })
+
+  mainWindow.on('ready-to-show', () => mainWindow?.show())
+  paneManager.attach(mainWindow)
+  lockdown.attach(mainWindow)
+
+  // External links from the app UI open in the default browser.
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+}
+
+app.whenReady().then(() => {
+  if (isSmokeMode) {
+    // Full isolation: smoke tests must never touch the real user data. They
+    // already get their own userData (electron run by script path); this keeps
+    // their task folders + tasks index out of the real Documents\ASIT too.
+    const { tmpdir } = require('os') as typeof import('os')
+    const { join: joinPath } = require('path') as typeof import('path')
+    app.setPath('documents', joinPath(tmpdir(), 'asit-smoke-docs'))
+  }
+
+  getDb() // open DB + run migrations before any IPC arrives
+
+  if (process.env.ASIT_SMOKE === '1') {
+    runSmokeTest()
+    return
+  }
+  if (process.env.ASIT_SMOKE_CHAT === '1') {
+    runChatSmokeTest()
+    return
+  }
+  if (process.env.ASIT_SMOKE_QGEN === '1') {
+    runQuestionSmokeTest()
+    return
+  }
+  if (process.env.ASIT_SMOKE_AGENT === '1') {
+    runAgentSmokeTest()
+    return
+  }
+  if (process.env.ASIT_SMOKE_TRANSFER === '1') {
+    runTransferSmokeTest()
+    return
+  }
+
+  registerIpc(() => mainWindow)
+  timer.init(() => mainWindow)
+  initQuestions(() => mainWindow)
+  initActions(() => mainWindow)
+  initUsage(() => mainWindow)
+  initActivity(() => mainWindow)
+  initWatchers(() => mainWindow)
+  initTodos(() => mainWindow)
+  relocateLegacyTrash() // old .trash lived inside the assistant-readable tree
+  writeTasksIndex() // keep the global-assistant index fresh from startup
+  refreshAllTaskContexts() // guidance updates reach existing tasks immediately
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', async () => {
+  // Reap CLI children first — otherwise a running generation job would keep
+  // spending tokens after the app closes (Windows children outlive parents).
+  const { killAllClaudeChildren } = await import('./services/claude')
+  killAllClaudeChildren()
+  globalShortcut.unregisterAll() // navigation keys grabbed while a page had focus
+  closeDb()
+  app.quit()
+})
+
+// Regenerate every task's CLAUDE.md at startup so instruction fixes ship to
+// existing tasks, not just new ones.
+function refreshAllTaskContexts(): void {
+  try {
+    for (const t of listTasks()) refreshClaudeMd(t.id)
+    refreshClaudeMd(getOrCreateScratch().id)
+  } catch (err) {
+    console.error('task context refresh failed:', err)
+  }
+}
+
+// One-time migration: trash used to live at tasks\.trash — inside the global
+// assistant's readable tree. Move it to ASIT\.trash where nothing AI can reach.
+function relocateLegacyTrash(): void {
+  try {
+    const legacy = join(tasksRoot(), '.trash')
+    if (!existsSync(legacy)) return
+    mkdirSync(trashRoot(), { recursive: true })
+    for (const entry of readdirSync(legacy)) {
+      try {
+        renameSync(join(legacy, entry), join(trashRoot(), entry))
+      } catch (err) {
+        console.error('trash relocation failed for', entry, err)
+      }
+    }
+  } catch (err) {
+    console.error('legacy trash relocation failed:', err)
+  }
+}
+
+// Headless backup round-trip check: ASIT_SMOKE_TRANSFER=1 electron out/main/index.js
+// Proves: export includes tasks/files/questions, excludes sensitive data;
+// import recreates everything as new tasks with SR state intact.
+async function runTransferSmokeTest(): Promise<void> {
+  const { writeFileSync, readFileSync, existsSync, mkdirSync, rmSync } = await import('fs')
+  const { join } = await import('path')
+  const os = await import('os')
+  const tasks = await import('./services/tasks')
+  const settingsSvc = await import('./services/settings')
+  const transfer = await import('./services/transfer')
+  const { getDb, newId, nowIso } = await import('./db')
+
+  const fail = (msg: string): never => {
+    console.log(`[transfer-smoke] FAIL: ${msg}`)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  const originalPhrase = settingsSvc.getSettings().escapePhrase
+  try {
+    // Distinctive escape phrase to prove it never leaks into the export.
+    settingsSvc.setSettings({ escapePhrase: 'SECRET-PHRASE-CANARY-12345' })
+
+    const task = tasks.createTask({ title: 'Transfer Smoke', description: 'x', priority: 1 })
+    writeFileSync(join(task.folderPath, 'notes.md'), '# Notes\n\nTRANSFER-NOTE-OK\n')
+    mkdirSync(join(task.folderPath, 'pdfs'), { recursive: true })
+    writeFileSync(join(task.folderPath, 'pdfs', 'doc.pdf'), 'fake-pdf-bytes')
+    const db = getDb()
+    const rid = newId()
+    db.prepare(
+      `INSERT INTO resources (id, task_id, kind, title, url, file_path, position, created_at)
+       VALUES (?, ?, 'pdf', 'Doc', NULL, ?, 0, ?)`
+    ).run(rid, task.id, join(task.folderPath, 'pdfs', 'doc.pdf'), nowIso())
+    db.prepare(
+      `INSERT INTO questions (id, task_id, resource_id, question, answer, ease, interval_days, reps, lapses, due_at, created_at, origin)
+       VALUES (?, ?, ?, 'tq', 'ta', 2.1, 5, 3, 1, ?, ?, 'extracted')`
+    ).run(newId(), task.id, rid, nowIso(), nowIso())
+
+    const zipPath = join(os.tmpdir(), `asit-smoke-${Date.now()}.zip`)
+    const exported = transfer.exportToZip(zipPath)
+    console.log(`[transfer-smoke] exported ${exported.tasks} tasks, ${exported.questions} questions`)
+
+    // Sensitive-data audit on the raw archive bytes.
+    const AdmZip = (await import('adm-zip')).default
+    const zip = new AdmZip(zipPath)
+    const dataJson = zip.readAsText('data.json')
+    if (dataJson.includes('SECRET-PHRASE-CANARY')) fail('escape phrase leaked into export')
+    if (dataJson.includes('claudePath') || dataJson.includes('.local')) fail('claude path leaked')
+    if (/chat_messages|chat_sessions/i.test(dataJson)) fail('chat data leaked')
+    console.log('[transfer-smoke] sensitive-data audit clean ✓')
+
+    tasks.deleteTask(task.id)
+    const imported = transfer.importFromZip(zipPath)
+    console.log(`[transfer-smoke] imported ${imported.tasks} tasks, ${imported.questions} questions`)
+
+    const restored = tasks
+      .listTasks()
+      .find((t) => t.title === 'Transfer Smoke' && t.id !== task.id)
+    if (!restored) fail('imported task not found')
+    if (!readFileSync(join(restored!.folderPath, 'notes.md'), 'utf-8').includes('TRANSFER-NOTE-OK'))
+      fail('notes not restored')
+    if (!existsSync(join(restored!.folderPath, 'pdfs', 'doc.pdf'))) fail('pdf not restored')
+    const q = db
+      .prepare('SELECT * FROM questions WHERE task_id = ?')
+      .get(restored!.id) as Record<string, unknown>
+    if (!q || q.ease !== 2.1 || q.reps !== 3 || q.origin !== 'extracted')
+      fail('question SR state not preserved')
+    console.log('[transfer-smoke] files + questions + SR state restored ✓')
+
+    tasks.deleteTask(restored!.id)
+    rmSync(zipPath, { force: true })
+    console.log('[transfer-smoke] PASS: round-trip complete, nothing sensitive exported')
+    settingsSvc.setSettings({ escapePhrase: originalPhrase })
+    app.exit(0)
+  } catch (err) {
+    settingsSvc.setSettings({ escapePhrase: originalPhrase })
+    console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless agent-tooling check: ASIT_SMOKE_AGENT=1 electron out/main/index.js
+// Proves: scoped Edit(**)/Write(**) permissions let the CLI edit notes.md and
+// append app actions; the action executor performs them.
+async function runAgentSmokeTest(): Promise<void> {
+  const { readFileSync, existsSync } = await import('fs')
+  const { join } = await import('path')
+  const tasks = await import('./services/tasks')
+  const questionsSvc = await import('./services/questions')
+  const actions = await import('./services/actions')
+  const { runClaudeStream } = await import('./services/claude')
+
+  const task = tasks.createTask({ title: 'Agent Smoke Test' })
+  const finish = (ok: boolean, msg: string): void => {
+    console.log(ok ? `[agent-smoke] PASS: ${msg}` : `[agent-smoke] FAIL: ${msg}`)
+    tasks.deleteTask(task.id)
+    app.exit(ok ? 0 : 1)
+  }
+
+  // The watcher powers the act→verify loop the model uses in production.
+  actions.watchTaskActions(task.id)
+
+  runClaudeStream(
+    {
+      cwd: task.folderPath,
+      prompt:
+        'Do exactly this: (1) append the line "AGENT-EDIT-OK" to the end of notes.md; ' +
+        '(2) APPEND this exact single line to .asit/actions.ndjson (Read it, Write it back with the line added at the end): ' +
+        '{"action":"add_questions","questions":[{"q":"smoke q","a":"smoke a"}]} ' +
+        '(3) Then Read .asit/actions-result.md repeatedly until it contains a batch echoing your action (takes ~2s), ' +
+        'and reply with ONLY the outcome text that appears after the arrow for it.',
+      allowedTools: 'Read,Glob,Grep,Edit(**),Write(**)'
+    },
+    {
+      onResult: async ({ text: reply, isError }) => {
+        if (isError) return finish(false, 'CLI returned error')
+        const notes = readFileSync(join(task.folderPath, 'notes.md'), 'utf-8')
+        if (!notes.includes('AGENT-EDIT-OK'))
+          return finish(false, 'notes.md not edited — Edit(**) permission did not work')
+        console.log('[agent-smoke] notes.md edited by CLI ✓')
+
+        const actionsFile = actions.actionsFileFor(task.folderPath)
+        if (!existsSync(actionsFile)) return finish(false, 'actions.ndjson not written')
+        const qs = questionsSvc.listQuestions(task.id)
+        if (qs.length !== 1 || qs[0].question !== 'smoke q')
+          return finish(false, 'watcher did not execute the appended action')
+        console.log('[agent-smoke] watcher executed the action ✓')
+        if (!/questions added/i.test(reply))
+          return finish(false, `model did not read its outcome back (replied: ${reply.slice(0, 120)})`)
+        console.log('[agent-smoke] model read its own outcome from actions-result.md ✓')
+        finish(true, 'full act→verify loop works: append → execute → result file → model reads it')
+      },
+      onError: (m) => finish(false, m)
+    }
+  )
+}
+
+// Headless question-pipeline check: ASIT_SMOKE_QGEN=1 electron out/main/index.js
+// Proves: SM-2 math, generation job queue end-to-end (claude reads a file in
+// the task folder, returns parseable questions), answer flow reschedules.
+async function runQuestionSmokeTest(): Promise<void> {
+  const { writeFileSync, mkdirSync } = await import('fs')
+  const { join } = await import('path')
+  const tasks = await import('./services/tasks')
+  const resources = await import('./services/resources')
+  const q = await import('./services/questions')
+
+  // 1. SM-2 unit checks (pure function)
+  const fresh = { ease: 2.5, intervalDays: 0, reps: 0, lapses: 0 }
+  const now = new Date('2026-08-10T12:00:00Z')
+  const good1 = q.scheduleNext(fresh, 2, now)
+  const again = q.scheduleNext(fresh, 0, now)
+  const good3 = q.scheduleNext({ ease: 2.5, intervalDays: 3, reps: 2, lapses: 0 }, 2, now)
+  if (good1.intervalDays !== 1) return fail('SM-2: first Good should be 1d')
+  if (again.reps !== 0 || again.lapses !== 1 || !again.dueAt.includes('12:10'))
+    return fail('SM-2: Again should reset + due in 10min')
+  if (Math.abs(good3.intervalDays - 7.5) > 0.01) return fail('SM-2: 3d * 2.5 ease should be 7.5d')
+  console.log('[qgen-smoke] SM-2 math ok')
+
+  // 2. Generation pipeline (uses a text file standing in for a PDF —
+  //    the CLI Read tool handles both; PDF parsing is its own capability)
+  const task = tasks.createTask({ title: 'QGen Smoke Test' })
+  mkdirSync(join(task.folderPath, 'pdfs'), { recursive: true })
+  const srcPath = join(task.folderPath, 'source.txt')
+  writeFileSync(
+    srcPath,
+    'The water cycle: evaporation turns surface water into vapor driven by solar energy. ' +
+      'Condensation forms clouds when vapor cools at altitude. Precipitation returns water to the surface as rain or snow. ' +
+      'Infiltration recharges groundwater aquifers, while runoff returns water to rivers and oceans.'
+  )
+  const resource = resources.addPdfResource(task.id, srcPath, task.folderPath)
+
+  q.initQuestions(() => null)
+
+  const finishTest = (ok: boolean, msg: string): void => {
+    console.log(ok ? `[qgen-smoke] PASS: ${msg}` : `[qgen-smoke] FAIL: ${msg}`)
+    tasks.deleteTask(task.id)
+    app.exit(ok ? 0 : 1)
+  }
+  function fail(msg: string): void {
+    console.log(`[qgen-smoke] FAIL: ${msg}`)
+    app.exit(1)
+  }
+
+  q.enqueueGeneration(task.id, resource.id, 'generate')
+
+  // Poll for completion (single-concurrency queue, generous timeout)
+  const startedAt = Date.now()
+  const poll = setInterval(async () => {
+    const generated = q.listQuestions(task.id)
+    if (generated.length > 0) {
+      clearInterval(poll)
+      console.log(`[qgen-smoke] ${generated.length} questions generated, e.g.:`)
+      console.log('  Q:', generated[0].question)
+      console.log('  A:', generated[0].answer)
+      const due = q.dueQuestions(20, task.id)
+      if (due.length !== generated.length) return finishTest(false, 'new questions not due')
+      const result = await q.answerQuestion(generated[0].id, { selfGrade: 2 })
+      const after = q.dueQuestions(20, task.id)
+      if (after.length !== due.length - 1) return finishTest(false, 'Good answer did not defer question')
+
+      const { getDb } = await import('./db')
+      const usageRow = getDb()
+        .prepare("SELECT COUNT(*) AS c, COALESCE(SUM(cost_usd),0) AS cost FROM usage_log WHERE task_id = ? AND kind = 'generate'")
+        .get(task.id) as { c: number; cost: number }
+      if (usageRow.c < 1) return finishTest(false, 'usage_log has no generate row')
+      console.log(`[qgen-smoke] usage logged: ${usageRow.c} call(s), $${usageRow.cost.toFixed(4)}`)
+
+      // Cross-document pipeline: fuzzy file resolution + parametrized job
+      const beforeCount = q.listQuestions(task.id).length
+      const enq = q.enqueueCustomGeneration(task.id, {
+        sources: ['source'], // fuzzy-matches source.txt
+        mode: 'generate',
+        count: 3,
+        instructions: 'focus on the phases of the water cycle'
+      })
+      console.log('[qgen-smoke] custom job:', enq)
+      const customStart = Date.now()
+      const customPoll = setInterval(() => {
+        const now = q.listQuestions(task.id).length
+        if (now > beforeCount) {
+          clearInterval(customPoll)
+          console.log(`[qgen-smoke] custom pipeline added ${now - beforeCount} questions ✓`)
+          finishTest(true, `generation + due + reschedule + usage + custom pipeline all work (next due ${result.nextDueAt})`)
+        } else if (Date.now() - customStart > 8 * 60 * 1000) {
+          clearInterval(customPoll)
+          finishTest(false, 'custom pipeline timed out')
+        }
+      }, 3000)
+    } else if (Date.now() - startedAt > 8 * 60 * 1000) {
+      clearInterval(poll)
+      finishTest(false, 'generation timed out')
+    }
+  }, 3000)
+}
+
+// Headless Claude-pipeline check: ASIT_SMOKE_CHAT=1 electron out/main/index.js
+// Proves: path resolution, spawn, cwd context (reads a file without being told
+// where it is), streaming deltas, session resume.
+async function runChatSmokeTest(): Promise<void> {
+  const { writeFileSync } = await import('fs')
+  const { join } = await import('path')
+  const tasks = await import('./services/tasks')
+  const { runClaudeStream } = await import('./services/claude')
+
+  const task = tasks.createTask({ title: 'Chat Smoke Test', description: 'smoke' })
+  writeFileSync(
+    join(task.folderPath, 'notes.md'),
+    '# Notes\n\nThe secret codeword for this task is BLUEBIRD.\n'
+  )
+
+  const finish = (ok: boolean, msg: string): void => {
+    console.log(ok ? `[chat-smoke] PASS: ${msg}` : `[chat-smoke] FAIL: ${msg}`)
+    tasks.deleteTask(task.id)
+    app.exit(ok ? 0 : 1)
+  }
+
+  let sessionId: string | null = null
+  let deltas = 0
+
+  runClaudeStream(
+    {
+      cwd: task.folderPath,
+      prompt: 'Read notes.md and reply with ONLY the secret codeword it contains.'
+    },
+    {
+      onInit: (id) => {
+        sessionId = id
+        console.log('[chat-smoke] init, session', id)
+      },
+      onDelta: () => {
+        deltas++
+      },
+      onResult: ({ text, isError }) => {
+        console.log('[chat-smoke] turn 1 result:', JSON.stringify(text.slice(0, 100)), 'deltas:', deltas)
+        if (isError || !/BLUEBIRD/i.test(text)) {
+          finish(false, 'codeword not found — cwd context broken')
+          return
+        }
+        if (!sessionId) {
+          finish(false, 'no session id captured')
+          return
+        }
+        // Turn 2: resume — proves conversation continuity.
+        runClaudeStream(
+          {
+            cwd: task.folderPath,
+            prompt: 'Repeat the codeword you just told me, lowercase, nothing else.',
+            resumeSessionId: sessionId
+          },
+          {
+            onResult: ({ text: t2, isError: e2 }) => {
+              console.log('[chat-smoke] turn 2 result:', JSON.stringify(t2.slice(0, 100)))
+              if (e2 || !/bluebird/.test(t2)) finish(false, 'resume did not carry context')
+              else finish(true, `streaming (${deltas} deltas) + cwd context + resume all work`)
+            },
+            onError: (m) => finish(false, `turn 2: ${m}`)
+          }
+        )
+      },
+      onError: (m) => finish(false, `turn 1: ${m}`)
+    }
+  )
+}
+
+// Headless data-layer check: ASIT_SMOKE=1 electron out/main/index.js
+async function runSmokeTest(): Promise<void> {
+  const { existsSync, readFileSync } = await import('fs')
+  const { join } = await import('path')
+  const tasks = await import('./services/tasks')
+  const resources = await import('./services/resources')
+  const settings = await import('./services/settings')
+
+  try {
+    const task = tasks.createTask({
+      title: 'Smoke Test Task',
+      description: 'created by smoke test',
+      priority: 1,
+      dueDate: '2026-09-01'
+    })
+    console.log('[smoke] created task', task.id, 'at', task.folderPath)
+
+    if (!existsSync(join(task.folderPath, 'CLAUDE.md'))) throw new Error('CLAUDE.md missing')
+    if (!existsSync(join(task.folderPath, 'notes.md'))) throw new Error('notes.md missing')
+    console.log('[smoke] folder provisioned with CLAUDE.md + notes.md')
+
+    resources.addUrlResource(task.id, 'Overleaf', 'overleaf.com')
+    tasks.refreshClaudeMd(task.id)
+    const claudeMd = readFileSync(join(task.folderPath, 'CLAUDE.md'), 'utf-8')
+    if (!claudeMd.includes('https://overleaf.com')) throw new Error('CLAUDE.md not refreshed')
+    console.log('[smoke] resource added + CLAUDE.md inventory updated')
+
+    const listed = tasks.listTasks()
+    if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')
+
+    const s = settings.getSettings()
+    console.log('[smoke] settings defaults ok, claudePath =', s.claudePath)
+
+    // PDF text extraction (pure-JS, no CLI involved) using a sample PDF
+    const samplePdf = join(process.cwd(), 'node_modules', 'pdf-parse', 'test', 'data', '05-versions-space.pdf')
+    if (existsSync(samplePdf)) {
+      const copied = resources.addPdfResource(task.id, samplePdf, task.folderPath)
+      const txt = await resources.ensurePdfText(copied.filePath!)
+      if (!txt || !existsSync(txt)) throw new Error('PDF text extraction failed')
+      console.log('[smoke] PDF text extracted to', txt.split(/[\\/]/).pop())
+    } else {
+      console.log('[smoke] (skipped PDF extraction — sample not found)')
+    }
+
+    // To-do capture from notes: writeNote must sync "to-do:" lines into the
+    // global list, completion must strike the source line through, and deleting
+    // the line must drop the to-do. (This path was silently dead in packaged
+    // builds until the lazy require() was replaced with a static import.)
+    const todos = await import('./services/todos')
+    const notePath = join(task.folderPath, 'notes.md')
+    resources.writeNote(notePath, '# Notes\n\n- to-do: smoke capture item\n')
+    const captured = todos.listTodos().find((t) => t.text === 'smoke capture item')
+    if (!captured) throw new Error('to-do not captured from notes')
+    if (captured.taskId !== task.id) throw new Error('captured to-do not linked to its task')
+    todos.setTodoDone(captured.id, true)
+    if (!/~~to-?do: smoke capture item~~/i.test(readFileSync(notePath, 'utf-8')))
+      throw new Error('completed to-do not struck through in notes')
+    resources.writeNote(notePath, '# Notes\n')
+    if (todos.listTodos(true).some((t) => t.id === captured.id && !t.done))
+      throw new Error('removed to-do line left an open to-do')
+    console.log('[smoke] to-do capture: notes → list → strike-through → removal')
+
+    tasks.deleteTask(task.id)
+    if (tasks.getTask(task.id)) throw new Error('task not deleted')
+    if (existsSync(task.folderPath)) throw new Error('folder not moved to trash')
+    console.log('[smoke] delete: row cascaded, folder moved to .trash')
+
+    // Private (no-AI) task lifecycle
+    const priv = tasks.createTask({ title: 'Private Smoke', aiDisabled: true })
+    if (!priv.folderPath.includes('private')) throw new Error('private task not in private root')
+    if (existsSync(join(priv.folderPath, 'CLAUDE.md')))
+      throw new Error('private task has an AI context file')
+    const unlocked = tasks.setTaskPrivacy(priv.id, false)
+    if (!unlocked || unlocked.aiDisabled || !unlocked.folderPath.includes('tasks'))
+      throw new Error('privacy toggle off failed')
+    if (!existsSync(join(unlocked.folderPath, 'CLAUDE.md')))
+      throw new Error('CLAUDE.md not created after enabling AI')
+    const relocked = tasks.setTaskPrivacy(priv.id, true)
+    if (!relocked?.aiDisabled || !relocked.folderPath.includes('private'))
+      throw new Error('privacy toggle on failed')
+    if (existsSync(join(relocked.folderPath, 'CLAUDE.md')))
+      throw new Error('CLAUDE.md not removed after making private')
+    tasks.deleteTask(priv.id)
+    console.log('[smoke] private tasks: folder isolation + context stripping both ways')
+
+    // Scratchpad save-session round trip
+    const scratch = tasks.getOrCreateScratch()
+    resources.addUrlResource(scratch.id, 'HackTest', 'example.com')
+    const { writeFileSync: wf } = await import('fs')
+    wf(join(scratch.folderPath, 'notes.md'), '# Notes\n\nSCRATCH-NOTE-KEEP\n')
+    const saved = tasks.saveScratchSession('Saved Session Smoke')
+    const savedResources = resources.listResources(saved.id)
+    if (savedResources.length !== 1 || savedResources[0].url !== 'https://example.com')
+      throw new Error('scratch resources did not move to saved task')
+    if (!readFileSync(join(saved.folderPath, 'notes.md'), 'utf-8').includes('SCRATCH-NOTE-KEEP'))
+      throw new Error('scratch notes did not move')
+    if (resources.listResources(scratch.id).length !== 0)
+      throw new Error('scratch not reset after save')
+    if (readFileSync(join(scratch.folderPath, 'notes.md'), 'utf-8').includes('SCRATCH-NOTE-KEEP'))
+      throw new Error('scratch notes not reset')
+    tasks.deleteTask(saved.id)
+    console.log('[smoke] scratchpad save-session: resources + notes moved, scratch reset')
+
+    console.log('[smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
