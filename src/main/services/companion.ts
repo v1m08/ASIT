@@ -285,6 +285,14 @@ async function phoneAssistant(prompt: string): Promise<string> {
 // HTTP server
 // ---------------------------------------------------------------------------
 
+function captureToScratch(text: string): void {
+  const scratch = getOrCreateScratch()
+  const notePath = join(scratch.folderPath, 'notes.md')
+  const existing = readNote(notePath)
+  const stamp = new Date().toLocaleString()
+  writeNote(notePath, `${existing.replace(/\n*$/, '\n\n')}${text.trim()}\n<!-- 📱 ${stamp} -->\n`)
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -369,12 +377,34 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     const b = await readBody(req)
     const text = String(b.text ?? '').trim()
     if (!text) return sendJson(res, 400, { error: 'empty' })
-    const scratch = getOrCreateScratch()
-    const notePath = join(scratch.folderPath, 'notes.md')
-    const existing = readNote(notePath)
-    const stamp = new Date().toLocaleString()
-    writeNote(notePath, `${existing.replace(/\n*$/, '\n\n')}${text}\n<!-- 📱 ${stamp} -->\n`)
+    captureToScratch(text)
     return sendJson(res, 200, { ok: true })
+  }
+  // Offline catch-up: the phone queues review grades, to-do changes, and
+  // captures while the PC is unreachable, then replays them here in order.
+  if (path === 'sync' && method === 'POST') {
+    const b = await readBody(req)
+    const ops = Array.isArray(b.ops) ? (b.ops as Record<string, unknown>[]) : []
+    let applied = 0
+    for (const op of ops.slice(0, 300)) {
+      try {
+        if (op.t === 'review' && [0, 1, 2, 3].includes(Number(op.grade))) {
+          await answerQuestion(String(op.id), { selfGrade: Number(op.grade) as 0 | 1 | 2 | 3 })
+          applied++
+        } else if (op.t === 'tododone') {
+          setTodoDone(String(op.id), op.done !== false)
+          applied++
+        } else if (op.t === 'todoadd' && String(op.text ?? '').trim()) {
+          if (addTodo({ text: String(op.text), dueDate: null })) applied++
+        } else if (op.t === 'capture' && String(op.text ?? '').trim()) {
+          captureToScratch(String(op.text))
+          applied++
+        }
+      } catch {
+        // an op referencing since-deleted data — skip, keep replaying the rest
+      }
+    }
+    return sendJson(res, 200, { applied })
   }
   if (path === 'assistant' && method === 'POST') {
     const b = await readBody(req)

@@ -345,6 +345,10 @@ select:focus {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* In the top/bottom split the main axis is vertical, and the flex default
+     min-height:auto lets a long note inflate the slot to its content height —
+     the page scrolls instead of the editor. Reproduced + verified fixed. */
+  min-height: 0;
 }
 
 .divider {

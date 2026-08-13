@@ -206,6 +206,57 @@
     return res.json()
   }
 
+  // ---- Offline layer: last-good data is cached on the phone; changes made
+  // while the PC is unreachable queue up and replay on reconnect. Your PC can
+  // be OFF and you can still review due questions, tick to-dos, and capture.
+  const cacheGet = (k) => { try { return JSON.parse(localStorage.getItem('asit-c-' + k) || 'null') } catch { return null } }
+  const cacheSet = (k, data) => localStorage.setItem('asit-c-' + k, JSON.stringify({ at: Date.now(), data }))
+  const qGet = () => { try { return JSON.parse(localStorage.getItem('asit-q') || '[]') } catch { return [] } }
+  const qPush = (op) => localStorage.setItem('asit-q', JSON.stringify([...qGet(), op]))
+  let offlineSince = null
+
+  async function flushQueue() {
+    const ops = qGet()
+    if (ops.length === 0) return
+    await api('sync', { method: 'POST', body: JSON.stringify({ ops }) })
+    localStorage.removeItem('asit-q')
+    toast(`Synced ${ops.length} offline change${ops.length === 1 ? '' : 's'} ✓`)
+  }
+
+  // GET with cache fallback; also the reconnect point where the queue drains.
+  async function apiCached(path) {
+    try {
+      await flushQueue()
+      const data = await api(path)
+      cacheSet(path, data)
+      offlineSince = null
+      return data
+    } catch (err) {
+      if (String(err.message).includes('unauthorized')) throw err
+      const hit = cacheGet(path)
+      if (!hit) throw err
+      offlineSince = hit.at
+      return hit.data
+    }
+  }
+
+  // Mutation that survives being offline: try live, else queue + apply locally.
+  async function mutate(op, live, applyToCache) {
+    try {
+      await live()
+    } catch {
+      qPush(op)
+      offlineSince = offlineSince || Date.now()
+    }
+    if (applyToCache) applyToCache()
+  }
+
+  function offlineBanner() {
+    if (!offlineSince) return ''
+    const mins = Math.round((Date.now() - offlineSince) / 60000)
+    return `<div class="card" style="border-color:var(--accent-dim)"><span class="dim">📴 PC unreachable — working from data saved ${mins < 2 ? 'just now' : mins < 90 ? mins + ' min ago' : Math.round(mins / 60) + 'h ago'}. Changes will sync when it's back.</span></div>`
+  }
+
   // A failure the user can actually act on, instead of a blank tab.
   function errorCard(err) {
     main.innerHTML = `
@@ -269,11 +320,21 @@
     b.onclick = () => { tab = b.dataset.tab; render() }
   })
 
+  // Whenever we're online, quietly refresh the saved review queue too — so a
+  // later offline stretch (PC asleep, on the bus) still has cards to study.
+  function prefetchReview() {
+    if (offlineSince) return
+    api('review').then((d) => cacheSet('review', d)).catch(() => {})
+  }
+
   // ---- To-dos
   async function renderTodos() {
-    const { todos } = await api('state')
+    const state = await apiCached('state')
+    prefetchReview()
+    const todos = state.todos
     const open = todos.filter((t) => !t.done)
     main.innerHTML = `
+      ${offlineBanner()}
       <h2>To-dos</h2>
       <div class="card row">
         <input type="text" id="todo-in" placeholder="Add a to-do…" class="grow" />
@@ -291,16 +352,24 @@
       row.innerHTML = `<button class="check"></button>
         <span class="grow">${esc(t.text.replace(/\[([^\]]+)\]\(asit:[^)]+\)/g, '$1'))}</span>
         ${t.dueDate ? `<span class="badge ${new Date(t.dueDate) < new Date() ? 'badge-danger' : ''}">${esc(t.dueDate.slice(5))}</span>` : ''}`
-      row.querySelector('.check').onclick = async () => {
+      row.querySelector('.check').onclick = () => {
         row.querySelector('.grow').classList.add('strike')
-        await api('todos/' + t.id + '/done', { method: 'POST', body: JSON.stringify({ done: true }) })
+        mutate(
+          { t: 'tododone', id: t.id, done: true },
+          () => api('todos/' + t.id + '/done', { method: 'POST', body: JSON.stringify({ done: true }) }),
+          () => { t.done = true; cacheSet('state', state) }
+        )
       }
       list.appendChild(row)
     }
     $('#todo-add').onclick = async () => {
       const v = $('#todo-in').value.trim()
       if (!v) return
-      await api('todos', { method: 'POST', body: JSON.stringify({ text: v }) })
+      await mutate(
+        { t: 'todoadd', text: v },
+        () => api('todos', { method: 'POST', body: JSON.stringify({ text: v }) }),
+        () => { todos.unshift({ id: 'local-' + Date.now(), text: v, done: false, dueDate: null }); cacheSet('state', state) }
+      )
       render()
     }
     const pushBtn = $('#push-on')
@@ -311,15 +380,16 @@
   let queue = []
   async function renderReview() {
     if (queue.length === 0) {
-      const { due } = await api('review')
-      queue = due
+      const reviewData = await apiCached('review')
+      queue = reviewData.due
     }
     if (queue.length === 0) {
-      main.innerHTML = '<h2>Review</h2><p class="empty">No questions due.<br/>Come back later 🧠</p>'
+      main.innerHTML = offlineBanner() + '<h2>Review</h2><p class="empty">No questions due.<br/>Come back later 🧠</p>'
       return
     }
     const q = queue[0]
     main.innerHTML = `
+      ${offlineBanner()}
       <h2>Review · ${queue.length} due</h2>
       <div class="card q-card">
         <div class="q-task">${esc(q.taskTitle)}</div>
@@ -336,7 +406,16 @@
         b.textContent = label
         b.onclick = async () => {
           queue.shift()
-          await api('review/' + q.id, { method: 'POST', body: JSON.stringify({ grade }) })
+          await mutate(
+            { t: 'review', id: q.id, grade },
+            () => api('review/' + q.id, { method: 'POST', body: JSON.stringify({ grade }) }),
+            () => {
+              // Graded cards leave the phone's saved queue too, so an offline
+              // session never shows them twice.
+              const hit = cacheGet('review')
+              if (hit) cacheSet('review', { due: (hit.data.due || []).filter((x) => x.id !== q.id) })
+            }
+          )
           render()
         }
         g.appendChild(b)
@@ -389,9 +468,13 @@
     $('#cap-send').onclick = async () => {
       const v = $('#cap').value.trim()
       if (!v) return
-      await api('capture', { method: 'POST', body: JSON.stringify({ text: v }) })
+      await mutate(
+        { t: 'capture', text: v },
+        () => api('capture', { method: 'POST', body: JSON.stringify({ text: v }) }),
+        null
+      )
       $('#cap').value = ''
-      toast('Saved to scratchpad ✓')
+      toast(offlineSince ? 'Saved on phone — will sync to PC ✓' : 'Saved to scratchpad ✓')
     }
   }
 

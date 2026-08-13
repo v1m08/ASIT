@@ -452,6 +452,26 @@ async function runCompanionSmokeTest(): Promise<void> {
     if (settingsSvc.getSettings().companionSubs.length !== 1) fail('subscription not stored')
     console.log('[companion-smoke] push subscriptions validated + stored')
 
+    // Offline sync: queued ops replay in order, junk ops are skipped
+    const sync = (await (
+      await api('sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          ops: [
+            { t: 'todoadd', text: 'offline-queued todo' },
+            { t: 'capture', text: 'offline capture\nto-do: from the bus' },
+            { t: 'bogus', x: 1 }
+          ]
+        })
+      })
+    ).json()) as { applied: number }
+    if (sync.applied !== 2) fail(`sync applied ${sync.applied}, expected 2`)
+    if (!todosSvc.listTodos(false).some((t) => t.text === 'offline-queued todo'))
+      fail('synced todo missing')
+    if (!todosSvc.listTodos(false).some((t) => t.text === 'from the bus'))
+      fail('synced capture did not to-do-capture')
+    console.log('[companion-smoke] offline sync replays queued ops')
+
     // Pairing-code flow (how a fresh home-screen install authenticates)
     const started = (await (await fetch(`${base}/api/pair/start`, { method: 'POST' })).json()) as {
       requestId: string
