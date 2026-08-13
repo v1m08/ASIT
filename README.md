@@ -36,6 +36,8 @@ npm run dist
 
 **The agent can drive the app.** Chat runs with file tools scoped to the workspace folder and controls the app through an append-only action protocol — opening resources, adding URLs, filling and clicking elements on open pages (real input events, label-targeted, iframe-aware), saving reusable **skills** (`./name` replays deterministic flows instantly, zero tokens), and setting **watches** that resume work when a page changes ("when the Continue button enables…").
 
+**Jarvis — the universal agent.** 🤖 (Ctrl+J) opens the agent that works *across* workspaces and acts, not just answers: "add the syllabus link to CS 1331", "what's due anywhere this week?", "generate questions from the bio slides". It reads every AI-enabled workspace, drives the app through the same action protocol as workspace chats (with explicit per-workspace targeting only it is allowed to use), and keeps a deliberately bounded rolling session — context stays cheap. Also available on the phone (Ask tab → 🤖). Voice is the planned next mouth for the same core.
+
 **Quick assistant.** ⚡ (Ctrl+K) opens a compact cross-workspace assistant on the fastest model. `?keywords` greps your logged-in mail without an agent, `?otp` grabs a login code straight to clipboard, `?g query` does an instant extractive Google answer.
 
 **Keyboard-first.** Tab / Shift+Tab cycle a focus ring of the zones that matter (panes → notes → chat), Ctrl+1…9 jump directly, Ctrl+K assistant, Ctrl+L address bar — all working even while an embedded page holds focus.
@@ -55,6 +57,7 @@ npm run dist
 | `Tab` / `Shift+Tab` | everywhere (even inside an embedded page) | Cycle the focus ring — only the zones that matter: panes → notes → chat, wrapping around. Landing on the chat puts the caret in the message box. Inside dialogs and small forms, Tab stays field-to-field. |
 | `Ctrl+1` … `Ctrl+9` | everywhere | Jump straight to zone N. Workspace: `1` left pane, `2` right pane, `3` chat. Home: `1` workspace list, `2` browser, `3` notes, `4` chat. |
 | `Ctrl+K` | everywhere | Toggle the ⚡ quick assistant — opens with the cursor ready; pressing it again (or `Esc`) closes it and returns focus where you were. |
+| `Ctrl+J` | everywhere | Toggle 🤖 Jarvis, the universal agent (same return-focus behavior). |
 | `Ctrl+L` | home | Focus the browser address bar, text selected. `Esc` returns. |
 | `↑` / `↓`, `Enter` | workspace list | Walk the list, open the selected workspace. |
 | `Enter` / `Shift+Enter` | chat + assistant | Send / newline. While a `/` or `./` popup is open, `↑↓` pick, `Enter` or `Tab` insert, `Esc` dismisses. |

@@ -240,6 +240,55 @@ export function deleteTask(id: string): void {
 
 const SCRATCH_SLUG = 'scratchpad'
 
+// Jarvis (the universal agent) lives in a hidden archived task like the
+// scratchpad: it gets a real folder for the action protocol (actions.ndjson,
+// actions-result.md, worklog) while staying out of every list, index, and
+// export. Its CLI sessions run with cwd = tasks ROOT so it can read every
+// AI-enabled workspace — private tasks stay physically out of reach.
+const JARVIS_SLUG = 'jarvis'
+let jarvisIdCache: string | null = null
+
+export function getOrCreateJarvis(): Task {
+  const row = getDb()
+    .prepare("SELECT * FROM tasks WHERE slug = ? AND status = 'archived'")
+    .get(JARVIS_SLUG) as Record<string, unknown> | undefined
+  if (row) {
+    const t = rowToTask(row)
+    jarvisIdCache = t.id
+    return t
+  }
+  const task = createTask({ title: 'Jarvis' })
+  getDb()
+    .prepare("UPDATE tasks SET slug = ?, status = 'archived' WHERE id = ?")
+    .run(JARVIS_SLUG, task.id)
+  writeTasksIndex()
+  jarvisIdCache = task.id
+  return { ...task, slug: JARVIS_SLUG, status: 'archived' }
+}
+
+export function jarvisTaskId(): string | null {
+  if (jarvisIdCache) return jarvisIdCache
+  const row = getDb()
+    .prepare("SELECT id FROM tasks WHERE slug = ? AND status = 'archived'")
+    .get(JARVIS_SLUG) as { id: string } | undefined
+  jarvisIdCache = row?.id ?? null
+  return jarvisIdCache
+}
+
+// Fuzzy workspace lookup for Jarvis's `workspace` action targeting. Private
+// (no-AI) workspaces are never resolvable — invariant 8 extends to Jarvis.
+export function resolveWorkspace(name: string): Task | null {
+  const needle = name.trim().toLowerCase()
+  if (!needle) return null
+  const candidates = listTasks().filter((t) => !t.aiDisabled)
+  return (
+    candidates.find((t) => t.title.toLowerCase() === needle) ??
+    candidates.find((t) => t.title.toLowerCase().includes(needle)) ??
+    candidates.find((t) => t.slug.includes(needle.replace(/[^a-z0-9]+/g, '-'))) ??
+    null
+  )
+}
+
 export function getOrCreateScratch(): Task {
   const row = getDb()
     .prepare("SELECT * FROM tasks WHERE slug = ? AND status = 'archived'")

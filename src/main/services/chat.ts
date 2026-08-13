@@ -31,7 +31,7 @@ function appendWorklog(folderPath: string, userText: string, assistantText: stri
 
 // Specific, human-readable enumeration of what the agent is doing — shown
 // live as a step trail in the chat and on the activity pill hover.
-function toolStatus(name: string, input: Record<string, unknown>): string {
+export function toolStatus(name: string, input: Record<string, unknown>): string {
   const path = typeof input.file_path === 'string' ? input.file_path : ''
   const file = path ? basename(path) : ''
 

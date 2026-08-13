@@ -187,13 +187,18 @@ declare global {
         list: () => Promise<
           {
             id: string
-            kind: 'chat' | 'assistant' | 'questions' | 'watch'
+            kind: 'chat' | 'assistant' | 'questions' | 'watch' | 'jarvis'
             taskId: string | null
             label: string
             detail: string | null
             startedAt: number
           }[]
         >
+      }
+      jarvis: {
+        ask: (prompt: string) => Promise<void>
+        cancel: () => Promise<void>
+        newSession: () => Promise<void>
       }
       companion: {
         status: () => Promise<import('@shared/types').CompanionStatus>

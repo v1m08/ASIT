@@ -8,7 +8,7 @@ import { bus } from './bus'
 
 export interface ActivityItem {
   id: string
-  kind: 'chat' | 'assistant' | 'questions' | 'watch'
+  kind: 'chat' | 'assistant' | 'questions' | 'watch' | 'jarvis'
   taskId: string | null
   label: string
   detail: string | null // live status ("Running: python train.py…") for hover

@@ -19,6 +19,8 @@ export default function StatusCluster(): JSX.Element {
   const notice = useStore((s) => s.notice)
   const assistantOpen = useStore((s) => s.assistantOpen)
   const setAssistantOpen = useStore((s) => s.setAssistantOpen)
+  const jarvisOpen = useStore((s) => s.jarvisOpen)
+  const setJarvisOpen = useStore((s) => s.setJarvisOpen)
   const openTask = useStore((s) => s.openTask)
   const activeTaskId = useStore((s) => s.activeTask?.id)
   const [now, setNow] = useState(Date.now())
@@ -65,6 +67,13 @@ export default function StatusCluster(): JSX.Element {
         onClick={() => setAssistantOpen(!assistantOpen)}
       >
         ⚡
+      </button>
+      <button
+        className={`assistant-launcher ${jarvisOpen ? 'active' : ''}`}
+        title="Jarvis — universal agent (Ctrl+J)"
+        onClick={() => setJarvisOpen(!jarvisOpen)}
+      >
+        🤖
       </button>
     </div>
   )

@@ -19,6 +19,7 @@ import { readNote, writeNote } from './resources'
 import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
+import { askJarvisText } from './jarvis'
 
 // Phone companion: a small HTTP+WebSocket server for the PWA on the user's
 // phone. SECURITY MODEL — three layers, all required:
@@ -379,7 +380,11 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     const b = await readBody(req)
     const prompt = String(b.prompt ?? '').trim()
     if (!prompt) return sendJson(res, 400, { error: 'empty' })
-    const reply = await phoneAssistant(prompt.slice(0, 2000))
+    // mode 'jarvis' = the universal agent (can act); default = fast read-only.
+    const reply =
+      b.mode === 'jarvis'
+        ? await askJarvisText(prompt.slice(0, 2000))
+        : await phoneAssistant(prompt.slice(0, 2000))
     return sendJson(res, 200, { reply })
   }
   if (path === 'push/key' && method === 'GET') {

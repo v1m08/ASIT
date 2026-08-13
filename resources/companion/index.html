@@ -395,16 +395,23 @@
     }
   }
 
-  // ---- Ask (global quick assistant; ?g / ?otp / ?keywords work too)
+  // ---- Ask: ⚡ quick lookup (read-only, fast) or 🤖 Jarvis (acts on the app)
   const askLog = []
+  let askMode = localStorage.getItem('asit-askmode') || 'quick'
   function renderAsk() {
     main.innerHTML = `
-      <h2>Quick assistant</h2>
+      <h2>Ask</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button class="btn btn-sm ${askMode === 'quick' ? '' : 'btn-ghost'}" id="mode-quick">⚡ Quick</button>
+        <button class="btn btn-sm ${askMode === 'jarvis' ? '' : 'btn-ghost'}" id="mode-jarvis">🤖 Jarvis</button>
+      </div>
       <div class="card row">
-        <input type="text" id="ask-in" placeholder="Ask anything… ( ?g search · ?otp )" class="grow" />
+        <input type="text" id="ask-in" placeholder="${askMode === 'jarvis' ? 'Tell Jarvis what to do…' : 'Ask anything… ( ?g search · ?otp )'}" class="grow" />
         <button class="btn btn-sm" id="ask-go">➤</button>
       </div>
       <div id="ask-log"></div>`
+    document.getElementById('mode-quick').onclick = () => { askMode = 'quick'; localStorage.setItem('asit-askmode', askMode); renderAsk() }
+    document.getElementById('mode-jarvis').onclick = () => { askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode); renderAsk() }
     const log = $('#ask-log')
     const draw = () => {
       log.innerHTML = askLog.map((x) => `
@@ -422,7 +429,7 @@
       askLog.unshift(entry)
       draw()
       try {
-        const { reply } = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v }) })
+        const { reply } = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v, mode: askMode }) })
         entry.a = reply
       } catch (err) {
         entry.a = 'Failed: ' + err.message

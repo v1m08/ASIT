@@ -129,6 +129,15 @@ export const IPC = {
   NOTES_SAVE_IMAGE: 'notes:save-image',
   NOTES_READ_IMAGE: 'notes:read-image', // relative src → data: URL for preview
 
+  // Jarvis (universal agent)
+  JARVIS_ASK: 'jarvis:ask',
+  JARVIS_CANCEL: 'jarvis:cancel',
+  JARVIS_NEW: 'jarvis:new',
+  JARVIS_STREAM: 'jarvis:stream', // push M→R
+  JARVIS_STATUS: 'jarvis:status', // push M→R
+  JARVIS_DONE: 'jarvis:done', // push M→R
+  JARVIS_ERROR: 'jarvis:error', // push M→R
+
   // phone companion
   COMPANION_STATUS: 'companion:status',
   COMPANION_SET_ENABLED: 'companion:set-enabled',

@@ -4,7 +4,7 @@ import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import type { UpdateTaskInput } from '@shared/types'
 import { getDb, newId, nowIso } from '../db'
-import { getTask, refreshClaudeMd, updateTask } from './tasks'
+import { getTask, jarvisTaskId, refreshClaudeMd, resolveWorkspace, updateTask } from './tasks'
 import { addUrlResource } from './resources'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
@@ -49,21 +49,15 @@ export interface AppAction {
   label?: string
   page?: number
   ms?: number
+  // Universal-agent (Jarvis) only: act inside a named workspace. Rejected for
+  // every other agent — a workspace agent must never cross into another.
+  workspace?: string
   text?: string
   gone_label?: string
   gone_text?: string
 }
 
 let getWindow: (() => BrowserWindow | null) | null = null
-let watcher: FSWatcher | null = null
-let watchedTaskId: string | null = null
-let processedBytes = 0
-let debounceTimer: NodeJS.Timeout | null = null
-// Feedback loop: every processed batch is echoed to .asit/actions-result.md
-// with per-action outcomes so the MODEL can verify what happened. Without
-// this it was acting blind — the single biggest reason agent flows failed.
-let batchCounter = 0
-let recentBatches: string[] = []
 
 const MUTATING_ACTIONS = new Set([
   'page_click',
@@ -87,112 +81,160 @@ export function actionsFileFor(taskFolder: string): string {
   return join(taskFolder, '.asit', 'actions.ndjson')
 }
 
-export function watchTaskActions(taskId: string): void {
-  if (watchedTaskId === taskId && watcher) return
-  stopWatching()
+// One watcher instance per agent surface. The open workspace gets one that
+// re-targets as the user navigates; the universal agent (Jarvis) holds its
+// own permanent one. Each carries its own byte offset and feedback batches —
+// the state was module-global before, which would have made two watchers
+// corrupt each other's offsets.
+class ActionsWatcher {
+  private watcher: FSWatcher | null = null
+  private taskId: string | null = null
+  private processedBytes = 0
+  private debounceTimer: NodeJS.Timeout | null = null
+  // Feedback loop: every processed batch is echoed to .asit/actions-result.md
+  // with per-action outcomes so the MODEL can verify what happened. Without
+  // this it was acting blind — the single biggest reason agent flows failed.
+  private batchCounter = 0
+  private recentBatches: string[] = []
 
-  const task = getTask(taskId)
-  if (!task) return
-  const dir = join(task.folderPath, '.asit')
-  mkdirSync(dir, { recursive: true })
-  const file = actionsFileFor(task.folderPath)
-  if (!existsSync(file)) {
-    try {
-      writeFileSync(file, '')
-    } catch {
-      // best-effort
+  start(taskId: string): void {
+    if (this.taskId === taskId && this.watcher) return
+    this.stop()
+
+    const task = getTask(taskId)
+    if (!task) return
+    const dir = join(task.folderPath, '.asit')
+    mkdirSync(dir, { recursive: true })
+    const file = actionsFileFor(task.folderPath)
+    if (!existsSync(file)) {
+      try {
+        writeFileSync(file, '')
+      } catch {
+        // best-effort
+      }
     }
+
+    // Skip anything already in the file — only NEW commands run.
+    this.processedBytes = existsSync(file) ? statSync(file).size : 0
+    this.taskId = taskId
+    this.batchCounter = 0
+    this.recentBatches = []
+
+    this.watcher = watch(dir, (_event, filename) => {
+      if (filename !== 'actions.ndjson') return
+      if (this.debounceTimer) clearTimeout(this.debounceTimer)
+      this.debounceTimer = setTimeout(() => void this.processNewLines(taskId, file), 120)
+    })
+    // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
+    // renamed; without a handler that would crash the main process.
+    this.watcher.on('error', () => this.stop())
   }
 
-  // Skip anything already in the file — only NEW commands run.
-  processedBytes = existsSync(file) ? statSync(file).size : 0
-  watchedTaskId = taskId
-  batchCounter = 0
-  recentBatches = []
+  current(): string | null {
+    return this.taskId
+  }
 
-  watcher = watch(dir, (_event, filename) => {
-    if (filename !== 'actions.ndjson') return
-    if (debounceTimer) clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => void processNewLines(taskId, file), 120)
-  })
-  // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
-  // renamed; without a handler that would crash the main process.
-  watcher.on('error', () => stopWatching())
+  stop(): void {
+    this.watcher?.close()
+    this.watcher = null
+    this.taskId = null
+    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+  }
+
+  private async processNewLines(taskId: string, file: string): Promise<void> {
+    if (!existsSync(file)) return
+    // Offsets are BYTES (statSync.size) — slice the raw buffer, never the
+    // decoded string, or any non-ASCII character shifts every later offset.
+    const buf = readFileSync(file)
+    if (buf.length <= this.processedBytes) {
+      this.processedBytes = Math.min(this.processedBytes, buf.length)
+      return
+    }
+    const fresh = buf.subarray(this.processedBytes).toString('utf-8')
+    this.processedBytes = buf.length
+
+    const results: { line: string; result: string }[] = []
+    let mutated = false
+    for (const line of fresh.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        const action = JSON.parse(trimmed) as AppAction
+        const result = await executeAction(taskId, action) // sequential, ordered
+        results.push({ line: trimmed.slice(0, 160), result })
+        if (MUTATING_ACTIONS.has(action.action)) mutated = true
+      } catch {
+        results.push({ line: trimmed.slice(0, 160), result: 'ignored: not valid JSON' })
+      }
+    }
+    if (results.length === 0) return
+
+    // Close the loop: settle, refresh what the model sees, then report.
+    const task = getTask(taskId)
+    if (mutated) {
+      await new Promise((r) => setTimeout(r, 1200)) // let the page react
+      try {
+        if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
+      } catch {
+        // snapshot refresh is best-effort
+      }
+    }
+    this.batchCounter++
+    const section = [
+      `## Batch ${this.batchCounter} — processed, ${results.length} action(s)${mutated ? ' — page snapshots in .asit/pages/ were REFRESHED after these actions' : ''}`,
+      ...results.map((r) => `- \`${r.line}\`\n  → ${r.result}`)
+    ].join('\n')
+    this.recentBatches = [...this.recentBatches.slice(-9), section]
+    if (task) {
+      try {
+        writeFileSync(
+          join(task.folderPath, '.asit', 'actions-result.md'),
+          [
+            '# Action results (newest batch LAST)',
+            'Read this after appending actions. If your newest batch is missing, execution is still running — read again.',
+            '',
+            ...this.recentBatches
+          ].join('\n\n')
+        )
+      } catch {
+        // best-effort
+      }
+    }
+  }
+}
+
+const workspaceWatcher = new ActionsWatcher()
+const jarvisWatcher = new ActionsWatcher()
+
+export function watchTaskActions(taskId: string): void {
+  workspaceWatcher.start(taskId)
 }
 
 export function watchedTaskId_(): string | null {
-  return watchedTaskId
+  return workspaceWatcher.current()
 }
 
 export function stopWatching(): void {
-  watcher?.close()
-  watcher = null
-  watchedTaskId = null
-  if (debounceTimer) clearTimeout(debounceTimer)
+  workspaceWatcher.stop()
 }
 
-async function processNewLines(taskId: string, file: string): Promise<void> {
-  if (!existsSync(file)) return
-  // Offsets are BYTES (statSync.size) — slice the raw buffer, never the
-  // decoded string, or any non-ASCII character shifts every later offset.
-  const buf = readFileSync(file)
-  if (buf.length <= processedBytes) {
-    processedBytes = Math.min(processedBytes, buf.length)
-    return
-  }
-  const fresh = buf.subarray(processedBytes).toString('utf-8')
-  processedBytes = buf.length
-
-  const results: { line: string; result: string }[] = []
-  let mutated = false
-  for (const line of fresh.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    try {
-      const action = JSON.parse(trimmed) as AppAction
-      const result = await executeAction(taskId, action) // sequential, ordered
-      results.push({ line: trimmed.slice(0, 160), result })
-      if (MUTATING_ACTIONS.has(action.action)) mutated = true
-    } catch {
-      results.push({ line: trimmed.slice(0, 160), result: 'ignored: not valid JSON' })
-    }
-  }
-  if (results.length === 0) return
-
-  // Close the loop: settle, refresh what the model sees, then report.
-  const task = getTask(taskId)
-  if (mutated) {
-    await new Promise((r) => setTimeout(r, 1200)) // let the page react
-    try {
-      if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
-    } catch {
-      // snapshot refresh is best-effort
-    }
-  }
-  batchCounter++
-  const section = [
-    `## Batch ${batchCounter} — processed, ${results.length} action(s)${mutated ? ' — page snapshots in .asit/pages/ were REFRESHED after these actions' : ''}`,
-    ...results.map((r) => `- \`${r.line}\`\n  → ${r.result}`)
-  ].join('\n')
-  recentBatches = [...recentBatches.slice(-9), section]
-  if (task) {
-    try {
-      writeFileSync(
-        join(task.folderPath, '.asit', 'actions-result.md'),
-        [
-          '# Action results (newest batch LAST)',
-          'Read this after appending actions. If your newest batch is missing, execution is still running — read again.',
-          '',
-          ...recentBatches
-        ].join('\n\n')
-      )
-    } catch {
-      // best-effort
-    }
-  }
+export function watchJarvisActions(taskId: string): void {
+  jarvisWatcher.start(taskId)
 }
 
 export async function executeAction(taskId: string, action: AppAction): Promise<string> {
+  // `workspace` re-targeting: Jarvis names a workspace and the action executes
+  // exactly as if that workspace's own agent issued it — same pane-ownership
+  // scope, same folder, no special powers. Every other agent is refused: a
+  // workspace agent must never reach into another workspace.
+  if (action.workspace !== undefined) {
+    if (taskId !== jarvisTaskId())
+      return 'workspace targeting is only available to the universal agent'
+    const target = resolveWorkspace(String(action.workspace))
+    if (!target) return `no workspace matching "${String(action.workspace).slice(0, 60)}"`
+    return executeAction(target.id, { ...action, workspace: undefined })
+  }
+
   const task = getTask(taskId)
   if (!task) return 'task not found'
 

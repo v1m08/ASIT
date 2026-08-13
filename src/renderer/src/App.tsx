@@ -4,6 +4,7 @@ import Home from './screens/Home'
 import Workspace from './screens/Workspace'
 import AccountsModal from './components/AccountsModal'
 import AssistantBar from './components/AssistantBar'
+import JarvisPanel from './components/JarvisPanel'
 import StatusListener from './components/StatusListener'
 import { useFocusRing } from './hooks/useFocusRing'
 
@@ -33,6 +34,7 @@ export default function App(): JSX.Element {
     <>
       {view === 'home' ? <Home /> : <Workspace />}
       <AssistantBar />
+      <JarvisPanel />
       <StatusListener />
       {showWelcome && <AccountsModal welcome onClose={closeWelcome} />}
     </>

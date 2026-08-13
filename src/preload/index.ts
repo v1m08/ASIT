@@ -76,6 +76,11 @@ const api = {
   activity: {
     list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST)
   },
+  jarvis: {
+    ask: (prompt: string) => ipcRenderer.invoke(IPC.JARVIS_ASK, prompt),
+    cancel: () => ipcRenderer.invoke(IPC.JARVIS_CANCEL),
+    newSession: () => ipcRenderer.invoke(IPC.JARVIS_NEW)
+  },
   companion: {
     status: () => ipcRenderer.invoke(IPC.COMPANION_STATUS),
     setEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.COMPANION_SET_ENABLED, enabled),

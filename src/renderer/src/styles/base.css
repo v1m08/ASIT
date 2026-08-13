@@ -878,6 +878,36 @@ body.assistant-open .home-main {
   line-height: 1.6;
 }
 
+/* Jarvis: same docked-right pattern, more room — it does real work. */
+.jarvis-panel {
+  width: 440px;
+  height: min(78vh, 680px);
+}
+
+body.assistant-open:has(.jarvis-panel) .workspace,
+body.assistant-open:has(.jarvis-panel) .home-main {
+  margin-right: 464px;
+}
+
+.jarvis-steps {
+  margin-top: 8px;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.jarvis-step {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+}
+
+.jarvis-step-live {
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
 .assistant-panel-head {
   display: flex;
   align-items: center;

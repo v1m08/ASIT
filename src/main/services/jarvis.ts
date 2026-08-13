@@ -1,0 +1,188 @@
+import type { WebContents } from 'electron'
+import { join } from 'path'
+import { appendFileSync, mkdirSync } from 'fs'
+import { IPC } from '@shared/ipc-contract'
+import { getSettings } from './settings'
+import { getOrCreateJarvis, tasksRoot, writeTasksIndex } from './tasks'
+import { runClaudeStream, type ClaudeStreamHandle } from './claude'
+import { logUsage } from './usage'
+import { clearActivity, reportActivity } from './activity'
+import { listSkills } from './skills'
+import { toolStatus } from './chat'
+import { bus } from './bus'
+
+// Jarvis: the universal agent. One brain, many mouths — the desktop panel
+// today, the phone tomorrow, voice after that. Every surface calls the same
+// core (`ask` with callbacks), so adding voice means adding ears and a mouth,
+// never re-plumbing the agent.
+//
+// Architecture:
+//   context   cwd = tasks ROOT → it can read every AI-enabled workspace, and
+//             the auto-maintained tasks index makes them discoverable. Private
+//             workspaces live physically outside this tree (invariant 8).
+//   hands     the same file-based action protocol as workspace agents, via its
+//             own hidden task folder — plus the `workspace` field, which only
+//             Jarvis may use, to act inside a named workspace with exactly
+//             that workspace's privileges (pane ownership included).
+//   memory    BOUNDED by design: one rolling CLI session, resumed while the
+//             conversation is warm, expired after 10 idle minutes. The
+//             briefing re-primes a fresh session; nothing taxes the model
+//             with unbounded history.
+
+const SESSION_IDLE_MS = 10 * 60_000
+
+interface JarvisCallbacks {
+  onDelta: (delta: string) => void
+  onStatus: (status: string) => void
+  onDone: (text: string, costUsd: number) => void
+  onError: (message: string) => void
+}
+
+let sessionId: string | undefined
+let lastTurnAt = 0
+let running: ClaudeStreamHandle | null = null
+
+function jarvisFolder(): string {
+  return getOrCreateJarvis().folderPath
+}
+
+function briefing(): string {
+  const task = getOrCreateJarvis()
+  const actionsFile = join(task.folderPath, '.asit', 'actions.ndjson')
+  const resultFile = join(task.folderPath, '.asit', 'actions-result.md')
+  const skills = listSkills()
+    .map((s) => `./${s.name}`)
+    .join(', ')
+  return [
+    'You are JARVIS, the universal agent for this user\'s ASIT app — you work ACROSS all their workspaces.',
+    'Your cwd is the workspaces root. CLAUDE.md here indexes every workspace; each folder has its own CLAUDE.md, notes.md, pdfs/ (with extracted .txt), and .asit/worklog.md.',
+    '',
+    '## Acting (not just answering)',
+    `You control the app by APPENDING one JSON object per line to: ${actionsFile}`,
+    '(read the file first, then Write it back with your new lines appended — never truncate).',
+    'Verbs: {"action":"open","target":"<resourceId>|builtin-notes"} · {"action":"add_url","title","url"} · {"action":"add_questions","questions":[{q,a,choices?,correct_index?}]} · {"action":"generate_questions","sources":["file"],"mode":"generate|extract","count"} · {"action":"set_task","title?","priority?","due_date?","status?"} · {"action":"save_skill","name","content"} · {"action":"watch","label?|text?|gone_label?|gone_text?","page?","prompt?","skill?","timeout_min?"} · page interaction: {"action":"page_snapshot"} then {"action":"page_click","label"|"ref"} / page_fill / page_select / page_key {"key":"Ctrl+P"} / page_type / navigate {"url"} · {"action":"wait","ms"}.',
+    `To act INSIDE a specific workspace, add "workspace":"<its name>" to any action — e.g. {"action":"add_url","workspace":"CS 1331","title":"Syllabus","url":"..."}. Only you can do this.`,
+    '',
+    '## THE LOOP (never act blind)',
+    `1. Append actions → 2. Read ${resultFile} for per-action outcomes → 3. If you interacted with pages, re-read the refreshed snapshots in the target workspace's .asit/pages/ → 4. Continue or report.`,
+    'Never claim something worked without reading the result file. Never promise future action without arming a watch.',
+    '',
+    skills ? `## Saved skills (auto-flows the app can replay): ${skills}` : '',
+    '## Style',
+    'Be concise and decisive. Say what you did, not what you might do. If a request is ambiguous about WHICH workspace, pick the obvious one and say so.'
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function appendWorklog(prompt: string, reply: string): void {
+  try {
+    const dir = join(jarvisFolder(), '.asit')
+    mkdirSync(dir, { recursive: true })
+    appendFileSync(
+      join(dir, 'worklog.md'),
+      `\n## ${new Date().toISOString()}\n**Asked:** ${prompt.slice(0, 400)}\n**Did:** ${reply.slice(0, 800)}\n`
+    )
+  } catch {
+    // best-effort
+  }
+}
+
+export function jarvisBusy(): boolean {
+  return running !== null
+}
+
+export function resetJarvisSession(): void {
+  sessionId = undefined
+}
+
+export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
+  if (running) {
+    cb.onError('Jarvis is mid-task — stop it first.')
+    return
+  }
+  getOrCreateJarvis() // folder + watcher target exist before the model acts
+  writeTasksIndex()
+
+  const fresh = !sessionId || Date.now() - lastTurnAt > SESSION_IDLE_MS
+  if (fresh) sessionId = undefined
+  const fullPrompt = fresh ? `${briefing()}\n\n---\n\n${prompt}` : prompt
+
+  running = { cancel: () => undefined }
+  reportActivity('jarvis', { kind: 'jarvis', label: '🤖 Jarvis', detail: prompt.slice(0, 120) })
+
+  const handle = runClaudeStream(
+    {
+      cwd: tasksRoot(),
+      prompt: fullPrompt,
+      resumeSessionId: sessionId,
+      model: getSettings().jarvisModel,
+      allowedTools: 'Read(**),Glob,Grep(**),Edit(**),Write(**)',
+      timeoutMs: 10 * 60_000
+    },
+    {
+      onInit: (id) => {
+        sessionId = id
+      },
+      onDelta: cb.onDelta,
+      onToolUse: (name, input) => {
+        const status = toolStatus(name, input)
+        reportActivity('jarvis', { kind: 'jarvis', label: '🤖 Jarvis', detail: status })
+        cb.onStatus(status)
+      },
+      onResult: ({ text, isError, usage }) => {
+        running = null
+        lastTurnAt = Date.now()
+        clearActivity('jarvis')
+        logUsage(null, 'jarvis', usage)
+        if (isError) {
+          cb.onError(text || 'Jarvis returned an error.')
+          return
+        }
+        appendWorklog(prompt, text)
+        cb.onDone(text, usage.costUsd)
+      },
+      onError: (message) => {
+        running = null
+        clearActivity('jarvis')
+        cb.onError(message)
+      }
+    }
+  )
+  if (running) running = handle
+  else handle.cancel() // cancelled during setup — kill the fresh spawn
+}
+
+// IPC surface for the desktop panel.
+export function askJarvisIpc(prompt: string, sender: WebContents): void {
+  const send = (ch: string, payload: unknown): void => {
+    if (!sender.isDestroyed()) sender.send(ch, payload)
+  }
+  askJarvis(prompt, {
+    onDelta: (delta) => send(IPC.JARVIS_STREAM, { delta }),
+    onStatus: (status) => send(IPC.JARVIS_STATUS, { status }),
+    onDone: (text, costUsd) => {
+      send(IPC.JARVIS_DONE, { text, costUsd })
+      bus.emit('chat-done', { taskId: null, title: 'Jarvis' })
+    },
+    onError: (message) => send(IPC.JARVIS_ERROR, { message })
+  })
+}
+
+// Promise surface for the phone (and, later, voice).
+export function askJarvisText(prompt: string): Promise<string> {
+  return new Promise((resolve) => {
+    askJarvis(prompt, {
+      onDelta: () => undefined,
+      onStatus: () => undefined,
+      onDone: (text) => resolve(text),
+      onError: (message) => resolve(`Jarvis error: ${message}`)
+    })
+  })
+}
+
+export function cancelJarvis(): void {
+  running?.cancel()
+  running = null
+  clearActivity('jarvis')
+}

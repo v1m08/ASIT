@@ -3,7 +3,7 @@ import type { Resource, Settings, Task } from '@shared/types'
 
 export interface ActivityItem {
   id: string
-  kind: 'chat' | 'assistant' | 'questions' | 'watch'
+  kind: 'chat' | 'assistant' | 'questions' | 'watch' | 'jarvis'
   taskId: string | null
   label: string
   detail: string | null
@@ -24,6 +24,8 @@ interface AsitState {
   // nothing is docked permanently, so no screen space is reserved for it.
   assistantOpen: boolean
   setAssistantOpen: (open: boolean) => void
+  jarvisOpen: boolean
+  setJarvisOpen: (open: boolean) => void
   // Background status shown in the header cluster (one listener, many headers).
   activity: ActivityItem[]
   setActivity: (items: ActivityItem[]) => void
@@ -51,8 +53,12 @@ export const useStore = create<AsitState>((set, get) => ({
   settings: null,
   assistantRecall: null,
   setAssistantRecall: (r) => set({ assistantRecall: r }),
+  // The two right-docked panels share the same reserved column — opening one
+  // closes the other.
   assistantOpen: false,
-  setAssistantOpen: (open) => set({ assistantOpen: open }),
+  setAssistantOpen: (open) => set({ assistantOpen: open, ...(open ? { jarvisOpen: false } : {}) }),
+  jarvisOpen: false,
+  setJarvisOpen: (open) => set({ jarvisOpen: open, ...(open ? { assistantOpen: false } : {}) }),
   activity: [],
   setActivity: (items) => set({ activity: items }),
   jobStatus: null,

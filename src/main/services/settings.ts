@@ -11,6 +11,7 @@ const DEFAULTS: Settings = {
   holdToQuitSeconds: 30,
   chatModel: 'default',
   codingModel: 'claude-fable-5',
+  jarvisModel: 'default',
   onboarded: false,
   snippets: {},
   fetchSources: [

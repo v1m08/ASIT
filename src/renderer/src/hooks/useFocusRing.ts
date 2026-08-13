@@ -119,6 +119,21 @@ function toggleAssistant(): void {
   })
 }
 
+function toggleJarvis(): void {
+  const store = useStore.getState()
+  if (store.jarvisOpen) {
+    store.setJarvisOpen(false)
+    if (returnZone?.isConnected) focusZone(returnZone)
+    returnZone = null
+    return
+  }
+  returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
+  store.setJarvisOpen(true)
+  requestAnimationFrame(() => {
+    document.querySelector<HTMLInputElement>('.jarvis-panel input')?.focus()
+  })
+}
+
 function focusSelector(selector: string): void {
   const el = document.querySelector<HTMLElement>(selector)
   if (!el) return
@@ -156,6 +171,9 @@ export function installFocusRing(): () => void {
     if (k === 'k') {
       e.preventDefault()
       toggleAssistant()
+    } else if (k === 'j') {
+      e.preventDefault()
+      toggleJarvis()
     } else if (k === 'l') {
       e.preventDefault()
       focusSelector('.browser-address')
@@ -186,6 +204,7 @@ export function installFocusRing(): () => void {
     } else if (p.type === 'cycle-focus') cycle(!!p.back)
     else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
     else if (p.type === 'focus-assistant') toggleAssistant()
+    else if (p.type === 'focus-jarvis') toggleJarvis()
     else if (p.type === 'focus-address') focusSelector('.browser-address')
     else if (p.type === 'focus-chat') focusSelector('.chat-input-box textarea')
   })

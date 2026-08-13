@@ -73,6 +73,7 @@ export interface Settings {
   holdToQuitSeconds: number
   chatModel: string // 'default' | 'opus' | 'sonnet' | 'haiku' | 'claude-fable-5'
   codingModel: string // model for coding-task chats (same options)
+  jarvisModel: string // model for the universal agent (same options)
   onboarded: boolean
   snippets: Record<string, string> // "/KEY" text-expansion shortcuts
   fetchSources: { name: string; url: string }[] // "?query" quick-fetch sources ({q} = query)

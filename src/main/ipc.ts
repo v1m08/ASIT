@@ -19,6 +19,7 @@ import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
 import * as companion from './services/companion'
+import * as jarvis from './services/jarvis'
 import { runFlow, stopWatching, watchTaskActions, watchedTaskId_ } from './services/actions'
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
@@ -290,6 +291,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return null
     }
   })
+
+  // --- Jarvis (universal agent) ---
+  ipcMain.handle(IPC.JARVIS_ASK, (e, prompt: string) => jarvis.askJarvisIpc(prompt, e.sender))
+  ipcMain.handle(IPC.JARVIS_CANCEL, () => jarvis.cancelJarvis())
+  ipcMain.handle(IPC.JARVIS_NEW, () => jarvis.resetJarvisSession())
 
   // --- phone companion ---
   ipcMain.handle(IPC.COMPANION_STATUS, () => companion.companionStatus())

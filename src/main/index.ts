@@ -7,7 +7,7 @@ import { paneManager } from './services/panes'
 import { lockdown } from './services/lockdown'
 import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
-import { initActions } from './services/actions'
+import { initActions, watchJarvisActions } from './services/actions'
 import { initUsage } from './services/usage'
 import { initActivity } from './services/activity'
 import { initWatchers } from './services/watchers'
@@ -15,6 +15,7 @@ import { initTodos } from './services/todos'
 import { startCompanion, stopCompanion } from './services/companion'
 import { getSettings } from './services/settings'
 import {
+  getOrCreateJarvis,
   getOrCreateScratch,
   listTasks,
   refreshClaudeMd,
@@ -121,6 +122,10 @@ app.whenReady().then(() => {
     runCompanionSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_JARVIS === '1') {
+    runJarvisSmokeTest()
+    return
+  }
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -130,6 +135,13 @@ app.whenReady().then(() => {
   initActivity(() => mainWindow)
   initWatchers(() => mainWindow)
   initTodos(() => mainWindow)
+  // Jarvis's action file is watched for the app's whole lifetime — the
+  // universal agent can act regardless of which screen is open.
+  try {
+    watchJarvisActions(getOrCreateJarvis().id)
+  } catch (err) {
+    console.error('jarvis init failed:', err)
+  }
   if (getSettings().companionEnabled) startCompanion(() => mainWindow)
   relocateLegacyTrash() // old .trash lived inside the assistant-readable tree
   writeTasksIndex() // keep the global-assistant index fresh from startup
@@ -259,6 +271,99 @@ async function runTransferSmokeTest(): Promise<void> {
   } catch (err) {
     settingsSvc.setSettings({ escapePhrase: originalPhrase })
     console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless universal-agent check: ASIT_SMOKE_JARVIS=1 electron out/main/index.js
+// Proves: (1) workspace-targeted actions from Jarvis's file execute in the
+// NAMED workspace; (2) every other agent is refused workspace targeting;
+// (3) private workspaces are unreachable by name; (4) a real CLI turn reads
+// across workspaces from the tasks root (needs a logged-in claude CLI).
+async function runJarvisSmokeTest(): Promise<void> {
+  const tasksSvc = await import('./services/tasks')
+  const actionsSvc = await import('./services/actions')
+  const resourcesSvc = await import('./services/resources')
+  const jarvisSvc = await import('./services/jarvis')
+  const { appendFileSync, writeFileSync, mkdirSync, existsSync, readFileSync } = await import('fs')
+  const { join } = await import('path')
+
+  const fail = (msg: string): never => {
+    console.error('[jarvis-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    const jarvis = tasksSvc.getOrCreateJarvis()
+    const target = tasksSvc.createTask({ title: 'Bio Notes' })
+    const secret = tasksSvc.createTask({ title: 'Secret Diary', aiDisabled: true })
+
+    // (1) Deterministic protocol path: a workspace-targeted action appended to
+    // Jarvis's file must land in the NAMED workspace.
+    actionsSvc.watchJarvisActions(jarvis.id)
+    const jFile = join(jarvis.folderPath, '.asit', 'actions.ndjson')
+    mkdirSync(join(jarvis.folderPath, '.asit'), { recursive: true })
+    if (!existsSync(jFile)) writeFileSync(jFile, '')
+    appendFileSync(
+      jFile,
+      JSON.stringify({
+        action: 'add_url',
+        workspace: 'bio notes',
+        title: 'Cell cycle',
+        url: 'https://example.com/cells'
+      }) + '\n'
+    )
+    let landed = false
+    for (let i = 0; i < 20 && !landed; i++) {
+      await new Promise((r) => setTimeout(r, 300))
+      landed = resourcesSvc.listResources(target.id).some((r) => r.url?.includes('example.com/cells'))
+    }
+    if (!landed) fail('workspace-targeted action did not execute in the named workspace')
+    const resultFile = join(jarvis.folderPath, '.asit', 'actions-result.md')
+    if (!existsSync(resultFile) || !readFileSync(resultFile, 'utf-8').includes('add_url'))
+      fail('action result was not reported back to Jarvis')
+    console.log('[jarvis-smoke] workspace-targeted action executed + result reported')
+
+    // (2) Only Jarvis may retarget.
+    const denied = await actionsSvc.executeAction(target.id, {
+      action: 'add_url',
+      workspace: 'bio notes',
+      title: 'x',
+      url: 'https://example.com/x'
+    })
+    if (!denied.includes('only available to the universal agent'))
+      fail(`workspace targeting not refused for a normal task: "${denied}"`)
+
+    // (3) Private workspaces resolve to nothing.
+    const privDenied = await actionsSvc.executeAction(jarvis.id, {
+      action: 'add_url',
+      workspace: 'secret diary',
+      title: 'x',
+      url: 'https://example.com/x'
+    })
+    if (!privDenied.includes('no workspace matching'))
+      fail(`private workspace was reachable by name: "${privDenied}"`)
+    if (resourcesSvc.listResources(secret.id).length !== 0) fail('private workspace mutated')
+    console.log('[jarvis-smoke] retargeting: others refused, private unreachable')
+
+    // (4) Real CLI turn: read across a workspace from the tasks root.
+    resourcesSvc.writeNote(
+      join(target.folderPath, 'notes.md'),
+      '# Notes\n\nThe secret codeword for this workspace is MITOCHONDRIA.\n'
+    )
+    tasksSvc.refreshClaudeMd(target.id)
+    const reply = await jarvisSvc.askJarvisText(
+      'Find the secret codeword in the Bio Notes workspace notes and reply with ONLY that codeword.'
+    )
+    if (!reply.toUpperCase().includes('MITOCHONDRIA'))
+      fail(`CLI turn missed the codeword; reply: "${reply.slice(0, 200)}"`)
+    console.log('[jarvis-smoke] CLI turn read across workspaces from the root')
+
+    console.log('[jarvis-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[jarvis-smoke] FAIL:', err)
     app.exit(1)
   }
 }

@@ -48,6 +48,7 @@ const NAV_ACCELERATORS: { accel: string; event: Record<string, unknown> }[] = [
   { accel: 'Tab', event: { type: 'cycle-focus', back: false } },
   { accel: 'Shift+Tab', event: { type: 'cycle-focus', back: true } },
   { accel: 'CommandOrControl+K', event: { type: 'focus-assistant' } },
+  { accel: 'CommandOrControl+J', event: { type: 'focus-jarvis' } },
   { accel: 'CommandOrControl+L', event: { type: 'focus-address' } },
   ...Array.from({ length: 9 }, (_, i) => ({
     accel: `CommandOrControl+${i + 1}`,
@@ -192,6 +193,9 @@ class PaneManager {
       if (k === 'k') {
         event.preventDefault()
         this.sendAppEvent({ type: 'focus-assistant' })
+      } else if (k === 'j') {
+        event.preventDefault()
+        this.sendAppEvent({ type: 'focus-jarvis' })
       } else if (k === 'l') {
         event.preventDefault()
         this.sendAppEvent({ type: 'focus-address' })
