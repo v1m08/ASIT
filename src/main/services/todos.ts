@@ -2,6 +2,7 @@ import type { BrowserWindow } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { IPC } from '@shared/ipc-contract'
 import { getDb, newId, nowIso } from '../db'
+import { bus } from './bus'
 
 // Global to-do list. Two sources:
 //  - manual entries from the sidebar
@@ -30,6 +31,7 @@ export function initTodos(getWin: () => BrowserWindow | null): void {
 function pushChanged(): void {
   const win = getWindow?.()
   if (win && !win.isDestroyed()) win.webContents.send(IPC.TODOS_CHANGED)
+  bus.emit('changed', 'todos')
 }
 
 function rowToTodo(r: Record<string, unknown>): Todo {

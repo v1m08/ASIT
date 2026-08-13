@@ -10,6 +10,7 @@ import { paneManager } from './panes'
 import { runClaudeStream, type ClaudeStreamHandle } from './claude'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
+import { bus } from './bus'
 
 // Rolling cross-chat memory: every completed turn is appended here, and each
 // task's CLAUDE.md tells the model to read it — so a brand-new chat knows what
@@ -237,6 +238,7 @@ export async function sendChat(
         insertMessage(chatSessionId, 'assistant', result)
         appendWorklog(task.folderPath, text, result)
         if (!sender.isDestroyed()) sender.send(IPC.CHAT_DONE, { chatSessionId, text: result, usage })
+        bus.emit('chat-done', { taskId: task.id, title: task.title })
       },
       onError: (message) => {
         running.delete(chatSessionId)

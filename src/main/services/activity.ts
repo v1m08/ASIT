@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { IPC } from '@shared/ipc-contract'
+import { bus } from './bus'
 
 // Central registry of everything currently running in the background —
 // chat/agent turns, question jobs, assistant runs. Work lives in the main
@@ -26,6 +27,7 @@ function push(): void {
   if (win && !win.isDestroyed()) {
     win.webContents.send(IPC.ACTIVITY_UPDATED, listActivity())
   }
+  bus.emit('changed', 'activity')
 }
 
 export function listActivity(): ActivityItem[] {

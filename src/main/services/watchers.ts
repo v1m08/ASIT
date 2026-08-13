@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-contract'
 import { getDb, newId } from '../db'
 import { paneManager } from './panes'
 import { clearActivity, reportActivity } from './activity'
+import { bus } from './bus'
 import * as chat from './chat'
 import { listSkills, extractFlow } from './skills'
 import { runFlow, appendResultNote } from './actions'
@@ -46,6 +47,8 @@ export function initWatchers(getWin: () => BrowserWindow | null): void {
 function toast(text: string): void {
   const win = getWindow?.()
   if (win && !win.isDestroyed()) win.webContents.send(IPC.APP_EVENT, { type: 'toast', text })
+  // Watches exist precisely for "walk away and get told" — mirror to phone.
+  bus.emit('notify', { title: 'ASIT', body: text, tag: 'watch' })
 }
 
 function latestChatSessionId(taskId: string): string | null {

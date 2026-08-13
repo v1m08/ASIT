@@ -5,6 +5,7 @@ directories:
 files:
   - out/**
   - package.json
+  - resources/companion/**
   # pdf-parse ships 34MB of test PDFs and four bundled pdf.js versions;
   # only v1.10.100 (its default) is ever loaded.
   - '!node_modules/pdf-parse/test/**'

@@ -27,6 +27,120 @@ function SnippetAdder({ onAdd }: { onAdd: (key: string, value: string) => void }
   )
 }
 
+function PhoneSection(): JSX.Element {
+  const [status, setStatus] = useState<import('@shared/types').CompanionStatus | null>(null)
+  const [qr, setQr] = useState<{ url: string | null; dataUrl: string | null } | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = async (): Promise<void> => {
+    const s = await window.asit.companion.status()
+    setStatus(s)
+    if (s.running) setQr(await window.asit.companion.qr())
+  }
+
+  useEffect(() => {
+    refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  if (!status) return <div />
+
+  async function toggle(): Promise<void> {
+    setBusy(true)
+    try {
+      setStatus(await window.asit.companion.setEnabled(!status!.enabled))
+      await refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function serve(): Promise<void> {
+    setBusy(true)
+    setMsg(null)
+    try {
+      setMsg(await window.asit.companion.tailscaleServe())
+      await refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="phone-section">
+      <div className="row-between">
+        <span>
+          📱 Phone companion{' '}
+          {status.running && <span className="badge badge-accent">running</span>}
+        </span>
+        <button className="btn" disabled={busy} onClick={toggle}>
+          {status.enabled ? 'Turn off' : 'Turn on'}
+        </button>
+      </div>
+      {status.enabled && (
+        <>
+          {status.tailscale === 'not-installed' && (
+            <p className="transfer-note">
+              Install <b>Tailscale</b> on this PC and your phone (free —{' '}
+              <a
+                href="https://tailscale.com/download"
+                onClick={(e) => {
+                  e.preventDefault()
+                  window.asit.resources.openExternal({ url: 'https://tailscale.com/download' })
+                }}
+              >
+                tailscale.com/download
+              </a>
+              ), sign both into the same account, then come back here. Your phone connects over
+              your private encrypted network — nothing is exposed to the internet.
+            </p>
+          )}
+          {status.tailscale === 'not-running' && (
+            <p className="transfer-note">Tailscale is installed but not running — start it, then reopen Settings.</p>
+          )}
+          {status.tailscale === 'ok' && (
+            <>
+              <div className="transfer-buttons">
+                <button className="btn" disabled={busy} onClick={serve}>
+                  🌐 Expose on my tailnet
+                </button>
+                <button
+                  className="btn"
+                  disabled={busy || status.subscriptions === 0}
+                  title={status.subscriptions === 0 ? 'Pair a phone first' : ''}
+                  onClick={() => window.asit.companion.testPush()}
+                >
+                  🔔 Test notification
+                </button>
+                <button
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  title="Invalidates the QR link and disconnects all paired phones"
+                  onClick={async () => setStatus(await window.asit.companion.revoke())}
+                >
+                  Revoke pairing
+                </button>
+              </div>
+              {qr?.dataUrl && (
+                <div className="phone-qr">
+                  <img src={qr.dataUrl} alt="Pairing QR" width={180} height={180} />
+                  <p className="transfer-note">
+                    On your phone: scan this (Tailscale connected), then in Safari use{' '}
+                    <b>Share → Add to Home Screen</b>. Open it from the home screen and tap 🔔
+                    Enable for notifications. {status.subscriptions > 0 && `Paired devices with push: ${status.subscriptions}.`}
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+          {msg && <p className="transfer-msg">{msg}</p>}
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsModal({ onClose }: { onClose: () => void }): JSX.Element {
   useOverlay(true)
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -171,6 +285,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
         <button className="btn" onClick={() => setShowAccounts(true)}>
           🔑 Connected accounts…
         </button>
+
+        <PhoneSection />
 
         <div className="transfer-section">
           <div className="transfer-buttons">

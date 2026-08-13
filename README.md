@@ -42,6 +42,8 @@ npm run dist
 
 **Private workspaces.** 🔒 disables AI entirely: no chat, no generation, excluded from the assistant, backups, and indexes — enforced physically (the folder lives outside every AI-readable directory), not by prompt.
 
+**Phone companion.** Settings → 📱 Phone serves a small web app to your phone over your own [Tailscale](https://tailscale.com) network (free, WireGuard-encrypted, nothing exposed to the internet). Scan the QR, *Add to Home Screen*, and you get: global to-dos, spaced-repetition review on the go, quick capture into the scratchpad (with `to-do:` auto-capture), and the quick assistant (`?g` / `?otp` included). Push notifications — watches firing, question jobs finishing, chat replies landing while you're away — arrive via standard Web Push, whose payloads are end-to-end encrypted (RFC 8291), so relays only ever see ciphertext. Pairing is a random token in the QR; revoke it any time.
+
 **Backup.** Settings → Export produces a zip of workspaces, files, and questions with SR state; sensitive data (escape phrase, logins, usage) is excluded. Import restores everything as new workspaces.
 
 ## Cheat sheet
@@ -94,7 +96,7 @@ Alt+Tab briefly escapes before the window re-grabs focus (~1s). Ctrl+Alt+Del, Ta
 npm run build
 ```
 
-Then run `npx electron out/main/index.js` with one of: `ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad), `ASIT_SMOKE_CHAT=1` (Claude streaming + context + resume), `ASIT_SMOKE_QGEN=1` (question generation + SM-2 + usage), `ASIT_SMOKE_AGENT=1` (agent file tools + app actions), `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit), `ASIT_SMOKE_PANES=1` (pane ownership: an agent can only see/drive its own workspace's tabs). Smoke runs are isolated from real user data.
+Then run `npx electron out/main/index.js` with one of: `ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad), `ASIT_SMOKE_CHAT=1` (Claude streaming + context + resume), `ASIT_SMOKE_QGEN=1` (question generation + SM-2 + usage), `ASIT_SMOKE_AGENT=1` (agent file tools + app actions), `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit), `ASIT_SMOKE_PANES=1` (pane ownership: an agent can only see/drive its own workspace's tabs), `ASIT_SMOKE_COMPANION=1` (phone server: token auth, to-dos, capture, push subscriptions, static whitelist). Smoke runs are isolated from real user data.
 
 ## License
 

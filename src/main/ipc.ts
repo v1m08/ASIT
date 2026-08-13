@@ -18,6 +18,7 @@ import * as skills from './services/skills'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
+import * as companion from './services/companion'
 import { runFlow, stopWatching, watchTaskActions, watchedTaskId_ } from './services/actions'
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
@@ -288,6 +289,26 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     } catch {
       return null
     }
+  })
+
+  // --- phone companion ---
+  ipcMain.handle(IPC.COMPANION_STATUS, () => companion.companionStatus())
+  ipcMain.handle(IPC.COMPANION_SET_ENABLED, (_e, enabled: boolean) => {
+    settings.setSettings({ companionEnabled: enabled })
+    if (enabled) companion.startCompanion(getWindow)
+    else companion.stopCompanion()
+    return companion.companionStatus()
+  })
+  ipcMain.handle(IPC.COMPANION_QR, () => companion.companionQr())
+  ipcMain.handle(IPC.COMPANION_TAILSCALE_SERVE, () =>
+    companion.tailscaleServe(settings.getSettings().companionPort)
+  )
+  ipcMain.handle(IPC.COMPANION_TEST_PUSH, () =>
+    companion.notifyPhone('ASIT', '🔔 Test notification — pairing works!', 'test')
+  )
+  ipcMain.handle(IPC.COMPANION_REVOKE, () => {
+    companion.revokeCompanionPairing()
+    return companion.companionStatus()
   })
 
   // --- backup / sharing ---

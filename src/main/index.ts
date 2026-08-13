@@ -12,6 +12,8 @@ import { initUsage } from './services/usage'
 import { initActivity } from './services/activity'
 import { initWatchers } from './services/watchers'
 import { initTodos } from './services/todos'
+import { startCompanion, stopCompanion } from './services/companion'
+import { getSettings } from './services/settings'
 import {
   getOrCreateScratch,
   listTasks,
@@ -115,6 +117,10 @@ app.whenReady().then(() => {
     runPanesSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_COMPANION === '1') {
+    runCompanionSmokeTest()
+    return
+  }
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -124,6 +130,7 @@ app.whenReady().then(() => {
   initActivity(() => mainWindow)
   initWatchers(() => mainWindow)
   initTodos(() => mainWindow)
+  if (getSettings().companionEnabled) startCompanion(() => mainWindow)
   relocateLegacyTrash() // old .trash lived inside the assistant-readable tree
   writeTasksIndex() // keep the global-assistant index fresh from startup
   refreshAllTaskContexts() // guidance updates reach existing tasks immediately
@@ -140,6 +147,7 @@ app.on('window-all-closed', async () => {
   const { killAllClaudeChildren } = await import('./services/claude')
   killAllClaudeChildren()
   globalShortcut.unregisterAll() // navigation keys grabbed while a page had focus
+  stopCompanion()
   closeDb()
   app.quit()
 })
@@ -251,6 +259,106 @@ async function runTransferSmokeTest(): Promise<void> {
   } catch (err) {
     settingsSvc.setSettings({ escapePhrase: originalPhrase })
     console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless companion-server check: ASIT_SMOKE_COMPANION=1 electron out/main/index.js
+// Proves: token auth gates every API (401 without/with-wrong token), to-dos
+// round-trip, phone capture lands in scratchpad notes AND its "to-do:" line is
+// auto-captured, push subscriptions validate + store, static shell serves.
+async function runCompanionSmokeTest(): Promise<void> {
+  const settingsSvc = await import('./services/settings')
+  const companionSvc = await import('./services/companion')
+  const todosSvc = await import('./services/todos')
+  const tasksSvc = await import('./services/tasks')
+  const { readFileSync } = await import('fs')
+  const { join } = await import('path')
+
+  const fail = (msg: string): never => {
+    console.error('[companion-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    settingsSvc.setSettings({ companionPort: 0 }) // ephemeral port
+    companionSvc.startCompanion(() => null)
+    let port: number | null = null
+    for (let i = 0; i < 20 && port === null; i++) {
+      await new Promise((r) => setTimeout(r, 250))
+      port = companionSvc.companionAddress()
+    }
+    if (!port) fail('server never bound')
+    const base = `http://127.0.0.1:${port}`
+    const token = settingsSvc.getSettings().companionToken
+    if (!token) fail('no pairing token generated')
+    const api = (path: string, opts: RequestInit = {}, auth = true): Promise<Response> =>
+      fetch(`${base}/api/${path}`, {
+        ...opts,
+        headers: {
+          'content-type': 'application/json',
+          ...(auth ? { authorization: `Bearer ${token}` } : {}),
+          ...((opts.headers as Record<string, string>) ?? {})
+        }
+      })
+
+    // Auth gate
+    if ((await api('state', {}, false)).status !== 401) fail('unauthenticated request accepted')
+    const bad = await fetch(`${base}/api/state`, { headers: { authorization: 'Bearer nope' } })
+    if (bad.status !== 401) fail('wrong token accepted')
+    console.log('[companion-smoke] token auth gates the API')
+
+    // To-dos round trip
+    const added = (await (
+      await api('todos', { method: 'POST', body: JSON.stringify({ text: 'phone smoke todo' }) })
+    ).json()) as { todo: { id: string } }
+    const state = (await (await api('state')).json()) as { todos: { id: string; text: string }[] }
+    if (!state.todos.some((t) => t.text === 'phone smoke todo')) fail('added todo not listed')
+    await api(`todos/${added.todo.id}/done`, { method: 'POST', body: JSON.stringify({ done: true }) })
+    if (todosSvc.listTodos(false).some((t) => t.id === added.todo.id)) fail('todo not completed')
+    console.log('[companion-smoke] to-dos add/list/complete round trip')
+
+    // Capture → scratchpad notes + automatic to-do capture
+    await api('capture', {
+      method: 'POST',
+      body: JSON.stringify({ text: 'note from phone\nto-do: captured from phone' })
+    })
+    const scratch = tasksSvc.getOrCreateScratch()
+    const notes = readFileSync(join(scratch.folderPath, 'notes.md'), 'utf-8')
+    if (!notes.includes('note from phone')) fail('capture not written to scratchpad notes')
+    if (!todosSvc.listTodos(false).some((t) => t.text === 'captured from phone'))
+      fail('captured to-do: line not synced to the global list')
+    console.log('[companion-smoke] capture lands in scratchpad + to-do auto-capture fires')
+
+    // Push subscription validation + storage
+    const badSub = await api('push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: 'http://insecure', keys: {} })
+    })
+    if (badSub.status !== 400) fail('invalid push subscription accepted')
+    await api('push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        endpoint: 'https://push.example.invalid/sub1',
+        keys: { p256dh: 'k', auth: 'a' }
+      })
+    })
+    if (settingsSvc.getSettings().companionSubs.length !== 1) fail('subscription not stored')
+    console.log('[companion-smoke] push subscriptions validated + stored')
+
+    // Static shell
+    const shell = await fetch(base + '/')
+    if (!(await shell.text()).includes('ASIT')) fail('PWA shell not served')
+    const blocked = await fetch(base + '/..%2f..%2fpackage.json')
+    if (blocked.status !== 404) fail('static handler served a non-whitelisted path')
+    console.log('[companion-smoke] shell serves; non-whitelisted paths refused')
+
+    companionSvc.stopCompanion()
+    console.log('[companion-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[companion-smoke] FAIL:', err)
     app.exit(1)
   }
 }

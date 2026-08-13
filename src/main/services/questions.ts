@@ -8,6 +8,7 @@ import { getTask } from './tasks'
 import { runClaudeOnce } from './claude'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
+import { bus } from './bus'
 
 // ---------------------------------------------------------------------------
 // SM-2, simplified to 4 grades: 0 Again, 1 Hard, 2 Good, 3 Easy.
@@ -292,6 +293,17 @@ export function initQuestions(getWin: () => BrowserWindow | null): void {
 function pushJobStatus(payload: Record<string, unknown>): void {
   const win = getWindow?.()
   if (win && !win.isDestroyed()) win.webContents.send(IPC.JOBS_STATUS, payload)
+  bus.emit('changed', 'jobs')
+  // Question jobs run for minutes — worth a phone ping when they land.
+  if (payload.status === 'done') {
+    bus.emit('notify', {
+      title: 'ASIT',
+      body: `🧠 ${payload.count} questions ready`,
+      tag: 'questions'
+    })
+  } else if (payload.status === 'failed') {
+    bus.emit('notify', { title: 'ASIT', body: '🧠 Question job failed', tag: 'questions' })
+  }
 }
 
 export type QuestionMode = 'generate' | 'extract'

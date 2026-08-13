@@ -76,6 +76,22 @@ export interface Settings {
   onboarded: boolean
   snippets: Record<string, string> // "/KEY" text-expansion shortcuts
   fetchSources: { name: string; url: string }[] // "?query" quick-fetch sources ({q} = query)
+  // Phone companion (PWA served over the user's private tailnet)
+  companionEnabled: boolean
+  companionPort: number
+  companionToken: string // pairing secret; '' until first enable generates it
+  vapidPublicKey: string // web-push keys, generated once
+  vapidPrivateKey: string
+  companionSubs: { endpoint: string; keys: { p256dh: string; auth: string } }[]
+}
+
+export interface CompanionStatus {
+  enabled: boolean
+  running: boolean
+  port: number
+  url: string | null // https://<machine>.<tailnet>.ts.net when tailscale is up
+  tailscale: 'ok' | 'not-installed' | 'not-running'
+  subscriptions: number
 }
 
 export type TimerPhase = 'idle' | 'work' | 'break' | 'paused'

@@ -76,6 +76,14 @@ const api = {
   activity: {
     list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST)
   },
+  companion: {
+    status: () => ipcRenderer.invoke(IPC.COMPANION_STATUS),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(IPC.COMPANION_SET_ENABLED, enabled),
+    qr: () => ipcRenderer.invoke(IPC.COMPANION_QR),
+    tailscaleServe: () => ipcRenderer.invoke(IPC.COMPANION_TAILSCALE_SERVE),
+    testPush: () => ipcRenderer.invoke(IPC.COMPANION_TEST_PUSH),
+    revoke: () => ipcRenderer.invoke(IPC.COMPANION_REVOKE)
+  },
   skills: {
     list: () => ipcRenderer.invoke(IPC.SKILLS_LIST),
     run: (taskId: string, name: string) => ipcRenderer.invoke(IPC.SKILLS_RUN, taskId, name),

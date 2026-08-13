@@ -16,7 +16,13 @@ const DEFAULTS: Settings = {
   fetchSources: [
     { name: 'Gmail', url: 'https://mail.google.com/mail/u/0/#search/{q}' },
     { name: 'Outlook', url: 'https://outlook.live.com/mail/0/' }
-  ]
+  ],
+  companionEnabled: false,
+  companionPort: 4425,
+  companionToken: '',
+  vapidPublicKey: '',
+  vapidPrivateKey: '',
+  companionSubs: []
 }
 
 export function getSettings(): Settings {

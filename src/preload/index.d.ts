@@ -195,6 +195,14 @@ declare global {
           }[]
         >
       }
+      companion: {
+        status: () => Promise<import('@shared/types').CompanionStatus>
+        setEnabled: (enabled: boolean) => Promise<import('@shared/types').CompanionStatus>
+        qr: () => Promise<{ url: string | null; dataUrl: string | null }>
+        tailscaleServe: () => Promise<string>
+        testPush: () => Promise<void>
+        revoke: () => Promise<import('@shared/types').CompanionStatus>
+      }
       questions: {
         generate: (
           taskId: string,

@@ -2476,6 +2476,35 @@ body.assistant-open .home-main {
   background: color-mix(in srgb, var(--accent) 18%, var(--bg));
 }
 
+/* ---- Phone companion (Settings) ---- */
+.phone-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.phone-qr {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.phone-qr img {
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px;
+  flex-shrink: 0;
+}
+
 /* Notices live in the header cluster now; this is the animation they use. */
 @keyframes slide-in {
   from { transform: translateX(20px); opacity: 0; }

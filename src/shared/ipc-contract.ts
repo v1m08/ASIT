@@ -129,6 +129,14 @@ export const IPC = {
   NOTES_SAVE_IMAGE: 'notes:save-image',
   NOTES_READ_IMAGE: 'notes:read-image', // relative src → data: URL for preview
 
+  // phone companion
+  COMPANION_STATUS: 'companion:status',
+  COMPANION_SET_ENABLED: 'companion:set-enabled',
+  COMPANION_QR: 'companion:qr',
+  COMPANION_TAILSCALE_SERVE: 'companion:tailscale-serve',
+  COMPANION_TEST_PUSH: 'companion:test-push',
+  COMPANION_REVOKE: 'companion:revoke',
+
   // backup / sharing
   TRANSFER_EXPORT: 'transfer:export',
   TRANSFER_IMPORT: 'transfer:import',
