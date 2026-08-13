@@ -48,8 +48,11 @@ function jarvisFolder(): string {
 
 function briefing(): string {
   const task = getOrCreateJarvis()
-  const actionsFile = join(task.folderPath, '.asit', 'actions.ndjson')
-  const resultFile = join(task.folderPath, '.asit', 'actions-result.md')
+  // RELATIVE paths (cwd = tasks root) — the CLI's cwd-scoped permission
+  // patterns match relative paths; an absolute path here gets Write refused.
+  const home = task.folderPath.split(/[\\/]/).pop()
+  const actionsFile = `${home}/.asit/actions.ndjson`
+  const resultFile = `${home}/.asit/actions-result.md`
   const skills = listSkills()
     .map((s) => `./${s.name}`)
     .join(', ')
@@ -117,6 +120,11 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
       prompt: fullPrompt,
       resumeSessionId: sessionId,
       model: getSettings().jarvisModel,
+      // Same cwd-scoped grants as workspace chats. These `**` patterns match
+      // RELATIVE paths only — which is why the briefing must hand the model
+      // relative paths. Its original absolute path made every queue Write
+      // fail with a permission refusal (isolated + regression-tested by the
+      // end-to-end dispatch step in ASIT_SMOKE_JARVIS).
       allowedTools: 'Read(**),Glob,Grep(**),Edit(**),Write(**)',
       timeoutMs: 10 * 60_000
     },

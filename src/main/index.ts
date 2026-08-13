@@ -360,6 +360,23 @@ async function runJarvisSmokeTest(): Promise<void> {
       fail(`CLI turn missed the codeword; reply: "${reply.slice(0, 200)}"`)
     console.log('[jarvis-smoke] CLI turn read across workspaces from the root')
 
+    // (5) THE end-to-end path: the CLI must be able to WRITE the action queue
+    // (this exact step once failed in the field — Write refused on the nested
+    // dot-directory) and the app must execute what it dispatched.
+    const reply2 = await jarvisSvc.askJarvisText(
+      'Using the action protocol from your briefing, dispatch exactly one action: add the URL https://example.com/dispatch-proof titled "Dispatch Proof" to the "Bio Notes" workspace. Then read your actions-result file and reply with one line: the result it reports.'
+    )
+    let dispatched = false
+    for (let i = 0; i < 20 && !dispatched; i++) {
+      await new Promise((r) => setTimeout(r, 300))
+      dispatched = resourcesSvc
+        .listResources(target.id)
+        .some((r) => r.url?.includes('dispatch-proof'))
+    }
+    if (!dispatched)
+      fail(`CLI dispatch never executed; jarvis said: "${reply2.slice(0, 300)}"`)
+    console.log('[jarvis-smoke] CLI dispatched an action end-to-end (write → execute → verify)')
+
     console.log('[jarvis-smoke] ALL PASS')
     app.exit(0)
   } catch (err) {
