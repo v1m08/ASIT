@@ -2505,6 +2505,23 @@ body.assistant-open .home-main {
   flex-shrink: 0;
 }
 
+.pair-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+}
+
+.pair-request-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 /* Notices live in the header cluster now; this is the animation they use. */
 @keyframes slide-in {
   from { transform: translateX(20px); opacity: 0; }

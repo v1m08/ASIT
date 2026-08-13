@@ -83,6 +83,31 @@ function PhoneSection(): JSX.Element {
           {status.enabled ? 'Turn off' : 'Turn on'}
         </button>
       </div>
+      {status.pendingPair && (
+        <div className="pair-request">
+          <span>
+            📱 A phone wants to pair — confirm it shows code <b>{status.pendingPair.code}</b>
+          </span>
+          <span className="pair-request-actions">
+            <button
+              className="btn btn-primary"
+              onClick={async () =>
+                setStatus(await window.asit.companion.pairApprove(status.pendingPair!.requestId))
+              }
+            >
+              Approve
+            </button>
+            <button
+              className="btn btn-ghost"
+              onClick={async () =>
+                setStatus(await window.asit.companion.pairDeny(status.pendingPair!.requestId))
+              }
+            >
+              Deny
+            </button>
+          </span>
+        </div>
+      )}
       {status.enabled && (
         <>
           {status.tailscale === 'not-installed' && (
@@ -131,9 +156,11 @@ function PhoneSection(): JSX.Element {
                 <div className="phone-qr">
                   <img src={qr.dataUrl} alt="Pairing QR" width={180} height={180} />
                   <p className="transfer-note">
-                    On your phone: scan this (Tailscale connected), then in Safari use{' '}
-                    <b>Share → Add to Home Screen</b>. Open it from the home screen and tap 🔔
-                    Enable for notifications. {status.subscriptions > 0 && `Paired devices with push: ${status.subscriptions}.`}
+                    On your phone (Tailscale connected): scan this, then in Safari{' '}
+                    <b>Share → Add to Home Screen</b> and open it from the home-screen icon. It
+                    will show a 6-digit code — approve it here when it appears. Then tap 🔔
+                    Enable for notifications.{' '}
+                    {status.subscriptions > 0 && `Paired devices with push: ${status.subscriptions}.`}
                   </p>
                 </div>
               )}

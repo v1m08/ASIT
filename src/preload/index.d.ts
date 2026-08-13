@@ -202,6 +202,8 @@ declare global {
         tailscaleServe: () => Promise<string>
         testPush: () => Promise<void>
         revoke: () => Promise<import('@shared/types').CompanionStatus>
+        pairApprove: (requestId: string) => Promise<import('@shared/types').CompanionStatus>
+        pairDeny: (requestId: string) => Promise<import('@shared/types').CompanionStatus>
       }
       questions: {
         generate: (

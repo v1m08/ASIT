@@ -347,6 +347,27 @@ async function runCompanionSmokeTest(): Promise<void> {
     if (settingsSvc.getSettings().companionSubs.length !== 1) fail('subscription not stored')
     console.log('[companion-smoke] push subscriptions validated + stored')
 
+    // Pairing-code flow (how a fresh home-screen install authenticates)
+    const started = (await (await fetch(`${base}/api/pair/start`, { method: 'POST' })).json()) as {
+      requestId: string
+      code: string
+    }
+    if (!/^\d{6}$/.test(started.code)) fail('pair code malformed')
+    const pending = (await (
+      await fetch(`${base}/api/pair/poll?rid=${started.requestId}`)
+    ).json()) as { pending?: boolean; token?: string }
+    if (!pending.pending || pending.token) fail('pair delivered token before approval')
+    companionSvc.approvePair(started.requestId)
+    const approved = (await (
+      await fetch(`${base}/api/pair/poll?rid=${started.requestId}`)
+    ).json()) as { token?: string }
+    if (approved.token !== token) fail('approved pair did not deliver the token')
+    if ((await fetch(`${base}/api/pair/poll?rid=${started.requestId}`)).status !== 404)
+      fail('pair poll not one-shot')
+    if ((await fetch(`${base}/api/pair/poll?rid=guess`)).status !== 404)
+      fail('pair poll accepted a bogus requestId')
+    console.log('[companion-smoke] pair-code flow: pending → approve → one-shot token delivery')
+
     // Static shell
     const shell = await fetch(base + '/')
     if (!(await shell.text()).includes('ASIT')) fail('PWA shell not served')

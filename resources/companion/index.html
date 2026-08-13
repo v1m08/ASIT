@@ -97,7 +97,7 @@
   <div id="pair" hidden>
     <p style="font-size:2rem">🔗</p>
     <h1 style="margin:10px 0">Pair with ASIT</h1>
-    <p class="dim">Open Settings → 📱 Phone on your PC and scan the QR code, or open the link it shows. This page needs the pairing token in the link.</p>
+    <div id="pair-body"><p class="dim">Contacting your PC…</p></div>
   </div>
   <header id="hdr" hidden>
     <span class="logo">A</span><span style="font-weight:600">asit</span>
@@ -119,8 +119,41 @@
     history.replaceState(null, '', location.pathname)
   }
   const token = () => localStorage.getItem('asit-token') || ''
+
+  // Unpaired (e.g. a fresh home-screen install — iOS gives it storage separate
+  // from Safari's): request a pairing code and wait for approval on the PC.
   if (!token()) {
     document.getElementById('pair').hidden = false
+    const body = document.getElementById('pair-body')
+    ;(async () => {
+      try {
+        const start = await fetch('/api/pair/start', { method: 'POST' })
+        if (!start.ok) throw new Error((await start.json()).error || 'pairing unavailable')
+        const { requestId, code } = await start.json()
+        body.innerHTML = `
+          <p class="dim" style="margin-bottom:14px">On your PC, open <b>Settings → 📱 Phone</b> and approve this code:</p>
+          <p style="font-size:2.6rem;font-weight:700;letter-spacing:0.15em;color:var(--accent)">${code}</p>
+          <p class="dim" style="margin-top:14px">Waiting for approval…</p>`
+        const poll = setInterval(async () => {
+          try {
+            const r = await fetch('/api/pair/poll?rid=' + encodeURIComponent(requestId))
+            if (r.status === 404) {
+              clearInterval(poll)
+              body.innerHTML = '<p class="dim">Request expired or was denied. Reload to try again.</p>'
+              return
+            }
+            const j = await r.json()
+            if (j.token) {
+              clearInterval(poll)
+              localStorage.setItem('asit-token', j.token)
+              location.reload()
+            }
+          } catch { /* transient — keep polling */ }
+        }, 2500)
+      } catch (err) {
+        body.innerHTML = '<p class="dim">Could not reach your PC (' + err.message + '). Is Tailscale connected and ASIT open? Reload to retry.</p>'
+      }
+    })()
     return
   }
   document.getElementById('hdr').hidden = false

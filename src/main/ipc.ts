@@ -310,6 +310,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     companion.revokeCompanionPairing()
     return companion.companionStatus()
   })
+  ipcMain.handle(IPC.COMPANION_PAIR_APPROVE, (_e, requestId: string) => {
+    companion.approvePair(requestId)
+    return companion.companionStatus()
+  })
+  ipcMain.handle(IPC.COMPANION_PAIR_DENY, (_e, requestId: string) => {
+    companion.denyPair(requestId)
+    return companion.companionStatus()
+  })
 
   // --- backup / sharing ---
   ipcMain.handle(IPC.TRANSFER_EXPORT, async () => {

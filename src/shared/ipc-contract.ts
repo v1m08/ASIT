@@ -136,6 +136,8 @@ export const IPC = {
   COMPANION_TAILSCALE_SERVE: 'companion:tailscale-serve',
   COMPANION_TEST_PUSH: 'companion:test-push',
   COMPANION_REVOKE: 'companion:revoke',
+  COMPANION_PAIR_APPROVE: 'companion:pair-approve',
+  COMPANION_PAIR_DENY: 'companion:pair-deny',
 
   // backup / sharing
   TRANSFER_EXPORT: 'transfer:export',

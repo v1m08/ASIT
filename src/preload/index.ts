@@ -82,7 +82,9 @@ const api = {
     qr: () => ipcRenderer.invoke(IPC.COMPANION_QR),
     tailscaleServe: () => ipcRenderer.invoke(IPC.COMPANION_TAILSCALE_SERVE),
     testPush: () => ipcRenderer.invoke(IPC.COMPANION_TEST_PUSH),
-    revoke: () => ipcRenderer.invoke(IPC.COMPANION_REVOKE)
+    revoke: () => ipcRenderer.invoke(IPC.COMPANION_REVOKE),
+    pairApprove: (requestId: string) => ipcRenderer.invoke(IPC.COMPANION_PAIR_APPROVE, requestId),
+    pairDeny: (requestId: string) => ipcRenderer.invoke(IPC.COMPANION_PAIR_DENY, requestId)
   },
   skills: {
     list: () => ipcRenderer.invoke(IPC.SKILLS_LIST),

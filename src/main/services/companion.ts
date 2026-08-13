@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import webPush from 'web-push'
 import QRCode from 'qrcode'
 import type { CompanionStatus } from '@shared/types'
+import { IPC } from '@shared/ipc-contract'
 import { bus } from './bus'
 import { getSettings, setSettings } from './settings'
 import { listTodos, addTodo, setTodoDone, deleteTodo } from './todos'
@@ -75,6 +76,69 @@ function tokenOk(provided: string | undefined): boolean {
 function bearerOf(req: IncomingMessage): string | undefined {
   const h = req.headers.authorization
   return h?.startsWith('Bearer ') ? h.slice(7) : undefined
+}
+
+// ---------------------------------------------------------------------------
+// Pairing-code flow. iOS home-screen web apps get a storage container that is
+// SEPARATE from Safari's, so a token delivered via the QR's URL fragment never
+// reaches the installed app. Instead: the unpaired app requests a short code,
+// the user approves that code on the PC, and only then does the server hand
+// the token to that exact request. The two unauthenticated endpoints leak
+// nothing: /pair/start returns a random code, /pair/poll requires the
+// unguessable requestId and returns the token only after desktop approval.
+// ---------------------------------------------------------------------------
+
+interface PendingPair {
+  requestId: string
+  code: string
+  createdAt: number
+  approved: boolean
+}
+
+const pendingPairs = new Map<string, PendingPair>()
+const PAIR_TTL_MS = 5 * 60_000
+const MAX_PENDING = 3
+
+function prunePairs(): void {
+  const now = Date.now()
+  for (const [id, p] of pendingPairs) {
+    if (now - p.createdAt > PAIR_TTL_MS) pendingPairs.delete(id)
+  }
+}
+
+function startPair(): { requestId: string; code: string } | null {
+  prunePairs()
+  if (pendingPairs.size >= MAX_PENDING) return null
+  const requestId = randomBytes(16).toString('base64url')
+  const code = String(Math.floor(100000 + Math.random() * 900000)) // 6 digits
+  pendingPairs.set(requestId, { requestId, code, createdAt: Date.now(), approved: false })
+  // Surface it in the app immediately — the user is standing at their phone.
+  const win = getWindow?.()
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.APP_EVENT, {
+      type: 'toast',
+      text: `📱 Phone asking to pair — code ${code}. Approve in Settings → Phone.`
+    })
+  }
+  return { requestId, code }
+}
+
+export function pendingPairRequest(): { requestId: string; code: string } | null {
+  prunePairs()
+  const first = [...pendingPairs.values()].find((p) => !p.approved)
+  return first ? { requestId: first.requestId, code: first.code } : null
+}
+
+export function approvePair(requestId: string): boolean {
+  prunePairs()
+  const p = pendingPairs.get(requestId)
+  if (!p) return false
+  p.approved = true
+  return true
+}
+
+export function denyPair(requestId: string): void {
+  pendingPairs.delete(requestId)
 }
 
 // ---------------------------------------------------------------------------
@@ -243,8 +307,25 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 async function handleApi(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
-  if (!tokenOk(bearerOf(req))) return sendJson(res, 401, { error: 'unauthorized' })
   const method = req.method ?? 'GET'
+
+  // The only two unauthenticated endpoints — see the pairing-flow note above.
+  if (path === 'pair/start' && method === 'POST') {
+    const started = startPair()
+    if (!started) return sendJson(res, 429, { error: 'too many pairing attempts — wait a minute' })
+    return sendJson(res, 200, started)
+  }
+  if (path.startsWith('pair/poll') && method === 'GET') {
+    const rid = new URL(req.url ?? '', 'http://x').searchParams.get('rid') ?? ''
+    prunePairs()
+    const p = pendingPairs.get(rid)
+    if (!p) return sendJson(res, 404, { error: 'expired' })
+    if (!p.approved) return sendJson(res, 200, { pending: true })
+    pendingPairs.delete(rid) // one-shot delivery
+    return sendJson(res, 200, { token: ensureCompanionConfig().token })
+  }
+
+  if (!tokenOk(bearerOf(req))) return sendJson(res, 401, { error: 'unauthorized' })
 
   if (path === 'state' && method === 'GET') {
     return sendJson(res, 200, {
@@ -409,7 +490,8 @@ export async function companionStatus(): Promise<CompanionStatus> {
     port: s.companionPort,
     url: ts.dnsName ? `https://${ts.dnsName}` : null,
     tailscale: ts.state,
-    subscriptions: s.companionSubs.length
+    subscriptions: s.companionSubs.length,
+    pendingPair: pendingPairRequest()
   }
 }
 

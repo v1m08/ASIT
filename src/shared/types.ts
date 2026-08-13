@@ -92,6 +92,7 @@ export interface CompanionStatus {
   url: string | null // https://<machine>.<tailnet>.ts.net when tailscale is up
   tailscale: 'ok' | 'not-installed' | 'not-running'
   subscriptions: number
+  pendingPair: { requestId: string; code: string } | null // a phone waiting for approval
 }
 
 export type TimerPhase = 'idle' | 'work' | 'break' | 'paused'
