@@ -140,21 +140,53 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch('/api/' + path, {
-      ...opts,
-      headers: {
-        'content-type': 'application/json',
-        authorization: 'Bearer ' + token(),
-        ...(opts.headers || {})
-      }
-    })
+    // 12s timeout: a hung request must become a visible error, never a blank
+    // screen — the user can't debug silence.
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 12000)
+    let res
+    try {
+      res = await fetch('/api/' + path, {
+        ...opts,
+        signal: ctrl.signal,
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer ' + token(),
+          ...(opts.headers || {})
+        }
+      })
+    } catch (err) {
+      throw new Error(
+        err.name === 'AbortError'
+          ? 'Request timed out — the PC did not answer.'
+          : 'Could not reach your PC (' + err.message + ')'
+      )
+    } finally {
+      clearTimeout(timer)
+    }
     if (res.status === 401) {
       localStorage.removeItem('asit-token')
       location.reload()
       throw new Error('unauthorized')
     }
-    if (!res.ok) throw new Error(await res.text())
+    if (!res.ok) throw new Error('PC answered ' + res.status + ': ' + (await res.text()).slice(0, 200))
     return res.json()
+  }
+
+  // A failure the user can actually act on, instead of a blank tab.
+  function errorCard(err) {
+    main.innerHTML = `
+      <div class="card q-card">
+        <div style="font-size:1.6rem;margin-bottom:8px">📡</div>
+        <div style="font-weight:600;margin-bottom:8px">Can't talk to your PC</div>
+        <div class="dim" style="line-height:1.6;margin-bottom:12px">${esc(err.message)}</div>
+        <div class="dim" style="line-height:1.7;margin-bottom:14px">
+          Check: ① the Tailscale app on this phone shows <b>Connected</b> ·
+          ② your PC is on and ASIT is open · ③ then retry.
+        </div>
+        <button class="btn" style="width:100%" id="retry">Retry</button>
+      </div>`
+    document.getElementById('retry').onclick = () => render()
   }
 
   // ---- connection indicator + live refresh over WebSocket
@@ -371,12 +403,16 @@
 
   function render() {
     document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab))
-    if (tab === 'todos') renderTodos().catch((e) => { main.innerHTML = `<p class="empty">${esc(e.message)}</p>` })
-    else if (tab === 'review') renderReview().catch((e) => { main.innerHTML = `<p class="empty">${esc(e.message)}</p>` })
+    if (tab === 'todos') renderTodos().catch(errorCard)
+    else if (tab === 'review') renderReview().catch(errorCard)
     else if (tab === 'capture') renderCapture()
     else renderAsk()
   }
   render()
+
+  // Coming back to the app (or regaining network) should self-heal.
+  window.addEventListener('focus', () => { if (tab === 'todos' || tab === 'review') render() })
+  window.addEventListener('online', () => render())
 })()
 </script>
 </body>
