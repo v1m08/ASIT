@@ -86,9 +86,21 @@ interface TailscaleInfo {
   dnsName: string | null
 }
 
+// The Windows installer puts tailscale.exe here but PATH only updates for
+// NEW processes/logins — an already-running ASIT would see ENOENT and wrongly
+// report "not installed". Probe the standard locations directly.
+function tailscaleBin(): string {
+  const candidates = [
+    'C:\\Program Files\\Tailscale\\tailscale.exe',
+    'C:\\Program Files (x86)\\Tailscale\\tailscale.exe'
+  ]
+  for (const c of candidates) if (existsSync(c)) return c
+  return 'tailscale' // fall back to PATH (correct on fresh shells / other setups)
+}
+
 export function tailscaleInfo(): Promise<TailscaleInfo> {
   return new Promise((resolve) => {
-    execFile('tailscale', ['status', '--json'], { timeout: 5000 }, (err, stdout) => {
+    execFile(tailscaleBin(), ['status', '--json'], { timeout: 5000 }, (err, stdout) => {
       if (err) {
         const code = (err as NodeJS.ErrnoException).code
         resolve({ state: code === 'ENOENT' ? 'not-installed' : 'not-running', dnsName: null })
@@ -112,7 +124,7 @@ export function tailscaleInfo(): Promise<TailscaleInfo> {
 export function tailscaleServe(port: number): Promise<string> {
   return new Promise((resolve) => {
     execFile(
-      'tailscale',
+      tailscaleBin(),
       ['serve', '--bg', String(port)],
       { timeout: 15000 },
       (err, stdout, stderr) => {

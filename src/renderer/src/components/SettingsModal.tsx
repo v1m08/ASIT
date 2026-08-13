@@ -41,6 +41,11 @@ function PhoneSection(): JSX.Element {
 
   useEffect(() => {
     refresh()
+    // Keep polling while the panel is open: the user may be installing
+    // Tailscale or flipping it on right now — the section should catch up
+    // without them having to reopen Settings.
+    const t = setInterval(refresh, 4000)
+    return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
