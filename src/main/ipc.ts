@@ -132,7 +132,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
 
   ipcMain.handle(IPC.RESOURCES_OPEN_EXTERNAL, (_e, target: { url?: string; filePath?: string }) => {
-    if (target.url) shell.openExternal(target.url)
+    // Scheme allowlist: model-authored markdown can contain arbitrary hrefs,
+    // and shell.openExternal on a file:// or custom-scheme URL is a code-
+    // execution primitive if the user clicks it.
+    if (target.url && /^(https?|mailto):/i.test(target.url)) shell.openExternal(target.url)
     else if (target.filePath) shell.openPath(target.filePath)
   })
 

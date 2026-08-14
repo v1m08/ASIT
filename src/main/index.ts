@@ -107,9 +107,11 @@ function createWindow(): void {
   paneManager.attach(mainWindow)
   lockdown.attach(mainWindow)
 
-  // External links from the app UI open in the default browser.
+  // External links from the app UI open in the default browser — scheme
+  // allowlisted so a model-authored href can't hand the OS a file:// or
+  // custom-scheme URL (same guard as the pane + resources handlers).
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (/^(https?|mailto):/i.test(details.url)) shell.openExternal(details.url)
     return { action: 'deny' }
   })
 
@@ -170,6 +172,10 @@ app.whenReady().then(() => {
   }
   if (process.env.ASIT_SMOKE_VOICE === '1') {
     runVoiceSmokeTest()
+    return
+  }
+  if (process.env.ASIT_SMOKE_SECURITY === '1') {
+    runSecuritySmokeTest()
     return
   }
 
@@ -321,6 +327,98 @@ async function runTransferSmokeTest(): Promise<void> {
   } catch (err) {
     settingsSvc.setSettings({ escapePhrase: originalPhrase })
     console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless security-invariants check: ASIT_SMOKE_SECURITY=1 electron out/main/index.js
+// Locks the agent-containment boundaries so a refactor can't quietly reopen
+// them. No CLI needed — drives executeAction/navigateFlow/runFlow directly.
+async function runSecuritySmokeTest(): Promise<void> {
+  const actions = await import('./services/actions')
+  const tasksSvc = await import('./services/tasks')
+  const { paneManager } = await import('./services/panes')
+  const resourcesSvc = await import('./services/resources')
+  const { BrowserWindow } = await import('electron')
+  const { join } = await import('path')
+
+  const fail = (msg: string): never => {
+    console.error('[security-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    const win = new BrowserWindow({ show: false })
+    paneManager.attach(win)
+    const task = tasksSvc.createTask({ title: 'Sec Test' })
+
+    // navigate refuses non-http(s) — the file:// read-through exfil.
+    paneManager.open('sp', { url: 'https://example.com' }, task.id)
+    const navBad = await paneManager.navigateFlow(task.id, 'file:///C:/Windows/win.ini')
+    if (!navBad.startsWith('navigate refused')) fail(`file:// navigate allowed: ${navBad}`)
+    const navScheme = await paneManager.navigateFlow(task.id, 'chrome://settings')
+    if (!navScheme.startsWith('navigate refused')) fail(`chrome:// navigate allowed: ${navScheme}`)
+    console.log('[security-smoke] navigate refuses non-http(s) schemes')
+
+    // send_whatsapp refused for a workspace agent.
+    const waWs = await actions.executeAction(task.id, {
+      action: 'send_whatsapp',
+      target: 'x',
+      value: 'y'
+    })
+    if (!waWs.includes('only available to the universal agent'))
+      fail(`send_whatsapp not refused for workspace agent: ${waWs}`)
+
+    // workspace re-targeting refused for a workspace agent.
+    const reWs = await actions.executeAction(task.id, {
+      action: 'add_url',
+      workspace: 'Sec Test',
+      title: 't',
+      url: 'https://x.com'
+    })
+    if (!reWs.includes('only available to the universal agent'))
+      fail(`workspace targeting not refused: ${reWs}`)
+    console.log('[security-smoke] send_whatsapp + workspace targeting are Jarvis-only')
+
+    // A skill flow may not send_whatsapp or cross workspaces — even as Jarvis.
+    const jarvis = tasksSvc.getOrCreateJarvis()
+    const flowLog = await actions.runFlow(jarvis.id, [
+      { action: 'send_whatsapp', target: 'x', value: 'y' },
+      { action: 'add_url', workspace: 'Sec Test', title: 't', url: 'https://x.com' }
+    ] as never)
+    if (!flowLog[0]?.includes('not allowed inside a replayed skill flow'))
+      fail(`flow send_whatsapp not refused: ${flowLog[0]}`)
+    if (!flowLog[1]?.includes('not allowed inside a replayed skill flow'))
+      fail(`flow workspace targeting not refused: ${flowLog[1]}`)
+    if (resourcesSvc.listResources(task.id).some((r) => r.url?.includes('x.com')))
+      fail('flow cross-workspace action leaked through')
+    console.log('[security-smoke] replayed flows cannot message or cross workspaces')
+
+    // Private workspace unreachable by Jarvis name resolution.
+    const priv = tasksSvc.createTask({ title: 'Secret', aiDisabled: true })
+    const privTry = await actions.executeAction(jarvis.id, {
+      action: 'add_url',
+      workspace: 'Secret',
+      title: 't',
+      url: 'https://x.com'
+    })
+    if (!privTry.includes('no workspace matching')) fail(`private workspace reachable: ${privTry}`)
+    if (resourcesSvc.listResources(priv.id).length !== 0) fail('private workspace mutated')
+    console.log('[security-smoke] private workspaces unreachable by name')
+
+    // CLAUDE.md carries the untrusted-data warning.
+    tasksSvc.refreshClaudeMd(task.id)
+    const claude = (await import('fs')).readFileSync(join(task.folderPath, 'CLAUDE.md'), 'utf-8')
+    if (!/UNTRUSTED DATA/i.test(claude)) fail('CLAUDE.md missing untrusted-data security guidance')
+    console.log('[security-smoke] CLAUDE.md frames page/notes content as untrusted')
+
+    tasksSvc.deleteTask(task.id)
+    tasksSvc.deleteTask(priv.id)
+    console.log('[security-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[security-smoke] FAIL:', err)
     app.exit(1)
   }
 }

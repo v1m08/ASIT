@@ -38,8 +38,12 @@ export function saveSkill(name: string, content: string): string {
   if (!slug) return 'save_skill: invalid name'
   if (!body) return 'save_skill: empty content'
   mkdirSync(skillsRoot(), { recursive: true })
-  writeFileSync(join(skillsRoot(), `${slug}.md`), body)
-  return `skill saved: ./${slug}`
+  const path = join(skillsRoot(), `${slug}.md`)
+  // Overwrites are called out loudly: silently replacing a trusted skill with
+  // a poisoned flow would be persistent injection the user replays themselves.
+  const overwrote = existsSync(path)
+  writeFileSync(path, body)
+  return overwrote ? `skill saved: ./${slug} (REPLACED the existing skill)` : `skill saved: ./${slug}`
 }
 
 // Auto-flow: a skill whose content includes a ```asit-flow fenced block of

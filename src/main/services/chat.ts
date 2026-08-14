@@ -4,7 +4,7 @@ import type { ChatMessage, ChatSession } from '@shared/types'
 import { IPC } from '@shared/ipc-contract'
 import { appendFileSync, mkdirSync } from 'fs'
 import { basename, join } from 'path'
-import { getTask } from './tasks'
+import { getTask, refreshClaudeMd } from './tasks'
 import { getSettings } from './settings'
 import { paneManager } from './panes'
 import { runClaudeStream, type ClaudeStreamHandle } from './claude'
@@ -178,6 +178,16 @@ export async function sendChat(
   // LRU recency (and create it if missing) so a long-running background chat
   // can never have its channel evicted mid-turn.
   watchTaskActions(task.id)
+
+  // Anti-persistence: CLAUDE.md is APP-GENERATED, but agents hold Write(**) —
+  // a prompt-injected turn could plant instructions in it that every future
+  // session obeys (stored injection). Regenerating from the database right
+  // before each spawn caps any tampering to the single turn that did it.
+  try {
+    refreshClaudeMd(task.id)
+  } catch {
+    // regeneration is defense-in-depth, never a blocker
+  }
 
   // Snapshot the open web panes (text + interactive element refs) into
   // .asit/pages/ so "this page" always means something to the model.

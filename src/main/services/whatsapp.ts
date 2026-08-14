@@ -156,6 +156,23 @@ const CHAT_TITLE_SCRIPT = `(() => {
   return null
 })()`
 
+// Poll a condition instead of sleeping a fixed worst case — sends finish as
+// fast as the page actually reacts (usually 3-4× sooner).
+async function pollUntil<T>(
+  probe: () => Promise<T>,
+  ok: (v: T) => boolean,
+  timeoutMs: number,
+  stepMs = 150
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const v = await probe().catch(() => null as T)
+    if (v !== null && ok(v)) return v
+    if (Date.now() > deadline) return v
+    await sleep(stepMs)
+  }
+}
+
 async function typeChars(wc: WebContents, text: string, paceMs: number): Promise<void> {
   for (const ch of text) {
     wc.sendInputEvent({ type: 'char', keyCode: ch })
@@ -230,12 +247,16 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
     if (!(await exec<boolean>(wc, FOCUS_SEARCH_SCRIPT)))
       return { ok: false, detail: 'could not find the WhatsApp search box — the site layout may have changed; nothing sent.' }
     wc.focus()
-    await typeChars(wc, to.slice(0, 60), 15)
-    await sleep(1600)
+    await typeChars(wc, to.slice(0, 60), 8)
+    await sleep(650) // results debounce — the one wait with no observable signal
     pressEnter(wc)
-    await sleep(1200)
 
-    const opened = await exec<string | null>(wc, CHAT_TITLE_SCRIPT)
+    // Chat opened? Poll for a conversation header instead of a fixed wait.
+    const opened = await pollUntil(
+      () => exec<string | null>(wc, CHAT_TITLE_SCRIPT),
+      (t) => !!t,
+      2500
+    )
     if (!opened)
       return {
         ok: false,
@@ -244,22 +265,22 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
 
     if (!(await exec<boolean>(wc, FOCUS_COMPOSER_SCRIPT)))
       return { ok: false, detail: `chat "${opened}" opened but the message box was not found — nothing sent.` }
-    await typeChars(wc, text.slice(0, 1500), text.length < 200 ? 4 : 0)
-    await sleep(300)
-    const composed = await exec<string>(wc, COMPOSER_TEXT_SCRIPT)
-    if (!composed.includes(text.slice(0, 40)))
+    await typeChars(wc, text.slice(0, 1500), text.length < 200 ? 3 : 0)
+    const composed = await pollUntil(
+      () => exec<string>(wc, COMPOSER_TEXT_SCRIPT),
+      (c) => c.includes(text.slice(0, 40)),
+      1200
+    )
+    if (!composed || !composed.includes(text.slice(0, 40)))
       return { ok: false, detail: `typing into the "${opened}" composer failed — nothing sent.` }
     pressEnter(wc)
-    await sleep(900)
 
     // Emptied composer == WhatsApp accepted the Enter and sent.
-    const emptied = await exec<boolean>(
-      wc,
-      `(() => {
-        const editors = [...document.querySelectorAll('[contenteditable="true"], [role="textbox"]')]
-        return !editors.some(el => (el.textContent || '').includes(${JSON.stringify(text.slice(0, 40))}))
-      })()`
-    ).catch(() => false)
+    const emptiedProbe = `(() => {
+      const editors = [...document.querySelectorAll('[contenteditable="true"], [role="textbox"]')]
+      return !editors.some(el => (el.textContent || '').includes(${JSON.stringify(text.slice(0, 40))}))
+    })()`
+    const emptied = await pollUntil(() => exec<boolean>(wc, emptiedProbe), (v) => v === true, 2500)
     if (!emptied)
       return { ok: false, detail: `send to "${opened}" could not be confirmed — check WhatsApp before retrying.` }
     return { ok: true, detail: `sent to ${opened}${usingPane ? '' : ' (background)'}` }

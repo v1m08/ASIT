@@ -411,6 +411,10 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
     }
     case 'navigate': {
       if (!action.url) return 'navigate: no url'
+      // Visibility: agent-driven navigation of a logged-in pane is the classic
+      // injection exfil channel — and the smuggled data lives in the PATH/query,
+      // not the hostname, so the toast must show the whole URL.
+      push({ type: 'toast', text: `🤖 Agent opening: ${action.url.slice(0, 160)}` })
       return paneManager.navigateFlow(taskId, action.url, action.page)
     }
     case 'wait': {
@@ -475,10 +479,21 @@ export function appendResultNote(taskId: string, note: string): void {
 // Deterministic skill replay: run a recorded action sequence back-to-back —
 // no model, no tokens, milliseconds per step (plus explicit waits). Snapshots
 // refresh at the end so a follow-up model turn sees the outcome.
+// Verbs a replayed skill flow may NOT contain. A skill runs with no model in
+// the loop, so there is no live user intent behind its steps — anything that
+// messages a person or crosses into another workspace is refused even if a
+// poisoned flow encodes it. (Navigation/clicks stay allowed: that's what
+// automation flows are for, and each navigate is toasted.)
+const FLOW_FORBIDDEN = new Set(['send_whatsapp'])
+
 export async function runFlow(taskId: string, steps: AppAction[]): Promise<string[]> {
   const log: string[] = []
   for (const step of steps.slice(0, 60)) {
     try {
+      if (FLOW_FORBIDDEN.has(step.action) || step.workspace !== undefined) {
+        log.push(`step refused: "${step.action}" is not allowed inside a replayed skill flow`)
+        continue
+      }
       if (step.action === 'wait') {
         // Deterministic flows may legitimately wait long (server boots) —
         // higher cap than chat-dispatched waits.

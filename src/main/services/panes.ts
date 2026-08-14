@@ -161,9 +161,13 @@ class PaneManager {
       }
     })
 
-    // Allow popups (Google OAuth login flows need them); they share the
-    // persistent session so completed logins land back in the pane.
-    view.webContents.setWindowOpenHandler(() => ({ action: 'allow' }))
+    // Allow web popups (Google OAuth login flows need them); they share the
+    // persistent session so completed logins land back in the pane. Anything
+    // that isn't http(s) — file:, custom protocol handlers — is denied: a
+    // page must not be able to pop local content or trigger scheme handlers.
+    view.webContents.setWindowOpenHandler(({ url }) =>
+      /^https?:\/\//i.test(url) ? { action: 'allow' } : { action: 'deny' }
+    )
 
     // Focus tracking drives the OS-level key grab above, and tells the
     // renderer which zone the ring is sitting on when the user CLICKS into a
@@ -849,6 +853,10 @@ class PaneManager {
   }
 
   async navigateFlow(owner: string, url: string, pageIndex?: number): Promise<string> {
+    // http(s) ONLY. An agent navigating a pane to file:// and snapshotting it
+    // would read arbitrary local files straight past every cwd sandbox — this
+    // is the single most valuable move a prompt-injected agent could make.
+    if (!/^https?:\/\//i.test(url)) return `navigate refused: only http(s) URLs (got "${url.slice(0, 40)}")`
     const views = this.urlViews(owner, pageIndex)
     if (views.length === 0) return 'no browser pane open in this workspace to navigate'
     const wc = views[0].webContents
