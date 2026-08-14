@@ -26,6 +26,7 @@ export default function AssistantBar(): JSX.Element | null {
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const pinnedRef = useRef(true)
+  const prewarmedRef = useRef(false)
   const expand = useSnippets()
   const assistantRecall = useStore((s) => s.assistantRecall)
   const setAssistantRecall = useStore((s) => s.setAssistantRecall)
@@ -241,7 +242,18 @@ export default function AssistantBar(): JSX.Element | null {
           autoFocus
           placeholder="Ask anything…"
           value={input}
-          onChange={(e) => setInput(expand(e.target.value))}
+          onChange={(e) => {
+            const v = expand(e.target.value)
+            setInput(v)
+            // The instant a WhatsApp command begins, start loading WhatsApp
+            // Web in the background so it's ready by the time you hit Enter.
+            if (v.startsWith('>') && !prewarmedRef.current) {
+              prewarmedRef.current = true
+              window.asit.quickfetch.prewarmWhatsApp()
+            } else if (!v.startsWith('>')) {
+              prewarmedRef.current = false
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') ask()
           }}

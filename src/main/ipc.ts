@@ -214,6 +214,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.WHATSAPP_SEND, (_e, recipient: string, message: string) =>
     whatsapp.sendWhatsApp(recipient, message)
   )
+  ipcMain.on(IPC.WHATSAPP_PREWARM, () => {
+    try {
+      whatsapp.prewarmWhatsApp()
+    } catch {
+      // speculative — never surfaces
+    }
+  })
 
   // --- usage / cost ---
   ipcMain.handle(IPC.USAGE_TASK, (_e, taskId: string) => usage.taskUsage(taskId))

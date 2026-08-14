@@ -145,6 +145,7 @@ declare global {
           error?: string
         }>
         sendWhatsApp: (recipient: string, message: string) => Promise<{ ok: boolean; detail: string }>
+        prewarmWhatsApp: () => void
       }
       accounts: {
         list: () => Promise<

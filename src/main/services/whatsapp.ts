@@ -39,12 +39,26 @@ function getHiddenWindow(): BrowserWindow {
   return waWindow
 }
 
+// The slow part of a background send is WhatsApp Web's ~5-10s cold load. Called
+// the moment the user starts a "> " command (before they finish typing the
+// message), so by Enter the page is usually already logged-in and ready —
+// making the background send feel as instant as driving an open pane. No-op if
+// a WhatsApp pane is open (that path needs no hidden window) or one is warming.
+export function prewarmWhatsApp(): void {
+  if (sending) return
+  if (paneManager.whatsappWebContents()) return // pane path — nothing to warm
+  getHiddenWindow() // creates + starts loading; idle timer keeps it ~5min
+  scheduleIdleClose()
+}
+
 function scheduleIdleClose(): void {
   if (idleTimer) clearTimeout(idleTimer)
+  // 5 min: a warm, logged-in window makes every send in a session instant;
+  // the ~100MB is reclaimed once the user is clearly done messaging.
   idleTimer = setTimeout(() => {
     if (waWindow && !waWindow.isDestroyed()) waWindow.destroy()
     waWindow = null
-  }, 90_000)
+  }, 300_000)
 }
 
 export function closeWhatsApp(): void {
@@ -212,7 +226,9 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
     if (!wc) wc = getHiddenWindow().webContents
 
     let state = 'loading'
-    for (let i = 0; i < 60; i++) {
+    // Tighter poll: a prewarmed window is usually ready on the first check;
+    // a cold one still resolves within the same overall budget (~30s).
+    for (let i = 0; i < 120; i++) {
       if (wc.isDestroyed()) return { ok: false, detail: 'WhatsApp window closed mid-send' }
       state = await exec<string>(wc, STATE_SCRIPT).catch(() => 'loading')
       if (state === 'ready') break
@@ -234,7 +250,7 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
         await sleep(1500)
         continue
       }
-      await sleep(500)
+      await sleep(250)
     }
     if (state !== 'ready') {
       const diag = await exec<string>(wc, DIAG_SCRIPT).catch(() => 'page unreadable')

@@ -1,107 +1,116 @@
 # ASIT — A Study Tool
 
-Local-first study workspace for Windows. One click on a workspace opens everything it needs — embedded browser tabs (Overleaf, course sites), PDFs, notes — exactly where you left them. A focus timer locks the screen to the work. AI runs through your existing [Claude Code](https://claude.com/claude-code) CLI subscription: no API keys, and context is automatic because every workspace *is* a folder the AI works inside.
+**A local-first study & work companion for Windows.** One click on a *workspace* reopens everything that work needs — course sites, Overleaf, PDFs, your notes — exactly where you left them, then a focus timer locks you in. An AI that already knows your context (because every workspace *is* a folder it works inside) can read your material, answer questions, generate recall questions, and even drive the app for you. It runs on your existing [Claude Code](https://claude.com/claude-code) subscription — **no API keys, no cloud, nothing leaves your machine.**
 
-## Run
+---
 
-```bash
-npm install
-npm run dev
-```
+## Get started in 3 minutes
 
-Build a Windows installer (output in `dist/`):
+1. **Install & sign in to the AI.** ASIT uses the [Claude Code CLI](https://claude.com/claude-code) (`claude` → `/login`, once). Everything works without it except the AI features.
+2. **Open ASIT** (desktop icon / Start menu). You land on the **scratchpad** — a browser with your workspace sidebar.
+3. **Make your first workspace.** Browse to a course page or open a PDF, then hit **💾 Save session** — or click **+ New workspace** in the sidebar. That folder is now the AI's context; you never paste or explain anything.
+4. **Try the AI.** Open a PDF in the workspace, press **`Ctrl+K`**, and ask a question about it. Or press **`Ctrl+Space`** and just *talk* to it.
 
-```bash
-npm run dist
-```
+That's the whole loop: **gather → focus → study → ask.** Everything below is detail you can pick up as you go.
 
-## Requirements
+---
 
-- Windows, Node 22+
-- [Claude Code CLI](https://claude.com/claude-code) installed and logged in (`claude` → `/login`). ASIT looks for it at `%USERPROFILE%\.local\bin\claude.exe`; override in Settings. Everything works without it except the AI features.
+## What you can do
 
-## How it works
-
-**Workspaces own folders.** Every workspace gets `Documents\ASIT\tasks\<slug>-<id>\` containing an auto-maintained `CLAUDE.md` (task summary, file inventory, tool guidance), `notes.md`, and your PDFs/files. That folder is the working directory for every Claude CLI call, so chat and question generation always have your context — you never paste or explain anything.
-
-**Home is a browser.** The home screen is a scratchpad browser (tabs, address bar, pinning) plus your workspace list, global to-dos, and quick chats. Browse freely; when a session becomes real work, 💾 *Save session* turns the open tabs, notes, and chats into a named workspace.
-
-**Workspace panes.** Websites and PDFs open in embedded browser views (logins persist in the app's own profile — one sign-in per site, like a new laptop; Chrome sessions can't be imported because Chrome's cookies are app-bound encrypted). Panes split left/right or top/bottom, resize, collapse, and are *parked, not closed* when you navigate away — pages never reload when you come back.
-
-**Notes render live.** Obsidian-style: headings, bold, links, and pasted images render in place; the line your cursor is on shows raw markdown. `/` references files (clickable links that open them) and snippets. Lines starting with `to-do:` are captured into the global to-do list — checking one off strikes the line through in your notes. `Term: definition` lines feed the Review tab's key-terms list.
-
-**Focus sessions.** `▶ Focus` starts a stopwatch and engages lockdown: fullscreen, always-on-top, focus re-grab. Time tracks until you deliberately exit — a 30-second hold or a typed escape phrase, both validated in the main process. `⏱` is the optional pomodoro variant; breaks unlock the screen and surface due review questions.
-
-**Recall questions.** On-demand from any PDF's ✨ menu: *extract* existing questions from structured documents or *generate* new ones (multiple-choice supported), including cross-document pipelines ("questions from X, answers from Y"). Scheduled by simplified SM-2 spaced repetition; grade yourself or type an answer for AI grading.
-
-**The agent can drive the app.** Chat runs with file tools scoped to the workspace folder and controls the app through an append-only action protocol — opening resources, adding URLs, filling and clicking elements on open pages (real input events, label-targeted, iframe-aware), saving reusable **skills** (`./name` replays deterministic flows instantly, zero tokens), and setting **watches** that resume work when a page changes ("when the Continue button enables…").
-
-**Jarvis — the universal agent.** 🤖 (Ctrl+J) opens it; 🎙 (Ctrl+Space) *talks* to it — local speech recognition (silero VAD + Moonshine via sherpa-onnx, nothing leaves your machine), pause-to-send, spoken replies with barge-in. It works *across* workspaces and acts, not just answers: "add the syllabus link to CS 1331", "what's due anywhere this week?", "generate questions from the bio slides". It reads every AI-enabled workspace, drives the app through the same action protocol as workspace chats (with explicit per-workspace targeting only it is allowed to use), and keeps a deliberately bounded rolling session — context stays cheap. Also available on the phone (Ask tab → 🤖).
-
-**Quick assistant.** ⚡ (Ctrl+K) opens a compact cross-workspace assistant on the fastest model. `?keywords` greps your logged-in mail without an agent, `?otp` grabs a login code straight to clipboard, `?g query` does an instant extractive Google answer.
-
-**Keyboard-first.** Tab / Shift+Tab cycle a focus ring of the zones that matter (panes → notes → chat), Ctrl+1…9 jump directly, Ctrl+K assistant, Ctrl+L address bar — all working even while an embedded page holds focus.
-
-**Private workspaces.** 🔒 disables AI entirely: no chat, no generation, excluded from the assistant, backups, and indexes — enforced physically (the folder lives outside every AI-readable directory), not by prompt.
-
-**Phone companion.** Settings → 📱 Phone serves a small web app to your phone over your own [Tailscale](https://tailscale.com) network (free, WireGuard-encrypted, nothing exposed to the internet). Scan the QR, *Add to Home Screen*, and you get: global to-dos, spaced-repetition review on the go, quick capture into the scratchpad (with `to-do:` auto-capture), and the quick assistant (`?g` / `?otp` included). Push notifications — watches firing, question jobs finishing, chat replies landing while you're away — arrive via standard Web Push, whose payloads are end-to-end encrypted (RFC 8291), so relays only ever see ciphertext. Pairing is a random token in the QR; revoke it any time.
-
-**Backup.** Settings → Export produces a zip of workspaces, files, and questions with SR state; sensitive data (escape phrase, logins, usage) is excluded. Import restores everything as new workspaces.
-
-## Cheat sheet
-
-### Keyboard
-
-| Keys | Where | What |
-|---|---|---|
-| `Tab` / `Shift+Tab` | everywhere (even inside an embedded page) | Cycle the focus ring — only the zones that matter: panes → notes → chat, wrapping around. Landing on the chat puts the caret in the message box. Inside dialogs and small forms, Tab stays field-to-field. |
-| `Ctrl+1` … `Ctrl+9` | everywhere | Jump straight to zone N. Workspace: `1` left pane, `2` right pane, `3` chat. Home: `1` workspace list, `2` browser, `3` notes, `4` chat. |
-| `Ctrl+K` | everywhere | Toggle the ⚡ quick assistant — opens with the cursor ready; pressing it again (or `Esc`) closes it and returns focus where you were. |
-| `Ctrl+J` | everywhere | Toggle 🤖 Jarvis, the universal agent (same return-focus behavior). |
-| `Ctrl+Space` | everywhere | Talk to Jarvis: speak, and ~0.7s of silence sends it. Speech-to-text runs fully locally (one-time ~130MB model download on first use); replies are spoken back instantly. Press again to interrupt/cancel. |
-| `Ctrl+L` | home | Focus the browser address bar, text selected. `Esc` returns. |
-| `↑` / `↓`, `Enter` | workspace list | Walk the list, open the selected workspace. |
-| `Enter` / `Shift+Enter` | chat + assistant | Send / newline. While a `/` or `./` popup is open, `↑↓` pick, `Enter` or `Tab` insert, `Esc` dismisses. |
-| `Ctrl+E` | notes | Toggle live preview ↔ raw markdown (also the `⟨⟩` hover button, top-right). |
-| 30-second hold, or typed escape phrase | lockdown | The only two ways out of a focus session. |
-
-### Text triggers
-
-| Type | Where | What happens |
-|---|---|---|
-| `to-do: buy poster board` | any notes line | Captured into the global to-do list (sidebar ☑). Checking it off strikes the line through; deleting the line removes the to-do. Works after bullets, `#` headings, and `- [ ]` checkboxes too. |
-| `Polymorphism: one interface, many types` | any notes line | Becomes a key term in the workspace's 🧠 Review → Key terms tab (blur-to-reveal, one click to add all to spaced repetition). |
-| `/` | notes, chat | Reference popup: workspace files (inserts a clickable link that opens the file) and snippets. |
-| `/KEY ` (trailing space) | chat, notes, assistant, **and any web form in a pane** | Expands the snippet you defined in Settings → Snippets (e.g. `/gtem ` → your email). |
-| `./` | chat | Skill popup. ⚡ skills replay a saved flow instantly with zero tokens; 🤖 skills brief the agent. The agent saves new skills after a successful run. |
-| `?keywords` | assistant | Agentless grep of your default mail source (Gmail) in a hidden logged-in page — no tokens. First word = source name to target another (`?outlook interview time`). |
-| `?otp` | assistant | Pulls the newest login code from mail → clipboard, and auto-types it into the visible page. |
-| `?g query` | assistant | Instant Google answer, extractive (built for speed: deadlines, dates, numbers). |
-| `> name: message` | assistant (PC + phone) | Sends a WhatsApp message from your own linked account (Settings → 🔑 Connected accounts → WhatsApp, one-time QR). Deterministic — no AI touches the text — and it reports back exactly who it went to. Jarvis can also send when you explicitly ask ("text Manav that…"). |
-| paste an image | notes | Saved into the workspace's `files/` and shown inline. |
-
-### Places
-
-| Name | What it is |
+### 📚 Study & organize
+| Feature | How |
 |---|---|
-| **Scratchpad** (home) | The free browser + notes + chat on the home screen. 💾 *Save session* turns it into a named workspace and resets it. |
-| **Status cluster** (header, right side) | Running background work (click a pill to jump to its workspace), question-job progress, transient results, and the ⚡ assistant launcher. |
-| **Resource rail** (workspace, left edge) | The workspace's tabs/PDFs/notes/files; ✨ on a PDF for question extraction/generation; 📎 attaches from the global library. |
-| **🧠 Review** (workspace tab) | Due questions, all questions, key terms. |
-| **⋯ menu** (workspace row) | Rename, due date, priority, 🔒 private (no-AI), coding mode, archive, delete (files go to a trash folder, never erased). |
-| **`Documents\ASIT\`** | All your real data: `tasks\` (one folder per workspace — also the AI's context), `private\`, `library\`, `skills\`, `.trash\`. The app's database and logins live in `%APPDATA%\asit`. Neither is part of this repo. |
+| **Workspaces** | Each is a folder of everything one task needs — tabs, PDFs, notes, chats — reopened in one click, laid out how you left it. |
+| **Embedded panes** | Websites & PDFs open *inside* the app; split left/right or top/bottom, resize, collapse. Logins persist (sign in once per site). Pages are *parked, not closed* when you leave — no reloads. |
+| **Live-preview notes** | Markdown that renders as you type (Obsidian-style): headings, **bold**, links, pasted images. `Ctrl+E` for raw. |
+| **Recall questions** | On any PDF's ✨ menu: *extract* existing questions or *generate* new ones (multiple-choice supported). Surfaced by spaced repetition (SM-2) on the home screen and during breaks. |
+| **🧠 Review tab** | Due questions, all questions, and **key terms** (write `Term: definition` in notes → they appear here). |
+| **Global to-dos** | A sidebar list. Writing `to-do: …` in any note auto-captures it; checking it off strikes the note line through. |
+
+### 🎯 Focus
+| Feature | How |
+|---|---|
+| **Focus session** | `▶ Focus` starts a stopwatch and **lockdown** — fullscreen, always-on-top, focus re-grab. |
+| **Deliberate exit** | Leave only via a **30-second hold** or a typed **escape phrase** — enough friction to beat the impulse, never a jail (see limitations below). |
+| **Pomodoro** | `⏱` is the optional work/break variant; breaks unlock the screen and surface due questions. |
+
+### 🤖 AI that acts, not just answers
+| Feature | How |
+|---|---|
+| **Chat** (per workspace) | Reads your PDFs & notes automatically. Can also **drive the app**: open resources, fill & click page elements, generate questions — and reports back what it did. |
+| **⚡ Quick assistant** (`Ctrl+K`) | Fast, read-only, cross-workspace lookups. Also the home of the `?`/`>` commands below. |
+| **🤖 Jarvis** (`Ctrl+J`) | The universal agent — works *across* all workspaces and takes action: *"add the syllabus link to CS 1331", "what's due anywhere this week?", "generate 10 questions from the bio slides."* |
+| **🎙 Voice** (`Ctrl+Space`) | **Talk** to Jarvis. Speech recognition is 100% local (one-time ~130MB model download); pause to send, replies spoken back. |
+| **⚡ Skills** | The agent saves successful procedures as `./name`. Deterministic ones replay instantly with zero tokens. |
+| **👁 Watches** | *"When the Continue button appears, click it"* — the agent resumes work when a page changes, even while you're away. |
+
+### 🔌 Connect
+| Feature | How |
+|---|---|
+| **📱 Phone companion** | Serve a phone web-app over your own [Tailscale](https://tailscale.com) network (free, private, nothing exposed to the internet). Get to-dos, review, quick capture, and the assistant on your phone — with **offline support** (study on the bus; changes sync when the PC is back) and **push notifications** (watches firing, jobs finishing). |
+| **💬 WhatsApp** | Send messages from your own linked account without opening WhatsApp: type `> name: message`. See *Commands* below. |
+| **🔎 Quick fetch** | `?keywords` greps your logged-in mail for a value; `?otp` grabs a login code to clipboard; `?g query` gives an instant answer. |
+| **📎 Library & 🔒 privacy** | A global file library to attach into workspaces; 🔒 **private workspaces** disable AI entirely (physically outside every AI-readable folder). |
+
+---
+
+## Commands (in the ⚡ assistant bar / phone Ask tab)
+
+| Type this | What happens |
+|---|---|
+| `?g when is the hackathon deadline` | Instant extractive answer from Google — built for speed. |
+| `?otp` | Pulls the newest login code from your mail → clipboard (and types it into the open page). |
+| `?keywords` | Greps your default mail source (Gmail) for those words. First word can target another source: `?outlook interview`. |
+| `> Mom: running 10 late` | Sends that WhatsApp message from your own account. No AI touches the text; it reports exactly who it went to. |
+
+*(In notes and chat, `/` references a file or snippet, `./` runs a skill, and `/KEY ` expands a saved snippet — set snippets in Settings.)*
+
+## Keyboard
+
+| Keys | What |
+|---|---|
+| `Tab` / `Shift+Tab` | Move between the panes/notes/chat that matter (not every DOM element). |
+| `Ctrl+1…9` | Jump straight to a zone. |
+| `Ctrl+K` / `Ctrl+J` | Toggle the ⚡ quick assistant / 🤖 Jarvis. |
+| `Ctrl+Space` | Talk to Jarvis (pause to send). |
+| `Ctrl+L` | Focus the scratchpad address bar. |
+| `Ctrl+E` | Notes: toggle live-preview ↔ raw markdown. |
+| 30-sec hold / escape phrase | The two ways out of a focus session. |
+
+---
+
+## Where your stuff lives (and why it's private)
+
+Everything is on your machine, in two places **outside this repo**, shared by dev and installed builds:
+
+- **`Documents\ASIT\`** — `tasks\` (one folder per workspace = the AI's context), `private\` (no-AI workspaces), `library\`, `skills\`, `.trash\`.
+- **`%APPDATA%\asit`** — the SQLite database, your browser-profile logins.
+
+Uninstalling or reinstalling never erases this. The AI only ever sees a workspace's own folder (and, for Jarvis, all non-private workspaces) — private workspaces sit physically outside every AI path, and nothing is ever sent to a server.
+
+**A note on safety.** The AI can read untrusted content (web pages, PDFs) while holding your logged-in sessions, so it's hardened against prompt-injection: it can't reach local files, can't run custom URL schemes, every page navigation it makes is shown to you, messaging requires your explicit ask, and instruction files are regenerated each turn so tampering can't persist. For anything sensitive (banking, personal docs), use a 🔒 **private workspace** — it's outside the AI's reach entirely. Coding-mode workspaces get a real terminal (with a confirmation), so treat those as fully trusted.
 
 ## Honest lockdown limitations (by design)
 
 Alt+Tab briefly escapes before the window re-grabs focus (~1s). Ctrl+Alt+Del, Task Manager, and Win+L are untouched — this is strong friction, not a jail. Lockdown state is never persisted, so a crash can never lock you out of your machine.
 
-## Smoke tests (headless)
+---
+
+## For developers
 
 ```bash
-npm run build
+npm install
+npm run dev        # HMR dev
+npm run typecheck  # both tsconfigs
+npm run dist       # Windows installer → dist/
 ```
 
-Then run `npx electron out/main/index.js` with one of: `ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad), `ASIT_SMOKE_CHAT=1` (Claude streaming + context + resume), `ASIT_SMOKE_QGEN=1` (question generation + SM-2 + usage), `ASIT_SMOKE_AGENT=1` (agent file tools + app actions), `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit), `ASIT_SMOKE_PANES=1` (pane ownership: an agent can only see/drive its own workspace's tabs), `ASIT_SMOKE_COMPANION=1` (phone server: token auth, to-dos, capture, sync idempotency, pairing, static whitelist), `ASIT_SMOKE_JARVIS=1` (universal agent: workspace targeting, private unreachability, end-to-end CLI dispatch — needs a logged-in CLI), `ASIT_SMOKE_VOICE=1` (speech: TTS-rendered WAV transcribed back through the real VAD+ASR pipeline). Smoke runs are isolated from real user data.
+**Requirements:** Windows, Node 22+.
+
+**Architecture** lives in [`CLAUDE.md`](CLAUDE.md) — the load-bearing invariants (task-folder-as-context, WebContentsView z-order, pane ownership, private-task isolation, agent containment) are documented there.
+
+**Smoke tests** (after `npm run build`, run `npx electron out/main/index.js` with one env var):
+`ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad) · `ASIT_SMOKE_CHAT=1` (Claude streaming + resume) · `ASIT_SMOKE_QGEN=1` (question generation + SM-2) · `ASIT_SMOKE_AGENT=1` (agent file tools + app actions) · `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit) · `ASIT_SMOKE_PANES=1` (pane ownership) · `ASIT_SMOKE_COMPANION=1` (phone server) · `ASIT_SMOKE_JARVIS=1` (universal agent — needs a logged-in CLI) · `ASIT_SMOKE_VOICE=1` (speech round-trip) · `ASIT_SMOKE_SECURITY=1` (agent-containment invariants). Smoke runs are isolated from real user data.
 
 ## License
 

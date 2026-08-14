@@ -126,7 +126,8 @@ const api = {
   quickfetch: {
     run: (query: string) => ipcRenderer.invoke(IPC.QUICKFETCH_RUN, query),
     sendWhatsApp: (recipient: string, message: string) =>
-      ipcRenderer.invoke(IPC.WHATSAPP_SEND, recipient, message)
+      ipcRenderer.invoke(IPC.WHATSAPP_SEND, recipient, message),
+    prewarmWhatsApp: () => ipcRenderer.send(IPC.WHATSAPP_PREWARM)
   },
   accounts: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNTS_LIST),
