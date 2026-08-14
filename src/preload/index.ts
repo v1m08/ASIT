@@ -81,7 +81,11 @@ const api = {
     download: () => ipcRenderer.invoke(IPC.VOICE_DOWNLOAD),
     start: () => ipcRenderer.invoke(IPC.VOICE_START),
     stop: () => ipcRenderer.invoke(IPC.VOICE_STOP),
-    chunk: (buf: ArrayBuffer) => ipcRenderer.send(IPC.VOICE_CHUNK, buf)
+    chunk: (buf: ArrayBuffer) => ipcRenderer.send(IPC.VOICE_CHUNK, buf),
+    prewarm: () => ipcRenderer.send(IPC.VOICE_PREWARM),
+    audioDone: () => ipcRenderer.send(IPC.VOICE_AUDIO_DONE),
+    ttsStatus: () => ipcRenderer.invoke(IPC.VOICE_TTS_STATUS),
+    ttsDownload: () => ipcRenderer.invoke(IPC.VOICE_TTS_DOWNLOAD)
   },
   jarvis: {
     ask: (prompt: string) => ipcRenderer.invoke(IPC.JARVIS_ASK, prompt),

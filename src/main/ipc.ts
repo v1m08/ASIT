@@ -351,6 +351,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   ipcMain.handle(IPC.VOICE_START, () => voice.voiceStart())
   ipcMain.handle(IPC.VOICE_STOP, () => voice.voiceStop())
+  ipcMain.on(IPC.VOICE_PREWARM, () => {
+    try {
+      voice.prewarmVoice()
+    } catch {
+      // speculative
+    }
+  })
+  ipcMain.on(IPC.VOICE_AUDIO_DONE, () => voice.onAudioDone())
+  ipcMain.handle(IPC.VOICE_TTS_STATUS, () => ({ ready: voice.ttsReady() }))
+  ipcMain.handle(IPC.VOICE_TTS_DOWNLOAD, (e) =>
+    voice.downloadTts((pct, file) => {
+      if (!e.sender.isDestroyed()) e.sender.send(IPC.VOICE_TTS_PROGRESS, { pct, file })
+    })
+  )
   // High-frequency PCM chunks: plain send, zero round-trips. The conversion
   // stays inside the try — a misaligned buffer must not throw in ipcMain.on.
   ipcMain.on(IPC.VOICE_CHUNK, (_e, buf: ArrayBuffer) => {

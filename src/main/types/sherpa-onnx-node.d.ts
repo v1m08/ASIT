@@ -16,4 +16,10 @@ declare module 'sherpa-onnx-node' {
     decode(stream: unknown): void
     getResult(stream: unknown): { text: string }
   }
+  export class OfflineTts {
+    constructor(config: Record<string, unknown>)
+    sampleRate: number
+    numSpeakers: number
+    generate(obj: { text: string; sid: number; speed: number }): { samples: Float32Array }
+  }
 }

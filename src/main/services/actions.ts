@@ -52,6 +52,7 @@ export interface AppAction {
   // Universal-agent (Jarvis) only: act inside a named workspace. Rejected for
   // every other agent — a workspace agent must never cross into another.
   workspace?: string
+  query?: string // fetch action: what to grep from the user's logged-in mail
   text?: string
   gone_label?: string
   gone_text?: string
@@ -442,6 +443,20 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       const res = await sendWhatsApp(to, msg)
       push({ type: 'toast', text: res.ok ? `📨 WhatsApp ${res.detail}` : `📨 WhatsApp send failed: ${res.detail}` })
       return res.ok ? res.detail : `FAILED: ${res.detail}`
+    }
+    // Agentless read of the user's OWN logged-in sources (Gmail etc.) — the
+    // same hidden-window grep the ⚡ bar uses. This is how Jarvis reads email
+    // WITHOUT an OAuth flow (it acts as an ASIT agent, not raw Claude). The
+    // result lands in actions-result.md for the model to read back.
+    case 'fetch': {
+      const q = String(action.query ?? action.value ?? '').trim()
+      if (!q) return 'fetch: no query (e.g. {"action":"fetch","query":"flight confirmation Atlanta"})'
+      const { quickFetch } = await import('./quickfetch')
+      const res = await quickFetch(q)
+      if (res.otp) return `fetched OTP: ${res.otp} (${res.source})`
+      if (res.error) return `fetch found nothing: ${res.error}`
+      if (res.lines.length === 0) return `fetch: no matches in ${res.source || 'sources'}`
+      return `fetched from ${res.source}:\n${res.lines.map((l) => `  ${l}`).join('\n')}`
     }
     case 'watch': {
       const { startWatch } = await import('./watchers')

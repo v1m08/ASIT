@@ -150,6 +150,13 @@ export const IPC = {
   VOICE_TRANSCRIPT: 'voice:transcript', // push M→R
   VOICE_REPLY: 'voice:reply', // push M→R
   VOICE_DOWNLOAD_PROGRESS: 'voice:download-progress', // push M→R
+  VOICE_PREWARM: 'voice:prewarm', // R→M, no reply
+  VOICE_AUDIO: 'voice:audio', // push M→R: Kokoro samples to play
+  VOICE_AUDIO_STOP: 'voice:audio-stop', // push M→R: barge-in
+  VOICE_AUDIO_DONE: 'voice:audio-done', // R→M: playback finished
+  VOICE_TTS_STATUS: 'voice:tts-status',
+  VOICE_TTS_DOWNLOAD: 'voice:tts-download',
+  VOICE_TTS_PROGRESS: 'voice:tts-progress', // push M→R
 
   // phone companion
   COMPANION_STATUS: 'companion:status',

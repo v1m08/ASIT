@@ -1,5 +1,5 @@
 import { app, BrowserWindow } from 'electron'
-import { spawn, type ChildProcess } from 'child_process'
+import { execFile, spawn, type ChildProcess } from 'child_process'
 import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'fs'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
@@ -58,6 +58,10 @@ function modelsDir(): string {
   return join(app.getPath('userData'), 'voice-models')
 }
 
+function ttsDir(): string {
+  return join(app.getPath('userData'), 'voice-tts', 'kokoro-en-v0_19')
+}
+
 export function voiceModelsReady(): boolean {
   return MODELS.every((m) => {
     const p = join(modelsDir(), m.name)
@@ -97,6 +101,154 @@ export async function downloadVoiceModels(
   } finally {
     downloading = false
   }
+}
+
+// ---------------------------------------------------------------------------
+// Kokoro TTS (optional upgrade over the built-in Windows voice). Downloaded on
+// demand as one .tar.bz2 (Windows' bundled bsdtar extracts it — the espeak
+// data is 355 tiny files, impractical to fetch individually). Generation runs
+// in main; samples are streamed to the renderer for playback so barge-in is a
+// clean node stop.
+// ---------------------------------------------------------------------------
+
+const KOKORO_URL =
+  'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-en-v0_19.tar.bz2'
+
+export function ttsReady(): boolean {
+  const d = ttsDir()
+  return (
+    existsSync(join(d, 'model.onnx')) &&
+    existsSync(join(d, 'voices.bin')) &&
+    existsSync(join(d, 'tokens.txt')) &&
+    existsSync(join(d, 'espeak-ng-data'))
+  )
+}
+
+let ttsDownloading = false
+
+export async function downloadTts(onProgress: (pct: number, file: string) => void): Promise<void> {
+  if (ttsDownloading) throw new Error('already downloading')
+  if (ttsReady()) {
+    onProgress(100, 'done')
+    return
+  }
+  ttsDownloading = true
+  try {
+    const base = join(app.getPath('userData'), 'voice-tts')
+    mkdirSync(base, { recursive: true })
+    const archive = join(base, 'kokoro.tar.bz2')
+    onProgress(5, 'downloading voice (~370MB)')
+    const res = await fetch(KOKORO_URL, { redirect: 'follow' })
+    if (!res.ok || !res.body) throw new Error(`kokoro: HTTP ${res.status}`)
+    const total = Number(res.headers.get('content-length') ?? 0)
+    let got = 0
+    const out = createWriteStream(archive)
+    await new Promise<void>((resolve, reject) => {
+      out.on('error', reject)
+      out.on('finish', resolve)
+      const reader = res.body!.getReader()
+      const pump = (): void => {
+        reader
+          .read()
+          .then(({ done, value }) => {
+            if (done) return void out.end()
+            got += value.length
+            if (total) onProgress(5 + Math.round((got / total) * 80), 'downloading voice')
+            out.write(value)
+            pump()
+          })
+          .catch(reject)
+      }
+      pump()
+    })
+    onProgress(88, 'extracting')
+    // Windows System32 bsdtar handles .tar.bz2 natively; the release extracts
+    // to a top-level kokoro-en-v0_19/ folder alongside the archive.
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'tar.exe',
+        ['-xf', archive, '-C', base],
+        { windowsHide: true, maxBuffer: 1 << 24 },
+        (err) => (err ? reject(err) : resolve())
+      )
+    })
+    try {
+      const { rmSync } = await import('fs')
+      rmSync(archive, { force: true })
+    } catch {
+      // leftover archive is harmless
+    }
+    if (!ttsReady()) throw new Error('extraction did not produce the expected files')
+    onProgress(100, 'done')
+  } finally {
+    ttsDownloading = false
+  }
+}
+
+interface SherpaTts {
+  sampleRate: number
+  generate(obj: {
+    text: string
+    sid: number
+    speed: number
+    enableExternalBuffer: boolean
+  }): { samples: Float32Array }
+}
+
+// enableExternalBuffer:false is REQUIRED under Electron's memory cage (same
+// class of crash the VAD hit) — the default hands V8 an external buffer.
+function ttsGenerate(tts: SherpaTts, text: string): { samples: Float32Array } {
+  return tts.generate({ text, sid: 0, speed: 1.0, enableExternalBuffer: false })
+}
+
+let kokoro: SherpaTts | null = null
+let kokoroInit: Promise<void> | null = null
+
+async function ensureKokoro(): Promise<SherpaTts | null> {
+  if (kokoro) return kokoro
+  if (!ttsReady()) return null
+  if (!kokoroInit) {
+    kokoroInit = (async () => {
+      const mod = (await import('sherpa-onnx-node')) as unknown as Record<string, unknown>
+      const sherpa = (mod.default ?? mod) as { OfflineTts: new (c: unknown) => SherpaTts }
+      const d = ttsDir()
+      kokoro = new sherpa.OfflineTts({
+        model: {
+          kokoro: {
+            model: join(d, 'model.onnx'),
+            voices: join(d, 'voices.bin'),
+            tokens: join(d, 'tokens.txt'),
+            dataDir: join(d, 'espeak-ng-data')
+          },
+          numThreads: 2,
+          provider: 'cpu'
+        }
+      })
+    })().finally(() => {
+      kokoroInit = null
+    })
+  }
+  await kokoroInit
+  return kokoro
+}
+
+// Voice replies should be SHORT — speak a one-line summary, not the essay.
+// The full text still renders in the panel.
+function summarizeForSpeech(markdown: string): string {
+  const clean = markdown
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[\s>*+\-#]+/gm, '')
+    .replace(/[*_]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!clean) return ''
+  // First sentence; if that's tiny (a lead-in like "Done."), take two.
+  const sentences = clean.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) ?? [clean]
+  let out = sentences[0].trim()
+  if (out.length < 25 && sentences[1]) out += ' ' + sentences[1].trim()
+  return out.slice(0, 240)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +362,16 @@ export async function transcribeViaVadPath(samples: Float32Array): Promise<strin
   return texts.join(' ').trim()
 }
 
+// Smoke hook: generate a clip synchronously (bypasses the renderer path).
+export async function synthesizeForSmoke(
+  text: string
+): Promise<{ samples: Float32Array; sampleRate: number }> {
+  const tts = await ensureKokoro()
+  if (!tts) throw new Error('kokoro not ready')
+  const out = ttsGenerate(tts, text)
+  return { samples: out.samples, sampleRate: tts.sampleRate }
+}
+
 export async function transcribeSamples(samples: Float32Array): Promise<string> {
   await ensureEngine()
   const stream = recognizer!.createStream()
@@ -240,6 +402,13 @@ export function initVoice(getWin: () => BrowserWindow | null): void {
 function pushState(state: string, detail?: string): void {
   const win = getWindow?.()
   if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_STATE, { state, detail })
+}
+
+// Warm the STT engine ahead of the first Ctrl+Space so recording starts with
+// no model-load stall — the delay that was eating the start of utterances.
+export function prewarmVoice(): void {
+  if (voiceModelsReady()) void ensureEngine().catch(() => undefined)
+  if (ttsReady()) void ensureKokoro().catch(() => undefined)
 }
 
 export async function voiceStart(): Promise<void> {
@@ -409,25 +578,71 @@ function stripForSpeech(markdown: string): string {
     .slice(0, 1200) // a voice reply should be a reply, not an essay
 }
 
+// Every spoken utterance carries an id so a stale barge-in can't cancel a
+// newer one, and the renderer can match audio to its stop.
+let speakSeq = 0
+
 export function speak(text: string, onDone?: () => void): void {
-  const clean = stripForSpeech(text)
-  if (!clean) {
+  const summary = summarizeForSpeech(text)
+  if (!summary) {
     onDone?.()
     return
   }
+  const id = ++speakSeq
+
+  // Kokoro path: generate samples in main, play in the renderer (clean
+  // barge-in via node stop). Falls back to the built-in Windows voice while
+  // Kokoro isn't downloaded, so voice always works.
+  void ensureKokoro()
+    .then((tts) => {
+      if (id !== speakSeq) return // superseded before generation finished
+      if (!tts) {
+        speakSapi(summary, id, onDone)
+        return
+      }
+      const audio = ttsGenerate(tts, summary)
+      if (id !== speakSeq) return
+      const win = getWindow?.()
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(IPC.VOICE_AUDIO, {
+          id,
+          sampleRate: tts.sampleRate,
+          samples: Buffer.from(audio.samples.buffer, audio.samples.byteOffset, audio.samples.byteLength)
+        })
+      }
+      ttsDoneCb = onDone ?? null // renderer signals completion via VOICE_AUDIO_DONE
+    })
+    .catch((err) => {
+      console.error('kokoro tts failed, falling back:', err)
+      if (id === speakSeq) speakSapi(summary, id, onDone)
+    })
+}
+
+// Built-in Windows voice fallback (instant, no download).
+function speakSapi(text: string, id: number, onDone?: () => void): void {
   const proc = ensureTts()
-  ttsDoneCb = onDone ?? null
-  proc.stdin?.write(JSON.stringify(clean) + '\n')
+  ttsDoneCb = () => {
+    if (id === speakSeq) onDone?.()
+  }
+  proc.stdin?.write(JSON.stringify(text) + '\n')
+}
+
+// Renderer reports Kokoro playback finished.
+export function onAudioDone(): void {
+  const cb = ttsDoneCb
+  ttsDoneCb = null
+  cb?.()
 }
 
 export function stopSpeaking(): void {
-  // The synthesizer Speak() call is synchronous inside the helper, so it is
-  // NOT reading stdin mid-utterance — a "STOP" line would queue until the
-  // speech finished (i.e. barge-in that can't barge). Killing the process is
-  // the only true interrupt; the next speak() respawns it (~200ms).
-  ttsDoneCb = null // detach BEFORE kill so the exit handler can't double-fire state
+  speakSeq++ // invalidate any in-flight generation
+  ttsDoneCb = null
+  // Stop the SAPI fallback (kill = only true interrupt; sync Speak ignores a
+  // queued STOP line) and any renderer playback.
   if (tts && !tts.killed) tts.kill()
   tts = null
+  const win = getWindow?.()
+  if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_AUDIO_STOP)
 }
 
 export function shutdownVoice(): void {

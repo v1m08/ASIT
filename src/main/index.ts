@@ -497,6 +497,30 @@ $sp.Dispose()`
       if (!vadText.includes(word)) fail(`VAD-path transcript missing "${word}"`)
     }
 
+    // Kokoro TTS (natural voice): download once, then generate a clip.
+    if (process.env.ASIT_SMOKE_VOICE_TTS === '1') {
+      if (!voiceSvc.ttsReady()) {
+        console.log('[voice-smoke] downloading natural voice (~370MB)…')
+        let lastPct = -1
+        await voiceSvc.downloadTts((pct, file) => {
+          if (pct !== lastPct && pct % 10 === 0) {
+            lastPct = pct
+            console.log(`[voice-smoke]   ${pct}% ${file}`)
+          }
+        })
+      }
+      if (!voiceSvc.ttsReady()) fail('TTS models not ready after download')
+      const t1 = Date.now()
+      const audio = await voiceSvc.synthesizeForSmoke('Your flight departs at nine forty AM.')
+      console.log(
+        `[voice-smoke] TTS generated ${audio.samples.length} samples @ ${audio.sampleRate}Hz in ${Date.now() - t1}ms`
+      )
+      if (audio.samples.length < audio.sampleRate) fail('TTS produced too little audio')
+      console.log('[voice-smoke] natural voice generates speech')
+    } else {
+      console.log('[voice-smoke] (skipped natural-voice test — set ASIT_SMOKE_VOICE_TTS=1)')
+    }
+
     console.log('[voice-smoke] ALL PASS')
     app.exit(0)
   } catch (err) {

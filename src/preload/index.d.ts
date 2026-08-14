@@ -203,6 +203,10 @@ declare global {
         start: () => Promise<void>
         stop: () => Promise<void>
         chunk: (buf: ArrayBuffer) => void
+        prewarm: () => void
+        audioDone: () => void
+        ttsStatus: () => Promise<{ ready: boolean }>
+        ttsDownload: () => Promise<void>
       }
       jarvis: {
         ask: (prompt: string) => Promise<void>

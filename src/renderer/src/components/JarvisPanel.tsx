@@ -45,6 +45,7 @@ export default function JarvisPanel(): JSX.Element | null {
   const [error, setError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
+  const prewarmedRef = useRef(false)
   const expand = useSnippets()
 
   // Right-column reservation is owned by App.tsx (shared with the assistant).
@@ -53,11 +54,19 @@ export default function JarvisPanel(): JSX.Element | null {
   const [voiceState, setVoiceState] = useState<'off' | 'listening' | 'thinking' | 'speaking' | 'download'>('off')
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const voiceTick = useStore((s) => s.voiceTick)
+  // The mic is acquired ONCE and kept warm while the panel is open; chunks only
+  // flow to main when micGateRef is true. So Ctrl+Space is instant — no
+  // getUserMedia/AudioContext build, no engine-load stall (prewarmed) — which
+  // is what stops the first words of a command from being lost.
   const captureRef = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null)
+  const micGateRef = useRef(false)
+  const playCtxRef = useRef<AudioContext | null>(null)
+  const playNodeRef = useRef<AudioBufferSourceNode | null>(null)
   const voiceStateRef = useRef(voiceState)
   voiceStateRef.current = voiceState
 
   const stopCapture = (): void => {
+    micGateRef.current = false
     const c = captureRef.current
     captureRef.current = null
     if (c) {
@@ -66,21 +75,64 @@ export default function JarvisPanel(): JSX.Element | null {
     }
   }
 
-  const startCapture = async (): Promise<void> => {
+  // Warm the mic (kept muted-to-main via the gate) so activation is instant.
+  const warmCapture = async (): Promise<void> => {
     if (captureRef.current) return
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
     })
+    if (captureRef.current) {
+      stream.getTracks().forEach((t) => t.stop()) // lost a race — discard
+      return
+    }
     const ctx = new AudioContext({ sampleRate: 16000 })
     const source = ctx.createMediaStreamSource(stream)
     const proc = ctx.createScriptProcessor(2048, 1, 1)
     proc.onaudioprocess = (e) => {
-      const data = e.inputBuffer.getChannelData(0)
-      window.asit.voice.chunk(data.slice().buffer)
+      if (!micGateRef.current) return // warm but not listening
+      window.asit.voice.chunk(e.inputBuffer.getChannelData(0).slice().buffer)
     }
     source.connect(proc)
-    proc.connect(ctx.destination) // required for onaudioprocess to fire
+    proc.connect(ctx.destination)
     captureRef.current = { ctx, stream }
+  }
+
+  // Play a Kokoro clip streamed from main; keep the node for barge-in.
+  const playAudio = (sampleRate: number, samples: Float32Array): void => {
+    try {
+      stopAudio()
+      let ctx = playCtxRef.current
+      if (!ctx || ctx.state === 'closed') {
+        ctx = new AudioContext()
+        playCtxRef.current = ctx
+      }
+      const buf = ctx.createBuffer(1, samples.length, sampleRate)
+      buf.getChannelData(0).set(samples)
+      const node = ctx.createBufferSource()
+      node.buffer = buf
+      node.connect(ctx.destination)
+      node.onended = () => {
+        if (playNodeRef.current === node) playNodeRef.current = null
+        window.asit.voice.audioDone()
+      }
+      playNodeRef.current = node
+      node.start()
+    } catch {
+      window.asit.voice.audioDone()
+    }
+  }
+
+  const stopAudio = (): void => {
+    const n = playNodeRef.current
+    playNodeRef.current = null
+    if (n) {
+      n.onended = null
+      try {
+        n.stop()
+      } catch {
+        // already stopped
+      }
+    }
   }
 
   const toggleInFlight = useRef(false)
@@ -99,10 +151,11 @@ export default function JarvisPanel(): JSX.Element | null {
 
   const doToggleVoice = async (): Promise<void> => {
     const s = voiceStateRef.current
-    if (s === 'listening' || s === 'thinking') {
-      // Cancel: also aborts an in-flight utterance (main's epoch guard).
+    if (s === 'listening' || s === 'thinking' || s === 'speaking') {
+      // Cancel / barge-in: abort the utterance and silence any reply.
+      micGateRef.current = false
+      stopAudio()
       await window.asit.voice.stop()
-      stopCapture()
       setVoiceState('off')
       return
     }
@@ -122,9 +175,12 @@ export default function JarvisPanel(): JSX.Element | null {
       setDownloadPct(null)
     }
     try {
-      await window.asit.voice.start() // also silences any reply mid-speech
-      await startCapture()
+      // Mic is already warm (panel-open prewarm) — flip the gate FIRST so the
+      // very first frames after Ctrl+Space are captured, then tell main.
+      await warmCapture()
+      micGateRef.current = true
       setVoiceState('listening')
+      await window.asit.voice.start() // engine prewarmed; also silences a reply
     } catch (err) {
       setError(`Mic failed: ${err instanceof Error ? err.message : String(err)}`)
       setVoiceState('off')
@@ -142,10 +198,17 @@ export default function JarvisPanel(): JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceTick])
 
-  // Closing the panel must never leave a hot mic running invisibly.
+  // On panel open: prewarm the STT/TTS engines AND the mic, so the first
+  // Ctrl+Space records instantly. On close: fully release the mic + engines'
+  // audio and any playback.
   useEffect(() => {
-    if (!open && (voiceStateRef.current === 'listening' || voiceStateRef.current === 'thinking')) {
-      void window.asit.voice.stop()
+    if (open) {
+      window.asit.voice.prewarm()
+      void warmCapture().catch(() => undefined)
+    } else {
+      micGateRef.current = false
+      stopAudio()
+      if (voiceStateRef.current !== 'off') void window.asit.voice.stop()
       stopCapture()
       setVoiceState('off')
     }
@@ -157,27 +220,42 @@ export default function JarvisPanel(): JSX.Element | null {
       const p = args[0] as { state: string; detail?: string }
       if (p.state === 'idle') setVoiceState('off')
       else setVoiceState(p.state as 'listening' | 'thinking' | 'speaking')
-      if (p.state !== 'listening') stopCapture() // utterance captured — mic off
+      // Utterance captured (main left 'listening') → stop feeding chunks, but
+      // keep the mic WARM so the next turn is instant.
+      if (p.state !== 'listening') micGateRef.current = false
       if (p.state === 'thinking' && p.detail) setStatus(p.detail)
     })
     const offTranscript = window.asit.on(IPC.VOICE_TRANSCRIPT, (...args: unknown[]) => {
       const p = args[0] as { text: string }
       setError(null)
+      setBusy(true) // a voice turn is running → the Stop control appears
       setExchanges((prev) => [...prev.slice(-8), { prompt: `🎙 ${p.text}`, reply: '', done: false, source: 'voice' }])
     })
     const offReply = window.asit.on(IPC.VOICE_REPLY, (...args: unknown[]) => {
       const p = args[0] as { text: string }
       setStatus(null)
+      setBusy(false)
       setExchanges((prev) => finishLast(prev, 'voice', p.text))
     })
     const offProgress = window.asit.on(IPC.VOICE_DOWNLOAD_PROGRESS, (...args: unknown[]) => {
       setDownloadPct((args[0] as { pct: number }).pct)
     })
+    const offAudio = window.asit.on(IPC.VOICE_AUDIO, (...args: unknown[]) => {
+      const p = args[0] as { sampleRate: number; samples: ArrayBuffer | Uint8Array }
+      // samples arrive as a Node Buffer → view as Float32.
+      const bytes = p.samples instanceof Uint8Array ? p.samples : new Uint8Array(p.samples)
+      const f32 = new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4))
+      playAudio(p.sampleRate, f32)
+    })
+    const offAudioStop = window.asit.on(IPC.VOICE_AUDIO_STOP, () => stopAudio())
     return () => {
       offState()
       offTranscript()
       offReply()
       offProgress()
+      offAudio()
+      offAudioStop()
+      stopAudio()
       stopCapture()
     }
   }, [])
@@ -232,14 +310,45 @@ export default function JarvisPanel(): JSX.Element | null {
 
   if (!open) return null
 
-  function ask(): void {
+  async function ask(): Promise<void> {
     const prompt = input.trim()
     if (!prompt || busy) return
     setInput('')
     setError(null)
+    pinnedRef.current = true
+
+    // Quick-command prefixes work right here — Jarvis is now a superset of the
+    // ⚡ assistant. "?g …" search, "?otp", "?keywords" (agentless mail grep),
+    // "> name: message" (WhatsApp) — all instant, no agent, no OAuth.
+    if (prompt.startsWith('?') || prompt.startsWith('>')) {
+      setExchanges((prev) => [...prev.slice(-8), { prompt, reply: '', done: false, source: 'typed' }])
+      try {
+        let reply: string
+        if (prompt.startsWith('>')) {
+          const m = prompt.match(/^>\s*(?:wa|whatsapp)?\s*([^:]{1,60}):\s*(.+)$/is)
+          if (!m) reply = 'Format: `> name: message` (WhatsApp)'
+          else {
+            const res = await window.asit.quickfetch.sendWhatsApp(m[1].trim(), m[2].trim())
+            reply = res.ok ? `✅ ${res.detail}` : `⚠️ ${res.detail}`
+          }
+        } else {
+          const res = await window.asit.quickfetch.run(prompt.slice(1).trim())
+          if (res.otp) reply = `🔑 **${res.otp}** (${res.source}) — copied to clipboard.`
+          else if (res.error) reply = `Nothing found: ${res.error}`
+          else if (res.lines.length > 0) reply = res.lines.map((l) => `- ${l}`).join('\n')
+          else reply = `No matches in ${res.source || 'your sources'}.`
+        }
+        setExchanges((prev) => finishLast(prev, 'typed', reply))
+      } catch (err) {
+        setExchanges((prev) =>
+          finishLast(prev, 'typed', `⚠️ ${err instanceof Error ? err.message : 'failed'}`)
+        )
+      }
+      return
+    }
+
     setBusy(true)
     setSteps([])
-    pinnedRef.current = true
     setExchanges((prev) => [...prev.slice(-8), { prompt, reply: '', done: false, source: 'typed' }])
     window.asit.jarvis.ask(prompt).catch(() => {
       setBusy(false)
@@ -248,11 +357,20 @@ export default function JarvisPanel(): JSX.Element | null {
   }
 
   function stop(): void {
+    // Stops a running turn whether it was typed or voice-initiated, and any
+    // spoken reply.
     window.asit.jarvis.cancel()
+    micGateRef.current = false
+    stopAudio()
+    if (voiceStateRef.current !== 'off') void window.asit.voice.stop()
     setBusy(false)
     setStatus(null)
     setSteps([])
-    setExchanges((prev) => finishLast(prev, 'typed', '(stopped)'))
+    setVoiceState('off')
+    setExchanges((prev) => {
+      const withVoice = finishLast(prev, 'voice', '(stopped)')
+      return finishLast(withVoice, 'typed', '(stopped)')
+    })
   }
 
   return (
@@ -345,19 +463,28 @@ export default function JarvisPanel(): JSX.Element | null {
       <div className="assistant-bar">
         <input
           autoFocus
-          placeholder="Tell Jarvis what to do…"
+          placeholder="Tell Jarvis…  ( ?g search · ?otp · > name: msg )"
           value={input}
-          onChange={(e) => setInput(expand(e.target.value))}
+          onChange={(e) => {
+            const v = expand(e.target.value)
+            setInput(v)
+            if (v.startsWith('>') && !prewarmedRef.current) {
+              prewarmedRef.current = true
+              window.asit.quickfetch.prewarmWhatsApp()
+            } else if (!v.startsWith('>')) {
+              prewarmedRef.current = false
+            }
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') ask()
+            if (e.key === 'Enter') void ask()
           }}
         />
         {busy ? (
-          <button className="assistant-send" title="Stop" onClick={stop}>
+          <button className="assistant-send" title="Stop Jarvis" onClick={stop}>
             ◼
           </button>
         ) : (
-          <button className="assistant-send" title="Go" onClick={ask} disabled={!input.trim()}>
+          <button className="assistant-send" title="Go" onClick={() => void ask()} disabled={!input.trim()}>
             ➤
           </button>
         )}

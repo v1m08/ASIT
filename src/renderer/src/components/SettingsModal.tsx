@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { IPC } from '@shared/ipc-contract'
 import type { Settings } from '@shared/types'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
@@ -186,6 +187,76 @@ function PhoneSection(): JSX.Element {
   )
 }
 
+function VoiceSection(): JSX.Element {
+  const [stt, setStt] = useState<boolean | null>(null)
+  const [tts, setTts] = useState<boolean | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [pct, setPct] = useState<number | null>(null)
+
+  useEffect(() => {
+    window.asit.voice.status().then((s) => setStt(s.modelsReady))
+    window.asit.voice.ttsStatus().then((s) => setTts(s.ready))
+    const off = window.asit.on(IPC.VOICE_TTS_PROGRESS, (...a: unknown[]) =>
+      setPct((a[0] as { pct: number }).pct)
+    )
+    const off2 = window.asit.on(IPC.VOICE_DOWNLOAD_PROGRESS, (...a: unknown[]) =>
+      setPct((a[0] as { pct: number }).pct)
+    )
+    return () => {
+      off()
+      off2()
+    }
+  }, [])
+
+  async function getStt(): Promise<void> {
+    setBusy('stt')
+    setPct(0)
+    try {
+      await window.asit.voice.download()
+      setStt(true)
+    } finally {
+      setBusy(null)
+      setPct(null)
+    }
+  }
+  async function getTts(): Promise<void> {
+    setBusy('tts')
+    setPct(0)
+    try {
+      await window.asit.voice.ttsDownload()
+      setTts(true)
+    } finally {
+      setBusy(null)
+      setPct(null)
+    }
+  }
+
+  return (
+    <div className="phone-section">
+      <div className="row-between">
+        <span>🎙 Voice (talk to Jarvis — Ctrl+Space)</span>
+      </div>
+      <p className="transfer-note">
+        Speech recognition and the spoken voice both run fully on your machine. Models download
+        once.
+      </p>
+      <div className="transfer-buttons">
+        <button className="btn" disabled={!!busy || stt === true} onClick={getStt}>
+          {stt ? '✓ Recognition ready' : busy === 'stt' ? `Downloading… ${pct ?? 0}%` : '⬇ Speech recognition (~130MB)'}
+        </button>
+        <button className="btn" disabled={!!busy || tts === true} onClick={getTts}>
+          {tts ? '✓ Natural voice ready' : busy === 'tts' ? `Downloading… ${pct ?? 0}%` : '✨ Natural voice (~370MB)'}
+        </button>
+      </div>
+      {tts !== true && (
+        <p className="transfer-note">
+          Until the natural voice is installed, replies use the built-in Windows voice.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function SettingsModal({ onClose }: { onClose: () => void }): JSX.Element {
   useOverlay(true)
   const [settings, setSettings] = useState<Settings | null>(null)
@@ -330,6 +401,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
         <button className="btn" onClick={() => setShowAccounts(true)}>
           🔑 Connected accounts…
         </button>
+
+        <VoiceSection />
 
         <PhoneSection />
 
