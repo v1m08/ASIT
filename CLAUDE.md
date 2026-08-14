@@ -32,4 +32,4 @@ Electron (electron-vite + React + TS) study app. Windows-first.
 - `npm run typecheck` — both tsconfigs (run after changes)
 - `npm run build` — production build to `out/`
 - `npm run dist` — NSIS installer to `dist/`
-- Headless smoke tests (after build): env `ASIT_SMOKE=1` | `ASIT_SMOKE_CHAT=1` | `ASIT_SMOKE_QGEN=1` | `ASIT_SMOKE_AGENT=1` | `ASIT_SMOKE_TRANSFER=1` | `ASIT_SMOKE_PANES=1` | `ASIT_SMOKE_COMPANION=1` | `ASIT_SMOKE_JARVIS=1` (needs logged-in CLI) with `npx electron out/main/index.js` (bottom of `src/main/index.ts`). Smoke runs are isolated: own userData (%APPDATA%\Electron) and documents redirected to temp — they must never touch real user data.
+- Headless smoke tests (after build): env `ASIT_SMOKE=1` | `ASIT_SMOKE_CHAT=1` | `ASIT_SMOKE_QGEN=1` | `ASIT_SMOKE_AGENT=1` | `ASIT_SMOKE_TRANSFER=1` | `ASIT_SMOKE_PANES=1` | `ASIT_SMOKE_COMPANION=1` | `ASIT_SMOKE_JARVIS=1` (needs logged-in CLI) | `ASIT_SMOKE_VOICE=1` (downloads ~130MB models on first run) with `npx electron out/main/index.js` (bottom of `src/main/index.ts`). Smoke runs are isolated: own userData (%APPDATA%\Electron) and documents redirected to temp — they must never touch real user data.

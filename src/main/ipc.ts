@@ -44,6 +44,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     stopWatchesForTask(id)
     const result = tasks.deleteTask(id)
     if (!result.ok) {
+      // The task SURVIVES a failed delete — restore its action channel (its
+      // panes/watches are honestly gone, but a background chat must not lose
+      // its executor silently).
+      watchTaskActions(id)
       const win = getWindow()
       if (win && !win.isDestroyed())
         win.webContents.send(IPC.APP_EVENT, { type: 'toast', text: `Delete failed: ${result.reason}` })
@@ -105,7 +109,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const added = result.filePaths.map((p) => resources.addPdfResource(taskId, p, task.folderPath))
     // Extract plain text in the background so chat/questions can read it.
     // Question generation is user-initiated (✨ menu), never automatic.
-    void Promise.all(added.map((r) => resources.ensurePdfText(r.filePath!))).then(() => {
+    // Per-file isolation: one corrupt PDF must not sink the good ones' text
+    // extraction or skip the inventory refresh.
+    void Promise.all(
+      added.map((r) => resources.ensurePdfText(r.filePath!).catch(() => null))
+    ).then(() => {
       tasks.refreshClaudeMd(taskId)
     })
     tasks.refreshClaudeMd(taskId)
@@ -159,16 +167,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     resources.writeNote(filePath, content)
   )
 
-  // Live-reload notes when edited outside the editor (e.g. by Claude).
-  const noteWatchers = new Map<string, FSWatcher>()
+  // Live-reload notes when edited outside the editor (e.g. by Claude). The
+  // watcher must track the CURRENT sender: after a renderer reload the old
+  // closure held a destroyed webContents and live-reload silently died.
+  const noteWatchers = new Map<string, { watcher: FSWatcher; sender: Electron.WebContents }>()
   ipcMain.handle(IPC.NOTES_WATCH, (e, filePath: string) => {
-    if (noteWatchers.has(filePath)) return
+    const existing = noteWatchers.get(filePath)
+    if (existing) {
+      if (existing.sender === e.sender && !existing.sender.isDestroyed()) return
+      existing.watcher.close() // stale sender — rebind below
+      noteWatchers.delete(filePath)
+    }
     let debounce: NodeJS.Timeout | null = null
     try {
       const w = watch(filePath, () => {
         if (debounce) clearTimeout(debounce)
         debounce = setTimeout(() => {
-          if (!e.sender.isDestroyed()) e.sender.send(IPC.NOTES_CHANGED, { filePath })
+          const entry = noteWatchers.get(filePath)
+          if (entry && !entry.sender.isDestroyed())
+            entry.sender.send(IPC.NOTES_CHANGED, { filePath })
         }, 200)
       })
       w.on('error', () => {
@@ -176,13 +193,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         w.close()
         noteWatchers.delete(filePath)
       })
-      noteWatchers.set(filePath, w)
+      noteWatchers.set(filePath, { watcher: w, sender: e.sender })
     } catch {
       // File may not exist yet; watching is best-effort.
     }
   })
   ipcMain.handle(IPC.NOTES_UNWATCH, (_e, filePath: string) => {
-    noteWatchers.get(filePath)?.close()
+    noteWatchers.get(filePath)?.watcher.close()
     noteWatchers.delete(filePath)
   })
 
@@ -324,9 +341,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   ipcMain.handle(IPC.VOICE_START, () => voice.voiceStart())
   ipcMain.handle(IPC.VOICE_STOP, () => voice.voiceStop())
-  // High-frequency PCM chunks: plain send, zero round-trips.
+  // High-frequency PCM chunks: plain send, zero round-trips. The conversion
+  // stays inside the try — a misaligned buffer must not throw in ipcMain.on.
   ipcMain.on(IPC.VOICE_CHUNK, (_e, buf: ArrayBuffer) => {
-    voice.acceptAudioChunk(new Float32Array(buf))
+    try {
+      voice.acceptAudioChunk(new Float32Array(buf))
+    } catch {
+      // malformed chunk — drop it
+    }
   })
 
   // --- phone companion ---

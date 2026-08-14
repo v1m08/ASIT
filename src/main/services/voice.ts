@@ -1,6 +1,8 @@
 import { app, BrowserWindow } from 'electron'
 import { spawn, type ChildProcess } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync, statSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'fs'
+import { Readable } from 'stream'
+import { pipeline } from 'stream/promises'
 import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import { askJarvis } from './jarvis'
@@ -79,15 +81,17 @@ export async function downloadVoiceModels(
       onProgress(Math.round((i / MODELS.length) * 100), m.name)
       const res = await fetch(m.url, { redirect: 'follow' })
       if (!res.ok || !res.body) throw new Error(`${m.name}: HTTP ${res.status}`)
-      const out = createWriteStream(dest)
-      const reader = res.body.getReader()
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        out.write(value)
-      }
-      await new Promise((r) => out.end(r))
-      if (statSync(dest).size < m.minBytes) throw new Error(`${m.name}: truncated download`)
+      // Download to a .part file, verify, then rename. A crash mid-file must
+      // never leave a truncated model under its final name — voiceModelsReady
+      // would accept it and every voiceStart would fail forever with no
+      // re-download offered. pipeline() handles stream errors + backpressure.
+      const part = dest + '.part'
+      await pipeline(Readable.fromWeb(res.body as never), createWriteStream(part))
+      const expected = Number(res.headers.get('content-length') ?? 0)
+      const actual = statSync(part).size
+      if (actual < m.minBytes || (expected > 0 && actual !== expected))
+        throw new Error(`${m.name}: truncated download (${actual}/${expected || '?'} bytes)`)
+      renameSync(part, dest)
     }
     onProgress(100, 'done')
   } finally {
@@ -104,7 +108,7 @@ interface SherpaVad {
   isEmpty(): boolean
   isDetected(): boolean
   pop(): void
-  front(): { samples: Float32Array; start: number }
+  front(enableExternalBuffer: boolean): { samples: Float32Array; start: number }
   flush(): void
   reset(): void
 }
@@ -119,14 +123,41 @@ interface SherpaRecognizer {
 
 let vad: SherpaVad | null = null
 let recognizer: SherpaRecognizer | null = null
+let engineInit: Promise<void> | null = null
 
-async function ensureEngine(): Promise<void> {
-  if (vad && recognizer) return
+// Single-flight: two rapid Ctrl+Space presses must not construct the native
+// engine twice (the wrapper exposes no free() — a duplicate pair would leak
+// the whole model's RAM).
+function ensureEngine(): Promise<void> {
+  if (vad && recognizer) return Promise.resolve()
+  if (engineInit) return engineInit
+  engineInit = buildEngine().finally(() => {
+    engineInit = null
+  })
+  return engineInit
+}
+
+async function buildEngine(): Promise<void> {
   if (!voiceModelsReady()) throw new Error('voice models not downloaded')
   // CJS interop: rollup wraps the module — the classes live on .default.
   const mod = (await import('sherpa-onnx-node')) as unknown as Record<string, unknown>
   const sherpa = (mod.default ?? mod) as typeof import('sherpa-onnx-node')
   const dir = modelsDir()
+  // Recognizer FIRST: if a corrupt model makes it throw, we must not leak a
+  // freshly-built Vad on every retry (no free() in the wrapper).
+  recognizer = new sherpa.OfflineRecognizer({
+    modelConfig: {
+      moonshine: {
+        preprocessor: join(dir, 'preprocess.onnx'),
+        encoder: join(dir, 'encode.int8.onnx'),
+        uncachedDecoder: join(dir, 'uncached_decode.int8.onnx'),
+        cachedDecoder: join(dir, 'cached_decode.int8.onnx')
+      },
+      tokens: join(dir, 'tokens.txt'),
+      numThreads: 2,
+      provider: 'cpu'
+    }
+  }) as SherpaRecognizer
   vad = new sherpa.Vad(
     {
       sileroVad: {
@@ -142,19 +173,41 @@ async function ensureEngine(): Promise<void> {
     },
     60
   ) as SherpaVad
-  recognizer = new sherpa.OfflineRecognizer({
-    modelConfig: {
-      moonshine: {
-        preprocessor: join(dir, 'preprocess.onnx'),
-        encoder: join(dir, 'encode.int8.onnx'),
-        uncachedDecoder: join(dir, 'uncached_decode.int8.onnx'),
-        cachedDecoder: join(dir, 'cached_decode.int8.onnx')
-      },
-      tokens: join(dir, 'tokens.txt'),
-      numThreads: 2,
-      provider: 'cpu'
+}
+
+// Smoke-test hook: run samples through the EXACT ingest path a live mic uses
+// (chunked acceptAudioChunk → VAD windows → front(false) → transcribe). The
+// first voice crash in the field was in a VAD call the ASR-only smoke never
+// touched — this closes that gap permanently.
+export async function transcribeViaVadPath(samples: Float32Array): Promise<string> {
+  await ensureEngine()
+  vad!.reset()
+  const texts: string[] = []
+  const collect = async (): Promise<void> => {
+    while (!vad!.isEmpty()) {
+      const segment = vad!.front(false)
+      vad!.pop()
+      texts.push(await transcribeSamples(segment.samples))
     }
-  }) as SherpaRecognizer
+  }
+  // Feed like the renderer does: irregular ~2048-sample chunks.
+  let pendingLocal = new Float32Array(0)
+  for (let i = 0; i < samples.length; i += 2048) {
+    const chunk = samples.subarray(i, Math.min(i + 2048, samples.length))
+    const merged = new Float32Array(pendingLocal.length + chunk.length)
+    merged.set(pendingLocal)
+    merged.set(chunk, pendingLocal.length)
+    let offset = 0
+    while (offset + 512 <= merged.length) {
+      vad!.acceptWaveform(merged.subarray(offset, offset + 512))
+      offset += 512
+    }
+    pendingLocal = merged.slice(offset)
+    await collect()
+  }
+  vad!.flush()
+  await collect()
+  return texts.join(' ').trim()
 }
 
 export async function transcribeSamples(samples: Float32Array): Promise<string> {
@@ -174,6 +227,11 @@ export async function transcribeSamples(samples: Float32Array): Promise<string> 
 let getWindow: (() => BrowserWindow | null) | null = null
 let listening = false
 let pending = new Float32Array(0)
+// Epoch token: every start/stop bumps it, and in-flight utterances carry the
+// epoch they were born under. A stale utterance's transcript/reply/speech is
+// dropped instead of corrupting a newer session (re-toggling during
+// "thinking" used to brick the state machine).
+let epoch = 0
 
 export function initVoice(getWin: () => BrowserWindow | null): void {
   getWindow = getWin
@@ -187,6 +245,7 @@ function pushState(state: string, detail?: string): void {
 export async function voiceStart(): Promise<void> {
   await ensureEngine()
   stopSpeaking() // barge-in: starting to talk silences the reply
+  epoch++
   listening = true
   pending = new Float32Array(0)
   vad!.reset()
@@ -194,6 +253,7 @@ export async function voiceStart(): Promise<void> {
 }
 
 export function voiceStop(): void {
+  epoch++
   listening = false
   pushState('idle')
 }
@@ -203,31 +263,47 @@ export function voiceListening(): boolean {
 }
 
 export function acceptAudioChunk(chunk: Float32Array): void {
-  if (!listening || !vad) return
-  // VAD wants fixed windows; buffer the remainder between chunks.
-  const merged = new Float32Array(pending.length + chunk.length)
-  merged.set(pending)
-  merged.set(chunk, pending.length)
-  let offset = 0
-  while (offset + 512 <= merged.length) {
-    vad.acceptWaveform(merged.subarray(offset, offset + 512))
-    offset += 512
-  }
-  pending = merged.slice(offset)
+  // NEVER throw out of here: this runs inside an ipcMain.on handler ~8×/sec
+  // while listening, and an uncaught exception in main kills the whole app
+  // (it did, once — Electron's V8 memory cage rejects sherpa's default
+  // external buffers, hence front(false) below).
+  try {
+    if (!listening || !vad) return
+    // VAD wants fixed windows; buffer the remainder between chunks.
+    const merged = new Float32Array(pending.length + chunk.length)
+    merged.set(pending)
+    merged.set(chunk, pending.length)
+    let offset = 0
+    while (offset + 512 <= merged.length) {
+      vad.acceptWaveform(merged.subarray(offset, offset + 512))
+      offset += 512
+    }
+    pending = merged.slice(offset)
 
-  while (!vad.isEmpty()) {
-    const segment = vad.front()
-    vad.pop()
-    void handleUtterance(segment.samples)
+    while (!vad.isEmpty()) {
+      // enableExternalBuffer=false is REQUIRED under Electron — the default
+      // path hands V8 an externally-owned buffer, which the memory cage
+      // forbids ("External buffers are not allowed").
+      const segment = vad.front(false)
+      vad.pop()
+      void handleUtterance(segment.samples)
+    }
+  } catch (err) {
+    console.error('voice chunk failed:', err)
+    listening = false
+    pushState('idle')
   }
 }
 
 async function handleUtterance(samples: Float32Array): Promise<void> {
   if (!listening) return
   listening = false // one utterance per activation; predictable + cheap
+  const myEpoch = epoch
+  const live = (): boolean => epoch === myEpoch
   pushState('thinking')
   try {
     const text = await transcribeSamples(samples)
+    if (!live()) return // user re-toggled — this utterance is history
     if (!text || text.length < 2) {
       pushState('idle')
       return
@@ -235,22 +311,28 @@ async function handleUtterance(samples: Float32Array): Promise<void> {
     const win = getWindow?.()
     if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_TRANSCRIPT, { text })
     askJarvis(text, {
-      onDelta: () => undefined, // panel already renders the stream via jarvis IPC? no — voice path pushes only final
-      onStatus: (status) => pushState('thinking', status),
+      onDelta: () => undefined,
+      onStatus: (status) => {
+        if (live()) pushState('thinking', status)
+      },
       onDone: (reply) => {
+        if (!live()) return // stale reply: don't speak over a newer session
         pushState('speaking')
-        speak(reply, () => pushState('idle'))
+        speak(reply, () => {
+          if (live()) pushState('idle')
+        })
         const w = getWindow?.()
         if (w && !w.isDestroyed()) w.webContents.send(IPC.VOICE_REPLY, { text: reply })
       },
       onError: (message) => {
+        if (!live()) return
         pushState('idle')
         const w = getWindow?.()
         if (w && !w.isDestroyed()) w.webContents.send(IPC.VOICE_REPLY, { text: `⚠️ ${message}` })
       }
     })
   } catch (err) {
-    pushState('idle')
+    if (live()) pushState('idle')
     console.error('voice utterance failed:', err)
   }
 }
@@ -297,6 +379,20 @@ while ($true) {
   })
   tts.on('exit', () => {
     tts = null
+    // If it died mid-utterance, the state machine must not stick at
+    // "speaking" waiting for a DONE that will never come.
+    const cb = ttsDoneCb
+    ttsDoneCb = null
+    cb?.()
+  })
+  // Spawn failure emits 'error' — without a listener that's an uncaught
+  // main-process exception (the crash class this file must never produce).
+  tts.on('error', (err) => {
+    console.error('tts spawn failed:', err)
+    tts = null
+    const cb = ttsDoneCb
+    ttsDoneCb = null
+    cb?.() // never leave the voice state machine stuck in "speaking"
   })
   tts.stdin?.on('error', () => undefined)
   return tts
@@ -325,8 +421,13 @@ export function speak(text: string, onDone?: () => void): void {
 }
 
 export function stopSpeaking(): void {
-  if (tts && !tts.killed) tts.stdin?.write('STOP\n')
-  ttsDoneCb = null
+  // The synthesizer Speak() call is synchronous inside the helper, so it is
+  // NOT reading stdin mid-utterance — a "STOP" line would queue until the
+  // speech finished (i.e. barge-in that can't barge). Killing the process is
+  // the only true interrupt; the next speak() respawns it (~200ms).
+  ttsDoneCb = null // detach BEFORE kill so the exit handler can't double-fire state
+  if (tts && !tts.killed) tts.kill()
+  tts = null
 }
 
 export function shutdownVoice(): void {

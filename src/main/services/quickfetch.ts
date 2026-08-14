@@ -36,6 +36,12 @@ let fetchWin: BrowserWindow | null = null
 let fetchIdleTimer: NodeJS.Timeout | null = null
 
 function getFetchWindow(): BrowserWindow {
+  // A pending idle-close firing under a live query would destroy the window
+  // mid-load — always disarm before use.
+  if (fetchIdleTimer) {
+    clearTimeout(fetchIdleTimer)
+    fetchIdleTimer = null
+  }
   if (fetchWin && !fetchWin.isDestroyed()) return fetchWin
   fetchWin = new BrowserWindow({
     show: false,
@@ -51,8 +57,12 @@ function getFetchWindow(): BrowserWindow {
 }
 
 function releaseFetchWindow(broken: boolean): void {
-  if (broken && fetchWin && !fetchWin.isDestroyed()) {
-    fetchWin.destroy()
+  if (broken) {
+    if (fetchIdleTimer) {
+      clearTimeout(fetchIdleTimer)
+      fetchIdleTimer = null
+    }
+    if (fetchWin && !fetchWin.isDestroyed()) fetchWin.destroy()
     fetchWin = null
     return
   }
@@ -204,7 +214,25 @@ async function googleSearch(q: string): Promise<QuickFetchResult> {
   }
 }
 
-export async function quickFetch(query: string): Promise<QuickFetchResult> {
+// One shared hidden window → queries must serialize. Concurrent callers
+// (desktop ⚡ + phone Ask at once) used to race loadURL and read each
+// other's pages.
+let fetchChain: Promise<unknown> = Promise.resolve()
+
+export function quickFetch(query: string): Promise<QuickFetchResult> {
+  const run = fetchChain.then(() => quickFetchInner(query)).catch(
+    (err): QuickFetchResult => ({
+      source: '',
+      otp: null,
+      lines: [],
+      error: err instanceof Error ? err.message : String(err)
+    })
+  )
+  fetchChain = run
+  return run
+}
+
+async function quickFetchInner(query: string): Promise<QuickFetchResult> {
   let trimmed = query.trim()
   if (!trimmed) return { source: '', otp: null, lines: [], error: 'empty query' }
 

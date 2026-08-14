@@ -11,6 +11,7 @@ import { runClaudeStream, type ClaudeStreamHandle } from './claude'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
 import { bus } from './bus'
+import { watchTaskActions } from './actions'
 
 // Rolling cross-chat memory: every completed turn is appended here, and each
 // task's CLAUDE.md tells the model to read it — so a brand-new chat knows what
@@ -172,6 +173,11 @@ export async function sendChat(
   } catch {
     // spawn will surface a real error
   }
+
+  // A chat turn IS activity on this task's action channel: bump its watcher's
+  // LRU recency (and create it if missing) so a long-running background chat
+  // can never have its channel evicted mid-turn.
+  watchTaskActions(task.id)
 
   // Snapshot the open web panes (text + interactive element refs) into
   // .asit/pages/ so "this page" always means something to the model.

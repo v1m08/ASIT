@@ -9,6 +9,25 @@ interface Exchange {
   prompt: string
   reply: string
   done: boolean
+  // Voice and typed turns can interleave (a voice ask running while the user
+  // types, or vice versa). Events are routed ONLY to their own source's last
+  // open exchange — without this, replies landed under the wrong prompt.
+  source: 'typed' | 'voice'
+}
+
+function finishLast(
+  prev: Exchange[],
+  source: Exchange['source'],
+  reply: string
+): Exchange[] {
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (prev[i].source === source && !prev[i].done) {
+      const next = [...prev]
+      next[i] = { ...next[i], reply, done: true }
+      return next
+    }
+  }
+  return prev
 }
 
 // Jarvis: the universal agent panel (Ctrl+J / 🤖). Works across every
@@ -64,9 +83,24 @@ export default function JarvisPanel(): JSX.Element | null {
     captureRef.current = { ctx, stream }
   }
 
+  const toggleInFlight = useRef(false)
+
   const toggleVoice = async (): Promise<void> => {
+    // Two rapid Ctrl+Space presses must collapse into one action — a double
+    // start opened TWO mic streams and kept the first one hot forever.
+    if (toggleInFlight.current) return
+    toggleInFlight.current = true
+    try {
+      await doToggleVoice()
+    } finally {
+      toggleInFlight.current = false
+    }
+  }
+
+  const doToggleVoice = async (): Promise<void> => {
     const s = voiceStateRef.current
-    if (s === 'listening') {
+    if (s === 'listening' || s === 'thinking') {
+      // Cancel: also aborts an in-flight utterance (main's epoch guard).
       await window.asit.voice.stop()
       stopCapture()
       setVoiceState('off')
@@ -94,6 +128,9 @@ export default function JarvisPanel(): JSX.Element | null {
     } catch (err) {
       setError(`Mic failed: ${err instanceof Error ? err.message : String(err)}`)
       setVoiceState('off')
+      stopCapture()
+      // Main may already be listening with no audio source — release it.
+      void window.asit.voice.stop()
     }
   }
   const toggleVoiceRef = useRef(toggleVoice)
@@ -105,6 +142,16 @@ export default function JarvisPanel(): JSX.Element | null {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceTick])
 
+  // Closing the panel must never leave a hot mic running invisibly.
+  useEffect(() => {
+    if (!open && (voiceStateRef.current === 'listening' || voiceStateRef.current === 'thinking')) {
+      void window.asit.voice.stop()
+      stopCapture()
+      setVoiceState('off')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
   useEffect(() => {
     const offState = window.asit.on(IPC.VOICE_STATE, (...args: unknown[]) => {
       const p = args[0] as { state: string; detail?: string }
@@ -115,20 +162,13 @@ export default function JarvisPanel(): JSX.Element | null {
     })
     const offTranscript = window.asit.on(IPC.VOICE_TRANSCRIPT, (...args: unknown[]) => {
       const p = args[0] as { text: string }
-      setBusy(true)
       setError(null)
-      setExchanges((prev) => [...prev.slice(-8), { prompt: `🎙 ${p.text}`, reply: '', done: false }])
+      setExchanges((prev) => [...prev.slice(-8), { prompt: `🎙 ${p.text}`, reply: '', done: false, source: 'voice' }])
     })
     const offReply = window.asit.on(IPC.VOICE_REPLY, (...args: unknown[]) => {
       const p = args[0] as { text: string }
-      setBusy(false)
       setStatus(null)
-      setSteps([])
-      setExchanges((prev) => {
-        const last = prev[prev.length - 1]
-        if (!last || last.done) return prev
-        return [...prev.slice(0, -1), { ...last, reply: p.text, done: true }]
-      })
+      setExchanges((prev) => finishLast(prev, 'voice', p.text))
     })
     const offProgress = window.asit.on(IPC.VOICE_DOWNLOAD_PROGRESS, (...args: unknown[]) => {
       setDownloadPct((args[0] as { pct: number }).pct)
@@ -147,9 +187,14 @@ export default function JarvisPanel(): JSX.Element | null {
       const p = args[0] as { delta: string }
       setStatus(null)
       setExchanges((prev) => {
-        const last = prev[prev.length - 1]
-        if (!last || last.done) return prev
-        return [...prev.slice(0, -1), { ...last, reply: last.reply + p.delta }]
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].source === 'typed' && !prev[i].done) {
+            const next = [...prev]
+            next[i] = { ...next[i], reply: next[i].reply + p.delta }
+            return next
+          }
+        }
+        return prev
       })
     })
     const offStatus = window.asit.on(IPC.JARVIS_STATUS, (...args: unknown[]) => {
@@ -163,17 +208,14 @@ export default function JarvisPanel(): JSX.Element | null {
       setStatus(null)
       setSteps([])
       setLastCost(p.costUsd)
-      setExchanges((prev) => {
-        const last = prev[prev.length - 1]
-        if (!last) return prev
-        return [...prev.slice(0, -1), { ...last, reply: p.text, done: true }]
-      })
+      setExchanges((prev) => finishLast(prev, 'typed', p.text))
     })
     const offError = window.asit.on(IPC.JARVIS_ERROR, (...args: unknown[]) => {
       setBusy(false)
       setStatus(null)
       setSteps([])
       setError((args[0] as { message: string }).message)
+      setExchanges((prev) => finishLast(prev, 'typed', '⚠️ (failed)'))
     })
     return () => {
       offStream()
@@ -198,7 +240,7 @@ export default function JarvisPanel(): JSX.Element | null {
     setBusy(true)
     setSteps([])
     pinnedRef.current = true
-    setExchanges((prev) => [...prev.slice(-8), { prompt, reply: '', done: false }])
+    setExchanges((prev) => [...prev.slice(-8), { prompt, reply: '', done: false, source: 'typed' }])
     window.asit.jarvis.ask(prompt).catch(() => {
       setBusy(false)
       setError('Jarvis failed to start.')
@@ -210,11 +252,7 @@ export default function JarvisPanel(): JSX.Element | null {
     setBusy(false)
     setStatus(null)
     setSteps([])
-    setExchanges((prev) => {
-      const last = prev[prev.length - 1]
-      if (!last || last.done) return prev
-      return [...prev.slice(0, -1), { ...last, reply: last.reply || '(stopped)', done: true }]
-    })
+    setExchanges((prev) => finishLast(prev, 'typed', '(stopped)'))
   }
 
   return (
@@ -282,7 +320,7 @@ export default function JarvisPanel(): JSX.Element | null {
             <div className="assistant-a">
               {ex.reply ? (
                 <Markdown text={ex.reply} />
-              ) : i === exchanges.length - 1 && busy ? (
+              ) : !ex.done ? (
                 <span className="chat-working">
                   <span className="working-dot" />
                   {status ?? 'Thinking…'}

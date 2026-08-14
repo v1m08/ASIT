@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-contract'
 import { getDb, newId } from '../db'
 import { paneManager } from './panes'
 import { clearActivity, reportActivity } from './activity'
+import { getTask } from './tasks'
 import { bus } from './bus'
 import * as chat from './chat'
 import { listSkills, extractFlow } from './skills'
@@ -62,11 +63,15 @@ function latestChatSessionId(taskId: string): string | null {
 
 // The condition may hit while a turn is still streaming — keep retrying for
 // 15 minutes so the resume is never silently dropped.
-function sendWhenFree(sessionId: string, prompt: string, attempts = 90): void {
+function sendWhenFree(taskId: string, sessionId: string, prompt: string, attempts = 90): void {
   const win = getWindow?.()
   if (!win || win.isDestroyed()) return
+  // The retry chain can outlive the task (deleted/privatized minutes after
+  // the watch fired) — drop the resume instead of poking a ghost.
+  const task = getTask(taskId)
+  if (!task || task.aiDisabled) return
   if (chat.runningSessionIds().includes(sessionId)) {
-    if (attempts > 0) setTimeout(() => sendWhenFree(sessionId, prompt, attempts - 1), 10000)
+    if (attempts > 0) setTimeout(() => sendWhenFree(taskId, sessionId, prompt, attempts - 1), 10000)
     else toast('👁 Watch fired but the chat stayed busy for 15 minutes — resume dropped')
     return
   }
@@ -175,7 +180,7 @@ export async function startWatch(taskId: string, opts: WatchOpts): Promise<strin
     const sessionId = latestChatSessionId(taskId)
     if (sessionId && opts.prompt) {
       toast(`👁 ${describe} — resuming the agent`)
-      sendWhenFree(sessionId, opts.prompt)
+      sendWhenFree(taskId, sessionId, opts.prompt)
     }
   }, 4000)
 

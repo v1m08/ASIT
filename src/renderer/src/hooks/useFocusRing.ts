@@ -67,7 +67,7 @@ function focusZone(zone: HTMLElement): void {
   currentPaneId = null
   window.asit.panes.domFocus(true)
   const el = controlFor(zone)
-  el.focus()
+  focusProgrammatically(el)
   if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.select?.()
 }
 
@@ -99,6 +99,20 @@ function jumpTo(index: number): void {
 
 // Where Ctrl+K / Ctrl+L jumped from, so Escape can hand focus back.
 let returnZone: HTMLElement | null = null
+// True only while OUR focus() calls are landing — lets onFocusIn tell a
+// user click apart from a programmatic jump.
+let programmaticFocus = false
+
+function focusProgrammatically(el: HTMLElement): void {
+  programmaticFocus = true
+  try {
+    el.focus()
+  } finally {
+    setTimeout(() => {
+      programmaticFocus = false
+    }, 0)
+  }
+}
 
 // Ctrl+K toggles: open with the cursor ready, or close and hand focus back
 // to wherever the user was. (The panel may not be mounted yet when opening.)
@@ -143,7 +157,7 @@ function focusSelector(selector: string): void {
   returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
   currentPaneId = null
   mark(el.closest<HTMLElement>('[data-focus-zone]'))
-  el.focus()
+  focusProgrammatically(el)
   if (el instanceof HTMLInputElement) el.select()
 }
 
@@ -189,11 +203,15 @@ export function installFocusRing(): () => void {
   }
 
   // Clicking into something makes it the ring position, so the next Tab
-  // continues from where the user actually is.
+  // continues from where the user actually is. A CLICK (as opposed to one of
+  // our programmatic jumps) also invalidates any stored Escape-return target —
+  // returning to a zone from three interactions ago is worse than not
+  // returning at all.
   const onFocusIn = (e: FocusEvent): void => {
     if (!(e.target instanceof HTMLElement)) return
     const zone = e.target.closest<HTMLElement>('[data-focus-zone]')
     if (!zone) return
+    if (!programmaticFocus) returnZone = null
     currentPaneId = null
     mark(zone)
   }

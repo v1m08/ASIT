@@ -422,31 +422,37 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     let applied = 0
     for (const op of ops.slice(0, 300)) {
       const opId = typeof op.opId === 'string' ? op.opId.slice(0, 64) : null
-      if (opId) {
-        if (appliedOpIds.has(opId)) continue
-        appliedOpIds.add(opId)
-        if (appliedOpIds.size > 2000) {
-          for (const id of appliedOpIds) {
-            appliedOpIds.delete(id)
-            if (appliedOpIds.size <= 1000) break
-          }
-        }
-      }
+      if (opId && appliedOpIds.has(opId)) continue
+      // Mark applied only AFTER success — a transient failure must stay
+      // retryable, not get dedup-blocked into silent loss.
+      let ok = false
       try {
         if (op.t === 'review' && [0, 1, 2, 3].includes(Number(op.grade))) {
           await answerQuestion(String(op.id), { selfGrade: Number(op.grade) as 0 | 1 | 2 | 3 })
-          applied++
+          ok = true
         } else if (op.t === 'tododone') {
           setTodoDone(String(op.id), op.done !== false)
-          applied++
+          ok = true
         } else if (op.t === 'todoadd' && String(op.text ?? '').trim()) {
-          if (addTodo({ text: String(op.text), dueDate: null })) applied++
+          ok = !!addTodo({ text: String(op.text), dueDate: null })
         } else if (op.t === 'capture' && String(op.text ?? '').trim()) {
           captureToScratch(String(op.text))
-          applied++
+          ok = true
         }
       } catch {
         // an op referencing since-deleted data — skip, keep replaying the rest
+      }
+      if (ok) {
+        applied++
+        if (opId) {
+          appliedOpIds.add(opId)
+          if (appliedOpIds.size > 2000) {
+            for (const id of appliedOpIds) {
+              appliedOpIds.delete(id)
+              if (appliedOpIds.size <= 1000) break
+            }
+          }
+        }
       }
     }
     return sendJson(res, 200, { applied })
@@ -543,6 +549,8 @@ export function startCompanion(getWin: () => BrowserWindow | null): void {
   server.listen(port, '127.0.0.1')
   server.on('error', (err) => {
     console.error('companion server error:', err)
+    wss?.close()
+    wss = null
     server = null
   })
 }

@@ -222,6 +222,11 @@ export function watchTaskActions(taskId: string): void {
   const existing = taskWatchers.get(taskId)
   if (existing) {
     existing.start(taskId) // no-op if already live; resumes at stored offset
+    // TRUE LRU: re-insert so recency — not first-open order — decides
+    // eviction. Without this the scratchpad (watched at startup, so always
+    // oldest-inserted) was first out the door.
+    taskWatchers.delete(taskId)
+    taskWatchers.set(taskId, existing)
     return
   }
   if (taskWatchers.size >= MAX_TASK_WATCHERS) {

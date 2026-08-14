@@ -23,6 +23,13 @@ let idleTimer: NodeJS.Timeout | null = null
 let sending = false
 
 function getWaWindow(): BrowserWindow {
+  // A pending idle-close must NEVER fire under a live send: the destroy would
+  // land after the Enter keystroke, reporting "failed" for a message that
+  // actually went out — and a retry would text the person twice.
+  if (idleTimer) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
   if (waWindow && !waWindow.isDestroyed()) return waWindow
   waWindow = new BrowserWindow({
     show: false,
@@ -30,7 +37,7 @@ function getWaWindow(): BrowserWindow {
     height: 850,
     webPreferences: { partition: BROWSE_PARTITION, sandbox: true, contextIsolation: true }
   })
-  waWindow.loadURL(WA_URL)
+  waWindow.loadURL(WA_URL).catch(() => undefined) // offline handled by the ready-poll
   return waWindow
 }
 
@@ -84,6 +91,20 @@ export async function sendWhatsApp(recipient: string, message: string): Promise<
   if (!to || !text) return { ok: false, detail: 'need both a recipient and a message' }
   if (sending) return { ok: false, detail: 'another WhatsApp send is in progress — try again in a few seconds' }
   sending = true
+  // Hard ceiling: if the page wedges an executeJavaScript forever, `sending`
+  // must not stay latched (that would kill the feature until app restart).
+  const result = await Promise.race([
+    sendWhatsAppInner(to, text),
+    new Promise<SendResult>((r) =>
+      setTimeout(() => r({ ok: false, detail: 'send timed out after 75s — check WhatsApp before retrying.' }), 75_000)
+    )
+  ])
+  sending = false
+  scheduleIdleClose()
+  return result
+}
+
+async function sendWhatsAppInner(to: string, text: string): Promise<SendResult> {
   try {
     const win = getWaWindow()
 
@@ -179,9 +200,6 @@ export async function sendWhatsApp(recipient: string, message: string): Promise<
     return { ok: true, detail: `sent to ${opened}` }
   } catch (err) {
     return { ok: false, detail: `WhatsApp send failed: ${err instanceof Error ? err.message : String(err)}` }
-  } finally {
-    sending = false
-    scheduleIdleClose()
   }
 }
 

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, globalShortcut, shell } from 'electron'
-import { existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
+import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
@@ -26,6 +27,37 @@ import {
 } from './services/tasks'
 
 let mainWindow: BrowserWindow | null = null
+
+// Last-resort net: an uncaught main-process exception must not take down the
+// user's whole session (timers, agents, panes) with a modal crash dialog.
+// Log it, surface a toast, keep running. Smoke modes keep the default
+// fail-fast behavior so tests can't silently pass over a crash.
+if (!Object.entries(process.env).some(([k, v]) => k.startsWith('ASIT_SMOKE') && v === '1')) {
+  process.on('uncaughtException', (err) => {
+    try {
+      const line = `${new Date().toISOString()} uncaught: ${err.stack ?? err.message}\n`
+      appendFileSync(join(app.getPath('userData'), 'error.log'), line)
+      console.error('uncaught exception (survived):', err)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.APP_EVENT, {
+          type: 'toast',
+          text: `⚠️ Internal error (logged): ${String(err.message).slice(0, 120)}`
+        })
+      }
+    } catch {
+      // even the net must never throw
+    }
+  })
+  process.on('unhandledRejection', (reason) => {
+    try {
+      const line = `${new Date().toISOString()} unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}\n`
+      appendFileSync(join(app.getPath('userData'), 'error.log'), line)
+      console.error('unhandled rejection (survived):', reason)
+    } catch {
+      // ignore
+    }
+  })
+}
 
 // One instance only — a second launch focuses the existing window instead of
 // opening a rival process against the same database.
@@ -346,6 +378,17 @@ $sp.Dispose()`
       if (!lower.includes(word)) fail(`transcript missing "${word}"`)
     }
     if (ms > 8000) fail(`decode too slow: ${ms}ms`)
+
+    // The FULL mic ingest path — chunking, VAD windows, front(false), pop —
+    // under the same Electron memory-cage rules a real session runs under.
+    // Pad with silence so the VAD sees an utterance boundary.
+    const padded = new Float32Array(pcm.length + 32000)
+    padded.set(pcm, 16000)
+    const vadText = (await voiceSvc.transcribeViaVadPath(padded)).toLowerCase()
+    console.log(`[voice-smoke] VAD-path transcript: "${vadText}"`)
+    for (const word of ['biology', 'timer']) {
+      if (!vadText.includes(word)) fail(`VAD-path transcript missing "${word}"`)
+    }
 
     console.log('[voice-smoke] ALL PASS')
     app.exit(0)

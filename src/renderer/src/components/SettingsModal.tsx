@@ -48,10 +48,15 @@ function PhoneSection(): JSX.Element {
     // Tailscale or a phone may request pairing right now. Once everything is
     // settled (tailscale ok, nothing pending) slow way down — each poll
     // spawns a `tailscale status` process.
+    // Tick-counted, not wall-clock: `Date.now() % 20000` at a 4s cadence is a
+    // constant phase — most mounts would either never slow-refresh or never
+    // stop, and a pairing request could sit invisible.
+    let tick = 0
     const t = setInterval(() => {
+      tick++
       const s = statusRef.current
       const settled = s && s.tailscale === 'ok' && !s.pendingPair
-      if (!settled || Date.now() % 20000 < 4000) refresh()
+      if (!settled || tick % 5 === 0) refresh()
     }, 4000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
