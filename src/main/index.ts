@@ -28,6 +28,15 @@ import {
 
 let mainWindow: BrowserWindow | null = null
 
+// Present as plain, current Chrome everywhere. The default UA advertises
+// "Electron/33" + Chromium 130, and sites that UA-sniff (WhatsApp Web's
+// "update Chrome" wall, Google's "browser may not be secure" login block)
+// reject exactly that string — the ENGINE is fine, the label isn't. This is
+// the standard fix used by Electron-based clients; it affects both request
+// headers and navigator.userAgent.
+app.userAgentFallback =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
+
 // Last-resort net: an uncaught main-process exception must not take down the
 // user's whole session (timers, agents, panes) with a modal crash dialog.
 // Log it, surface a toast, keep running. Smoke modes keep the default
