@@ -12,6 +12,7 @@ import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
 import { bus } from './bus'
 import { watchTaskActions } from './actions'
+import { authorizeSendsFromUserMessage } from './guardrails'
 
 // Rolling cross-chat memory: every completed turn is appended here, and each
 // task's CLAUDE.md tells the model to read it — so a brand-new chat knows what
@@ -32,9 +33,91 @@ function appendWorklog(folderPath: string, userText: string, assistantText: stri
 
 // Specific, human-readable enumeration of what the agent is doing — shown
 // live as a step trail in the chat and on the activity pill hover.
+// The agent's real work is the ACTIONS it dispatches — "Editing actions.ndjson"
+// told the user nothing. Parse what it just wrote and say it in plain words.
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url.slice(0, 40)
+  }
+}
+
+function describeAction(a: Record<string, unknown>): string | null {
+  const s = (v: unknown, n = 40): string => String(v ?? '').replace(/\s+/g, ' ').slice(0, n)
+  const where = a.workspace ? ` in ${s(a.workspace, 24)}` : ''
+  switch (a.action) {
+    case 'send_whatsapp':
+      return `📨 Sending WhatsApp to ${s(a.target ?? a.title, 30)}`
+    case 'fetch':
+      return `📧 Searching your email for "${s(a.query ?? a.value, 40)}"`
+    case 'add_url':
+      return `🔗 Saving "${s(a.title, 30)}"${where}`
+    case 'open':
+      return `📂 Opening ${s(a.target, 30)}${where}`
+    case 'add_questions':
+      return `🧠 Adding ${Array.isArray(a.questions) ? a.questions.length : ''} questions${where}`
+    case 'generate_questions':
+      return `🧠 Generating questions from ${s(Array.isArray(a.sources) ? a.sources[0] : '', 30)}`
+    case 'set_task':
+      return `✏️ Updating workspace details${where}`
+    case 'save_skill':
+      return `⚡ Saving skill "${s(a.name, 30)}"`
+    case 'watch':
+      return `👁 Watching for ${s(a.label ?? a.text ?? a.gone_label ?? a.gone_text, 40)}`
+    case 'navigate':
+      return `🌐 Opening ${hostOf(String(a.url ?? ''))}${where}`
+    case 'page_click':
+      return `🖱 Clicking "${s(a.label ?? a.ref, 30)}"${where}`
+    case 'page_fill':
+      return `⌨ Filling "${s(a.label ?? a.ref, 24)}"${where}`
+    case 'page_select':
+      return `🔽 Choosing "${s(a.value, 24)}"${where}`
+    case 'page_key':
+      return `⌨ Pressing ${s(a.key, 20)}${where}`
+    case 'page_type':
+      return `⌨ Typing into the page${where}`
+    case 'page_snapshot':
+      return '📸 Re-reading the page'
+    case 'wait':
+      return `⏳ Waiting ${Math.round(Number(a.ms ?? 0) / 100) / 10}s`
+    default:
+      return null
+  }
+}
+
+function describeDispatch(text: string): string | null {
+  const described: string[] = []
+  for (const line of String(text).split('\n')) {
+    const t = line.trim()
+    if (!t.startsWith('{')) continue
+    try {
+      const d = describeAction(JSON.parse(t) as Record<string, unknown>)
+      if (d) described.push(d)
+    } catch {
+      // partial/!JSON line — ignore
+    }
+  }
+  if (described.length === 0) return null
+  const last = described[described.length - 1]
+  return described.length > 1 ? `${last}  (+${described.length - 1} more)` : last
+}
+
 export function toolStatus(name: string, input: Record<string, unknown>): string {
   const path = typeof input.file_path === 'string' ? input.file_path : ''
   const file = path ? basename(path) : ''
+
+  // Dispatching app actions: name the actual action, not the file write.
+  if ((name === 'Edit' || name === 'Write') && file === 'actions.ndjson') {
+    const payload =
+      typeof input.new_string === 'string'
+        ? input.new_string
+        : typeof input.content === 'string'
+          ? input.content
+          : ''
+    const described = describeDispatch(payload)
+    if (described) return described
+  }
 
   if (name === 'Read') {
     if (file === 'actions-result.md') return 'Checking results of its app actions…'
@@ -53,8 +136,12 @@ export function toolStatus(name: string, input: Record<string, unknown>): string
   if (name === 'Grep' && typeof input.pattern === 'string')
     return `Searching files for "${String(input.pattern).slice(0, 40)}"…`
   if (name === 'Glob') return 'Listing files…'
-  if ((name === 'Bash' || name === 'PowerShell') && typeof input.command === 'string')
-    return `Running: ${String(input.command).replace(/\s+/g, ' ').slice(0, 70)}`
+  if ((name === 'Bash' || name === 'PowerShell') && typeof input.command === 'string') {
+    const cmd = String(input.command).replace(/\s+/g, ' ').trim()
+    const nap = cmd.match(/^(?:start-)?sleep\s+(?:-seconds\s+)?([\d.]+)/i)
+    if (nap) return `⏳ Waiting ${nap[1]}s`
+    return `Running: ${cmd.slice(0, 70)}`
+  }
   return `Using ${name}…`
 }
 
@@ -173,6 +260,10 @@ export async function sendChat(
   } catch {
     // spawn will surface a real error
   }
+
+  // Workspace agents can't send_whatsapp, but they CAN drive a logged-in
+  // Gmail pane — same deny-by-default gate, opened only by the user's words.
+  authorizeSendsFromUserMessage(text)
 
   // A chat turn IS activity on this task's action channel: bump its watcher's
   // LRU recency (and create it if missing) so a long-running background chat

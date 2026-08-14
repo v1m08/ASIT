@@ -451,6 +451,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // --- settings ---
   ipcMain.handle(IPC.SNIPPETS_GET, () => settings.getSettings().snippets)
+  // Live "/otp" snippet + one-time-code autofill for embedded pages. Literal
+  // channel: the pane preload is sandboxed and can't import the contract.
+  ipcMain.handle('otp:get', async () => {
+    const code = await quickfetch.fetchOtpForAutofill()
+    const win = getWindow()
+    if (code && win && !win.isDestroyed()) {
+      win.webContents.send(IPC.APP_EVENT, { type: 'toast', text: `🔑 Filled code ${code} from your mail` })
+    }
+    return code
+  })
   ipcMain.handle(IPC.SETTINGS_GET, () => settings.getSettings())
   ipcMain.handle(IPC.SETTINGS_SET, (_e, patch: Partial<Settings>) => {
     const result = settings.setSettings(patch)

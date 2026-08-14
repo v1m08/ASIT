@@ -12,6 +12,8 @@ const DEFAULTS: Settings = {
   chatModel: 'default',
   codingModel: 'claude-fable-5',
   jarvisModel: 'default',
+  sensitiveTerms: [], // empty → SENSITIVE_DEFAULTS in guardrails.ts
+  sendAllowlist: [], // empty → any recipient (still intent-gated)
   onboarded: false,
   snippets: {},
   fetchSources: [

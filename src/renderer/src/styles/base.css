@@ -1690,6 +1690,15 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.4;
 }
 
+.field-hint {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .transfer-msg {
   color: var(--ok);
   font-size: 0.82rem;

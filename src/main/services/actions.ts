@@ -5,6 +5,7 @@ import { IPC } from '@shared/ipc-contract'
 import type { UpdateTaskInput } from '@shared/types'
 import { getDb, newId, nowIso } from '../db'
 import { getTask, jarvisTaskId, refreshClaudeMd, resolveWorkspace, updateTask } from './tasks'
+import { recipientAllowed, sendAuthorized, sendRefusalReason } from './guardrails'
 import { addUrlResource } from './resources'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
@@ -178,7 +179,7 @@ class ActionsWatcher {
     // Close the loop: settle, refresh what the model sees, then report.
     const task = getTask(taskId)
     if (mutated) {
-      await new Promise((r) => setTimeout(r, 1200)) // let the page react
+      await new Promise((r) => setTimeout(r, 450)) // let the page react
       try {
         if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
       } catch {
@@ -439,6 +440,17 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       const to = String(action.target ?? action.title ?? '')
       const msg = String(action.value ?? action.content ?? '')
       if (!to || !msg) return 'send_whatsapp: need target (recipient) and value (message)'
+      // Deny-by-default: only the USER's own words (parsed in main) open the
+      // gate, and only for this turn.
+      if (!sendAuthorized('whatsapp')) {
+        push({ type: 'toast', text: `🛑 Blocked an unrequested message to "${to.slice(0, 40)}"` })
+        return sendRefusalReason('whatsapp')
+      }
+      const allow = recipientAllowed(to)
+      if (!allow.ok) {
+        push({ type: 'toast', text: `🛑 ${allow.reason}` })
+        return allow.reason!
+      }
       const { sendWhatsApp } = await import('./whatsapp')
       const res = await sendWhatsApp(to, msg)
       push({ type: 'toast', text: res.ok ? `📨 WhatsApp ${res.detail}` : `📨 WhatsApp send failed: ${res.detail}` })

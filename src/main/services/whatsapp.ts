@@ -69,6 +69,24 @@ export function closeWhatsApp(): void {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+// Recipient identity check: "Mom" matches "Mom ❤️", "Manav Sharma" matches
+// "Manav". Emoji/punctuation are ignored so decorated contact names still pass.
+function looselyMatches(chatTitle: string, requested: string): boolean {
+  const norm = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9+ ]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  const a = norm(chatTitle)
+  const b = norm(requested)
+  if (!a || !b) return false
+  if (a.includes(b) || b.includes(a)) return true
+  // All requested words present (handles "sharma manav" vs "Manav Sharma").
+  const words = b.split(' ').filter((w) => w.length > 1)
+  return words.length > 0 && words.every((w) => a.includes(w))
+}
+
 async function exec<T>(wc: WebContents, script: string): Promise<T> {
   return (await wc.executeJavaScript(script, true)) as T
 }
@@ -152,6 +170,25 @@ const FOCUS_COMPOSER_SCRIPT = `(() => {
   return true
 })()`
 
+// The sidebar search box's current text (confirms our insert landed).
+const SEARCH_TEXT_SCRIPT = `(() => {
+  const side = document.querySelector('#side') || document.querySelector('#pane-side')
+  const box = side && side.querySelector('[contenteditable="true"], input[type="text"]')
+  if (!box) return ''
+  return (box.textContent || box.value || '').trim()
+})()`
+
+// Title of the FIRST search result — checked against the requested recipient
+// before Enter, so a stale list can never route the message to someone else.
+const TOP_RESULT_SCRIPT = `(() => {
+  const side = document.querySelector('#pane-side') || document.querySelector('#side')
+  if (!side) return ''
+  const row = side.querySelector('[role="listitem"], [role="row"], [data-testid="cell-frame-container"]')
+  if (!row) return ''
+  const t = row.querySelector('span[title]')
+  return ((t && t.getAttribute('title')) || row.innerText || '').split('\\n')[0].slice(0, 80).trim()
+})()`
+
 const COMPOSER_TEXT_SCRIPT = `(() => {
   const el = document.activeElement
   return el && (el.isContentEditable || el.getAttribute('role') === 'textbox') ? (el.textContent || '') : ''
@@ -176,7 +213,7 @@ async function pollUntil<T>(
   probe: () => Promise<T>,
   ok: (v: T) => boolean,
   timeoutMs: number,
-  stepMs = 150
+  stepMs = 90
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
@@ -187,11 +224,21 @@ async function pollUntil<T>(
   }
 }
 
-async function typeChars(wc: WebContents, text: string, paceMs: number): Promise<void> {
-  for (const ch of text) {
-    wc.sendInputEvent({ type: 'char', keyCode: ch })
-    if (paceMs > 0) await sleep(paceMs)
-  }
+/**
+ * Insert text instantly (one editing command, not N keystrokes) and CONFIRM it
+ * landed; per-character typing is the fallback for editors that only react to
+ * real key events. This is most of the send latency: a 60-char message went
+ * from ~200ms of keystrokes to a single call.
+ */
+async function typeText(
+  wc: WebContents,
+  text: string,
+  verify: () => Promise<boolean>
+): Promise<boolean> {
+  wc.insertText(text)
+  if ((await pollUntil(verify, (v) => v === true, 700, 80)) === true) return true
+  for (const ch of text) wc.sendInputEvent({ type: 'char', keyCode: ch })
+  return (await pollUntil(verify, (v) => v === true, 1500, 100)) === true
 }
 
 function pressEnter(wc: WebContents): void {
@@ -247,10 +294,10 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
       if (state === 'takeover') {
         // Claim the session for this window (explicit user command).
         await exec<boolean>(wc, TAKEOVER_SCRIPT).catch(() => false)
-        await sleep(1500)
+        await sleep(700)
         continue
       }
-      await sleep(250)
+      await sleep(150)
     }
     if (state !== 'ready') {
       const diag = await exec<string>(wc, DIAG_SCRIPT).catch(() => 'page unreadable')
@@ -263,8 +310,26 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
     if (!(await exec<boolean>(wc, FOCUS_SEARCH_SCRIPT)))
       return { ok: false, detail: 'could not find the WhatsApp search box — the site layout may have changed; nothing sent.' }
     wc.focus()
-    await typeChars(wc, to.slice(0, 60), 8)
-    await sleep(650) // results debounce — the one wait with no observable signal
+    const needle = to.slice(0, 60)
+    const typedSearch = await typeText(wc, needle, async () =>
+      (await exec<string>(wc, SEARCH_TEXT_SCRIPT).catch(() => '')).length > 0
+    )
+    if (!typedSearch)
+      return { ok: false, detail: 'could not type into the WhatsApp search box — nothing sent.' }
+
+    // Wait for the RESULT to actually match the recipient before pressing
+    // Enter. The old fixed debounce could hit Enter while the previous chat
+    // was still first in the list — i.e. message the wrong person.
+    const topResult = await pollUntil(
+      () => exec<string>(wc, TOP_RESULT_SCRIPT),
+      (t) => !!t && looselyMatches(t, needle),
+      3000
+    )
+    if (!topResult || !looselyMatches(topResult, needle))
+      return {
+        ok: false,
+        detail: `no WhatsApp chat matched "${to}"${topResult ? ` (closest: "${topResult}")` : ''} — nothing was sent.`
+      }
     pressEnter(wc)
 
     // Chat opened? Poll for a conversation header instead of a fixed wait.
@@ -278,16 +343,20 @@ async function sendInner(to: string, text: string): Promise<SendResult> {
         ok: false,
         detail: `no WhatsApp chat matched "${to}" — nothing was sent. Check the name as it appears in WhatsApp.`
       }
+    // Final identity check before anything is typed into a conversation.
+    if (!looselyMatches(opened, needle))
+      return {
+        ok: false,
+        detail: `refused: the open chat is "${opened}", which doesn't match "${to}" — nothing sent.`
+      }
 
     if (!(await exec<boolean>(wc, FOCUS_COMPOSER_SCRIPT)))
       return { ok: false, detail: `chat "${opened}" opened but the message box was not found — nothing sent.` }
-    await typeChars(wc, text.slice(0, 1500), text.length < 200 ? 3 : 0)
-    const composed = await pollUntil(
-      () => exec<string>(wc, COMPOSER_TEXT_SCRIPT),
-      (c) => c.includes(text.slice(0, 40)),
-      1200
+    const body = text.slice(0, 1500)
+    const typedBody = await typeText(wc, body, async () =>
+      (await exec<string>(wc, COMPOSER_TEXT_SCRIPT).catch(() => '')).includes(body.slice(0, 40))
     )
-    if (!composed || !composed.includes(text.slice(0, 40)))
+    if (!typedBody)
       return { ok: false, detail: `typing into the "${opened}" composer failed — nothing sent.` }
     pressEnter(wc)
 

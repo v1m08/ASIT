@@ -74,6 +74,10 @@ export interface Settings {
   chatModel: string // 'default' | 'opus' | 'sonnet' | 'haiku' | 'claude-fable-5'
   codingModel: string // model for coding-task chats (same options)
   jarvisModel: string // model for the universal agent (same options)
+  // Guardrails: terms the agent's mail/web search may never query or read
+  // (empty = built-in defaults), and an optional recipient allowlist for sends.
+  sensitiveTerms: string[]
+  sendAllowlist: string[]
   onboarded: boolean
   snippets: Record<string, string> // "/KEY" text-expansion shortcuts
   fetchSources: { name: string; url: string }[] // "?query" quick-fetch sources ({q} = query)

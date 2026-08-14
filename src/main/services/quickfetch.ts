@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { getSettings } from './settings'
+import { blockedTermIn, filterSensitiveLines } from './guardrails'
 
 // Quick Fetch: agentless grep across your logged-in sites. A hidden window
 // (shared login profile) loads the source, we extract its text, and either
@@ -236,6 +237,19 @@ async function quickFetchInner(query: string): Promise<QuickFetchResult> {
   let trimmed = query.trim()
   if (!trimmed) return { source: '', otp: null, lines: [], error: 'empty query' }
 
+  // HARD BLOCK at the search layer: a protected query never runs, so the page
+  // is never loaded and no text exists to leak. Not a policy the model can
+  // reason around — the fetch simply does not happen.
+  const blocked = blockedTermIn(trimmed)
+  if (blocked) {
+    return {
+      source: '',
+      otp: null,
+      lines: [],
+      error: `search blocked: "${blocked}" is a protected topic (Settings → Guardrails). This content is off-limits to the assistant.`
+    }
+  }
+
   // "?g deadline hack harvard" → instant Google result.
   const gMatch = trimmed.match(/^(g|google)\s+(.+)$/i)
   if (gMatch) return googleSearch(gMatch[2])
@@ -273,6 +287,7 @@ async function quickFetchInner(query: string): Promise<QuickFetchResult> {
     .filter(Boolean)
 
   const allMatches: string[] = []
+  let redactedCount = 0
   for (const source of sources) {
     // OTP: hit the inbox itself (search indexes lag behind brand-new mail).
     const url = wantOtp
@@ -298,7 +313,11 @@ async function quickFetchInner(query: string): Promise<QuickFetchResult> {
         strict.length > 0
           ? []
           : lines.filter((l) => keywords.some((k) => l.toLowerCase().includes(k)))
-      for (const l of [...strict, ...loose].slice(0, 12 - allMatches.length)) {
+      // Second layer: even an innocent query must not surface a protected
+      // line (a subject like "2024 tax return" next to a flight confirmation).
+      const { kept, removed } = filterSensitiveLines([...strict, ...loose])
+      if (removed > 0) redactedCount += removed
+      for (const l of kept.slice(0, 12 - allMatches.length)) {
         allMatches.push(`[${source.name}] ${l.slice(0, 200)}`)
       }
       if (allMatches.length >= 12) break
@@ -306,5 +325,39 @@ async function quickFetchInner(query: string): Promise<QuickFetchResult> {
   }
 
   if (wantOtp) return { source: sources[0].name, otp: null, lines: [], error: 'no recent code found' }
-  return { source: sources.map((s) => s.name).join(', '), otp: null, lines: allMatches }
+  const lines =
+    redactedCount > 0
+      ? [...allMatches, `_(${redactedCount} result(s) hidden — protected topics)_`]
+      : allMatches
+  return { source: sources.map((s) => s.name).join(', '), otp: null, lines }
+}
+
+// ---------------------------------------------------------------------------
+// OTP autofill: fetch the newest login code and cache it briefly, so a code
+// field can be filled the instant it's focused (iOS-style) without hitting
+// the mailbox on every keystroke.
+// ---------------------------------------------------------------------------
+
+let otpCache: { code: string; at: number } | null = null
+let otpInFlight: Promise<string | null> | null = null
+
+export function cachedOtp(): string | null {
+  if (otpCache && Date.now() - otpCache.at < 120_000) return otpCache.code
+  return null
+}
+
+export function fetchOtpForAutofill(): Promise<string | null> {
+  const cached = cachedOtp()
+  if (cached) return Promise.resolve(cached)
+  if (otpInFlight) return otpInFlight
+  otpInFlight = quickFetch('otp')
+    .then((res) => {
+      if (res.otp) otpCache = { code: res.otp, at: Date.now() }
+      return res.otp
+    })
+    .catch(() => null)
+    .finally(() => {
+      otpInFlight = null
+    })
+  return otpInFlight
 }

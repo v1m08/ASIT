@@ -50,6 +50,8 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 | **📱 Phone companion** | Serve a phone web-app over your own [Tailscale](https://tailscale.com) network (free, private, nothing exposed to the internet). Get to-dos, review, quick capture, and the assistant on your phone — with **offline support** (study on the bus; changes sync when the PC is back) and **push notifications** (watches firing, jobs finishing). |
 | **💬 WhatsApp** | Send messages from your own linked account without opening WhatsApp: type `> name: message`. See *Commands* below. |
 | **🔎 Quick fetch** | `?keywords` greps your logged-in mail for a value; `?otp` grabs a login code to clipboard; `?g query` gives an instant answer. |
+| **🔑 OTP autofill** | Click a verification-code box on any site and the code from your mail lands in it — split-digit boxes included. Or type `/otp ` anywhere. Nothing is stored; it's fetched at that moment. |
+| **🛡 Guardrails** | Protected topics (passwords, taxes, SSN/bank, medical, legal…) are **unsearchable** by the assistant, and sending is **off unless you ask for it in that message**. See below. |
 | **📎 Library & 🔒 privacy** | A global file library to attach into workspaces; 🔒 **private workspaces** disable AI entirely (physically outside every AI-readable folder). |
 
 ---
@@ -59,7 +61,7 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 | Type this | What happens |
 |---|---|
 | `?g when is the hackathon deadline` | Instant extractive answer from Google — built for speed. |
-| `?otp` | Pulls the newest login code from your mail → clipboard (and types it into the open page). |
+| `?otp` | Pulls the newest login code from your mail → clipboard. Usually unnecessary: focusing a code field on any page autofills it. |
 | `?keywords` | Greps your default mail source (Gmail) for those words. First word can target another source: `?outlook interview`. |
 | `> Mom: running 10 late` | Sends that WhatsApp message from your own account. No AI touches the text; it reports exactly who it went to. |
 
@@ -87,6 +89,20 @@ Everything is on your machine, in two places **outside this repo**, shared by de
 - **`%APPDATA%\asit`** — the SQLite database, your browser-profile logins.
 
 Uninstalling or reinstalling never erases this. The AI only ever sees a workspace's own folder (and, for Jarvis, all non-private workspaces) — private workspaces sit physically outside every AI path, and nothing is ever sent to a server.
+
+## 🛡 Guardrails — what the assistant can never do
+
+These are enforced in the app, not by asking the model nicely. A confused or prompt-injected agent hits the same walls.
+
+| Wall | What it means in practice |
+|---|---|
+| **Protected topics are unsearchable** | Any mail search mentioning a protected term is **refused before the page is ever loaded** — passwords, taxes/IRS/1099, SSN, bank/routing/card numbers, medical, legal, passports. Matching results are also stripped out of *other* searches, so a harmless query can't accidentally surface a tax email. The model never receives the text. Add your own terms in **Settings → Guardrails** (they're added to the built-ins, which can't be removed). |
+| **Sending is deny-by-default** | The assistant may freely **read, search, summarize and draft** — but it can only *send* when the message you just typed asked it to ("text Mom that I'm late", "reply to that email saying yes"). "Summarize my inbox" grants nothing. Authority expires with the turn. |
+| **Email is stricter still** | Even when authorized, the **Send button and Ctrl+Enter are dead** in an embedded Gmail/Outlook tab unless you explicitly asked for a send. Drafting always works. |
+| **Recipient allowlist** *(optional)* | Add names/numbers in Settings to limit messaging to just those people. |
+| **Every send is announced** | A toast names the exact recipient — including blocked attempts. |
+
+Actions are shown in plain language as they happen (*"📨 Sending WhatsApp to Mom", "🌐 Opening canvas.gatech.edu", "🖱 Clicking Submit"*), not as raw file writes or shell commands.
 
 **A note on safety.** The AI can read untrusted content (web pages, PDFs) while holding your logged-in sessions, so it's hardened against prompt-injection: it can't reach local files, can't run custom URL schemes, every page navigation it makes is shown to you, messaging requires your explicit ask, and instruction files are regenerated each turn so tampering can't persist. For anything sensitive (banking, personal docs), use a 🔒 **private workspace** — it's outside the AI's reach entirely. Coding-mode workspaces get a real terminal (with a confirmation), so treat those as fully trusted.
 

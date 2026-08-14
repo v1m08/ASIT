@@ -28,6 +28,76 @@ function SnippetAdder({ onAdd }: { onAdd: (key: string, value: string) => void }
   )
 }
 
+// A newline-separated list, edited as text. Local state so a half-typed line
+// (or a trailing newline) doesn't get mangled on every keystroke.
+function ListField({
+  label,
+  hint,
+  placeholder,
+  value,
+  onChange
+}: {
+  label: string
+  hint: string
+  placeholder: string
+  value: string[]
+  onChange: (next: string[]) => void
+}): JSX.Element {
+  const [text, setText] = useState(value.join('\n'))
+  return (
+    <label className="settings-field">
+      {label}
+      <textarea
+        rows={3}
+        placeholder={placeholder}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value)
+          onChange(
+            e.target.value
+              .split('\n')
+              .map((l) => l.trim())
+              .filter(Boolean)
+          )
+        }}
+      />
+      <span className="field-hint">{hint}</span>
+    </label>
+  )
+}
+
+function GuardrailsSection({
+  settings,
+  setSettings
+}: {
+  settings: Settings
+  setSettings: (s: Settings) => void
+}): JSX.Element {
+  return (
+    <div className="snippets-section">
+      <div className="rail-header">Guardrails — what the assistant may never touch</div>
+      <p className="transfer-note">
+        Enforced in the app, not in the prompt. Blocked searches never run, so protected mail never
+        reaches the model; sending is off unless the message you just typed asks for it.
+      </p>
+      <ListField
+        label="Protected topics (extra)"
+        hint="Any assistant email search containing one of these is refused outright, and matching results are stripped from anything it does read. Built-ins already cover passwords, taxes, SSN/bank/card numbers, medical, legal, and passports — one per line."
+        placeholder={'landlord\nvenmo'}
+        value={settings.sensitiveTerms ?? []}
+        onChange={(sensitiveTerms) => setSettings({ ...settings, sensitiveTerms })}
+      />
+      <ListField
+        label="Send allowlist"
+        hint="Leave empty to allow any recipient (still only when you explicitly ask). Add names or numbers to restrict messaging to just those — one per line."
+        placeholder={'Mom\n+1404…'}
+        value={settings.sendAllowlist ?? []}
+        onChange={(sendAllowlist) => setSettings({ ...settings, sendAllowlist })}
+      />
+    </div>
+  )
+}
+
 function PhoneSection(): JSX.Element {
   const [status, setStatus] = useState<import('@shared/types').CompanionStatus | null>(null)
   const [qr, setQr] = useState<{ url: string | null; dataUrl: string | null } | null>(null)
@@ -397,6 +467,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
             }
           />
         </div>
+
+        <GuardrailsSection settings={settings} setSettings={setSettings} />
 
         <button className="btn" onClick={() => setShowAccounts(true)}>
           🔑 Connected accounts…

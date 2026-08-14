@@ -3,6 +3,7 @@ import { pathToFileURL } from 'url'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
+import { isMailHost, mailSendBlocked, sendRefusalReason } from './guardrails'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -582,6 +583,24 @@ class PaneManager {
     const frame = frames[frameIndex]
     if (!frame) return `frame ${frameIndex} is gone — run page_snapshot`
 
+    // Mail "Send" is the one click that can't be undone. Read the element's
+    // own label and refuse if it fires mail without user authorization.
+    if (op === 'click' && isMailHost(pane.view.webContents.getURL())) {
+      const label = (await frame
+        .executeJavaScript(
+          `(() => {
+            const el = document.querySelector('[data-asit-ref=${JSON.stringify(ref)}]')
+            if (!el) return ''
+            return (el.getAttribute('aria-label') || el.getAttribute('data-tooltip') || el.innerText || '').slice(0, 80)
+          })()`,
+          true
+        )
+        .catch(() => '')) as string
+      if (mailSendBlocked(pane.view.webContents.getURL(), label)) {
+        return `BLOCKED: "${label.trim().slice(0, 40)}" would send mail. ${sendRefusalReason('email')}`
+      }
+    }
+
     if (op === 'click') {
       if (frameIndex === 0) {
         // Top frame: REAL input events at the element's coordinates —
@@ -779,6 +798,9 @@ class PaneManager {
 
   async clickByLabel(owner: string, label: string, pageIndex?: number): Promise<string> {
     for (const view of this.urlViews(owner, pageIndex)) {
+      if (mailSendBlocked(view.webContents.getURL(), label)) {
+        return `BLOCKED: clicking "${label}" would send mail. ${sendRefusalReason('email')}`
+      }
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (let fi = 0; fi < frames.length; fi++) {
         try {
@@ -843,6 +865,11 @@ class PaneManager {
   keyToPage(owner: string, pageIndex: number | undefined, key: string): string {
     const views = this.urlViews(owner, pageIndex)
     if (views.length === 0) return 'no browser pane open in this workspace'
+    // Ctrl+Enter is Gmail's send shortcut — the keyboard route to the same
+    // irreversible action the button guard blocks.
+    if (mailSendBlocked(views[0].webContents.getURL(), key)) {
+      return `BLOCKED: "${key}" sends mail. ${sendRefusalReason('email')}`
+    }
     return this.sendKeyToView(views[0], key)
   }
 
@@ -912,6 +939,9 @@ class PaneManager {
   async sendKey(owner: string, refOrPrefix: string, key: string): Promise<string> {
     const view = this.paneForRef(owner, refOrPrefix)
     if (!view) return `no pane matching "${refOrPrefix}" — run page_snapshot first`
+    if (mailSendBlocked(view.webContents.getURL(), key)) {
+      return `BLOCKED: "${key}" sends mail. ${sendRefusalReason('email')}`
+    }
     return this.sendKeyToView(view, key)
   }
 

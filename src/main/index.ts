@@ -413,6 +413,57 @@ async function runSecuritySmokeTest(): Promise<void> {
     if (!/UNTRUSTED DATA/i.test(claude)) fail('CLAUDE.md missing untrusted-data security guidance')
     console.log('[security-smoke] CLAUDE.md frames page/notes content as untrusted')
 
+    // --- Sending is deny-by-default, opened only by the user's own words ---
+    const guard = await import('./services/guardrails')
+    guard.clearSendAuthorization()
+    if (guard.sendAuthorized('whatsapp') || guard.sendAuthorized('email'))
+      fail('sends authorized with no user request')
+    const waCold = await actions.executeAction(jarvis.id, {
+      action: 'send_whatsapp',
+      target: 'Mom',
+      value: 'hi'
+    })
+    if (!waCold.startsWith('BLOCKED:')) fail(`unrequested whatsapp send allowed: ${waCold}`)
+
+    guard.authorizeSendsFromUserMessage('can you summarize my inbox and tell me what matters')
+    if (guard.sendAuthorized('email')) fail('"summarize my inbox" wrongly authorized email sending')
+    if (guard.sendAuthorized('whatsapp')) fail('"tell me" wrongly authorized messaging')
+
+    guard.authorizeSendsFromUserMessage('text Mom that I will be late')
+    if (!guard.sendAuthorized('whatsapp')) fail('"text Mom that…" did not authorize messaging')
+    if (guard.sendAuthorized('email')) fail('a whatsapp request leaked into email authority')
+
+    guard.authorizeSendsFromUserMessage('reply to that email from Dr Chen saying yes')
+    if (!guard.sendAuthorized('email')) fail('"reply to that email" did not authorize email')
+    console.log('[security-smoke] sends are deny-by-default, granted only by the user message')
+
+    // --- Gmail's Send button/shortcut is dead unless email is authorized ---
+    guard.clearSendAuthorization()
+    const gmail = 'https://mail.google.com/mail/u/0/#inbox'
+    if (!guard.mailSendBlocked(gmail, 'Send')) fail('Gmail Send button clickable while unauthorized')
+    if (!guard.mailSendBlocked(gmail, 'ctrl+enter')) fail('Gmail send shortcut allowed')
+    if (guard.mailSendBlocked(gmail, 'Save draft')) fail('drafting blocked (it must stay allowed)')
+    if (guard.mailSendBlocked('https://example.com', 'Send'))
+      fail('non-mail site treated as mail send')
+    console.log('[security-smoke] mail Send is blocked at the click/keystroke layer')
+
+    // --- Protected topics are unsearchable, not merely discouraged ---
+    const qf = await import('./services/quickfetch')
+    const blockedQ = await qf.quickFetch('tax documents from last year')
+    if (!/blocked/i.test(blockedQ.error ?? '')) fail(`protected search ran: ${blockedQ.error}`)
+    if (blockedQ.lines.length > 0) fail('protected search returned content')
+    const okShape = await qf.quickFetch('password reset')
+    if (!/blocked/i.test(okShape.error ?? '')) fail('password search not blocked')
+    const filtered = guard.filterSensitiveLines([
+      'Amazon — your order shipped',
+      'IRS — your 1099 is ready',
+      'Chase — bank statement available'
+    ])
+    if (filtered.kept.length !== 1 || filtered.removed !== 2)
+      fail(`sensitive result lines not stripped: ${JSON.stringify(filtered)}`)
+    console.log('[security-smoke] protected topics are unsearchable and stripped from results')
+
+    guard.clearSendAuthorization()
     tasksSvc.deleteTask(task.id)
     tasksSvc.deleteTask(priv.id)
     console.log('[security-smoke] ALL PASS')
