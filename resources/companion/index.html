@@ -162,7 +162,7 @@
 
   const $ = (s) => document.querySelector(s)
   const main = $('#main')
-  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 
   function toast(text) {
     const el = document.createElement('div')
@@ -212,15 +212,27 @@
   const cacheGet = (k) => { try { return JSON.parse(localStorage.getItem('asit-c-' + k) || 'null') } catch { return null } }
   const cacheSet = (k, data) => localStorage.setItem('asit-c-' + k, JSON.stringify({ at: Date.now(), data }))
   const qGet = () => { try { return JSON.parse(localStorage.getItem('asit-q') || '[]') } catch { return [] } }
-  const qPush = (op) => localStorage.setItem('asit-q', JSON.stringify([...qGet(), op]))
+  // Every op carries a unique id — the server dedupes, so a retry after a
+  // lost response can never double-apply a grade.
+  const qPush = (op) => localStorage.setItem('asit-q', JSON.stringify([...qGet(), { ...op, opId: Date.now() + '-' + Math.random().toString(36).slice(2, 10) }]))
   let offlineSince = null
 
-  async function flushQueue() {
+  // Single-flight: many triggers (render, focus, online, WS) can request a
+  // flush at once — they all share one round-trip. Only the ops actually sent
+  // are removed, so anything queued mid-flight survives to the next flush.
+  let flushInFlight = null
+  function flushQueue() {
+    if (flushInFlight) return flushInFlight
     const ops = qGet()
-    if (ops.length === 0) return
-    await api('sync', { method: 'POST', body: JSON.stringify({ ops }) })
-    localStorage.removeItem('asit-q')
-    toast(`Synced ${ops.length} offline change${ops.length === 1 ? '' : 's'} ✓`)
+    if (ops.length === 0) return Promise.resolve()
+    flushInFlight = api('sync', { method: 'POST', body: JSON.stringify({ ops }) })
+      .then(() => {
+        const sentIds = new Set(ops.map((o) => o.opId))
+        localStorage.setItem('asit-q', JSON.stringify(qGet().filter((o) => !sentIds.has(o.opId))))
+        toast(`Synced ${ops.length} offline change${ops.length === 1 ? '' : 's'} ✓`)
+      })
+      .finally(() => { flushInFlight = null })
+    return flushInFlight
   }
 
   // GET with cache fallback; also the reconnect point where the queue drains.

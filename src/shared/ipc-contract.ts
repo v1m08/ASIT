@@ -87,6 +87,7 @@ export const IPC = {
   ASSISTANT_ASK: 'assistant:ask',
   ASSISTANT_HISTORY: 'assistant:history',
   QUICKFETCH_RUN: 'quickfetch:run',
+  WHATSAPP_SEND: 'whatsapp:send',
   ASSISTANT_CANCEL: 'assistant:cancel',
   ASSISTANT_STREAM: 'assistant:stream', // push M→R
   ASSISTANT_STATUS: 'assistant:status', // push M→R

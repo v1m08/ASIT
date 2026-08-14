@@ -88,6 +88,14 @@ async function conditionMet(taskId: string, opts: WatchOpts): Promise<boolean> {
   return false
 }
 
+// Deleting or privatizing a task must kill its watches — they poll pages and
+// can toast/resume minutes later.
+export function stopWatchesForTask(taskId: string): void {
+  for (const [id, w] of [...watchers]) {
+    if (w.taskId === taskId) stopWatch(id)
+  }
+}
+
 function describeCondition(opts: WatchOpts): string {
   if (opts.label) return `"${opts.label}" becomes clickable`
   if (opts.text) return `text "${opts.text}" appears`
@@ -142,6 +150,9 @@ export async function startWatch(taskId: string, opts: WatchOpts): Promise<strin
     let met = false
     try {
       met = await conditionMet(taskId, opts)
+      // The probe can outlast the 4s interval; a parallel invocation may have
+      // fired-and-stopped this watch while we awaited. Never fire twice.
+      if (!watchers.has(id)) return
     } catch {
       met = false
     }

@@ -18,7 +18,7 @@ declare global {
         get: (id: string) => Promise<Task | null>
         create: (input: CreateTaskInput) => Promise<Task>
         update: (id: string, input: UpdateTaskInput) => Promise<Task | null>
-        delete: (id: string) => Promise<void>
+        delete: (id: string) => Promise<{ ok: boolean; reason?: string }>
         open: (id: string) => Promise<{ task: Task; resources: Resource[] } | null>
         stats: () => Promise<{
           dueByTask: Record<string, number>
@@ -144,6 +144,7 @@ declare global {
           lines: string[]
           error?: string
         }>
+        sendWhatsApp: (recipient: string, message: string) => Promise<{ ok: boolean; detail: string }>
       }
       accounts: {
         list: () => Promise<

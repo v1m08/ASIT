@@ -28,13 +28,6 @@ export default function Workspace(): JSX.Element {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
-  const timerState = useTimerState()
-  const [breakReviewDismissed, setBreakReviewDismissed] = useState(false)
-
-  const onBreak = timerState?.phase === 'break'
-  useEffect(() => {
-    if (onBreak) setBreakReviewDismissed(false)
-  }, [onBreak])
 
   const refreshResources = useCallback(async (): Promise<void> => {
     if (!task) return
@@ -64,8 +57,20 @@ export default function Workspace(): JSX.Element {
     const id = useStore.getState().consumePendingResource()
     if (!id) return
     const open = (): void => gridApi.current?.openResource(id === 'builtin-notes' ? BUILTIN_NOTES : id)
-    if (gridApi.current) open()
-    else setTimeout(open, 250) // grid still mounting after a task switch
+    if (gridApi.current) {
+      open()
+      return
+    }
+    // Grid still mounting (task switch + cold lazy chunk can exceed any single
+    // delay) — retry until it appears, bounded.
+    let tries = 0
+    const t = setInterval(() => {
+      if (gridApi.current || ++tries > 20) {
+        clearInterval(t)
+        open()
+      }
+    }, 150)
+    return () => clearInterval(t)
   }, [pendingResourceId])
 
   const handleGoHome = useCallback(async (): Promise<void> => {
@@ -153,13 +158,23 @@ export default function Workspace(): JSX.Element {
           </>
         )}
       </div>
-      {onBreak && !breakReviewDismissed && timerState && (
-        <BreakReview
-          taskId={task.id}
-          remainingSec={timerState.remainingSec}
-          onClose={() => setBreakReviewDismissed(true)}
-        />
-      )}
+      <BreakReviewGate taskId={task.id} />
     </div>
+  )
+}
+
+// Isolates the 1-per-second SESSION_TICK subscription: with it inlined,
+// the ENTIRE workspace tree (rail, grid, every chat message) re-rendered
+// every second for the whole focus session.
+function BreakReviewGate({ taskId }: { taskId: string }): JSX.Element | null {
+  const timerState = useTimerState()
+  const [dismissed, setDismissed] = useState(false)
+  const onBreak = timerState?.phase === 'break'
+  useEffect(() => {
+    if (onBreak) setDismissed(false)
+  }, [onBreak])
+  if (!onBreak || dismissed || !timerState) return null
+  return (
+    <BreakReview taskId={taskId} remainingSec={timerState.remainingSec} onClose={() => setDismissed(true)} />
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Settings } from '@shared/types'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
@@ -39,12 +39,20 @@ function PhoneSection(): JSX.Element {
     if (s.running) setQr(await window.asit.companion.qr())
   }
 
+  const statusRef = useRef<import('@shared/types').CompanionStatus | null>(null)
+  statusRef.current = status
+
   useEffect(() => {
     refresh()
     // Keep polling while the panel is open: the user may be installing
-    // Tailscale or flipping it on right now — the section should catch up
-    // without them having to reopen Settings.
-    const t = setInterval(refresh, 4000)
+    // Tailscale or a phone may request pairing right now. Once everything is
+    // settled (tailscale ok, nothing pending) slow way down — each poll
+    // spawns a `tailscale status` process.
+    const t = setInterval(() => {
+      const s = statusRef.current
+      const settled = s && s.tailscale === 'ok' && !s.pendingPair
+      if (!settled || Date.now() % 20000 < 4000) refresh()
+    }, 4000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

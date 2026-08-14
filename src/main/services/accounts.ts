@@ -63,6 +63,14 @@ const PROVIDERS: Provider[] = [
     domain: 'instructure.com'
   },
   {
+    id: 'whatsapp',
+    name: 'WhatsApp',
+    description: 'Link WhatsApp Web once (scan the QR with your phone) to send messages from the ⚡ bar',
+    loginUrl: 'https://web.whatsapp.com/',
+    domain: 'web.whatsapp.com',
+    markerCookie: 'wa_ul'
+  },
+  {
     id: 'gradescope',
     name: 'Gradescope',
     description: 'Assignment submissions and grades',

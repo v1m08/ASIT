@@ -14,6 +14,8 @@ import {
 // on, which falls back to raw source so it stays editable. Clicking an image
 // puts the cursor on its line, which reveals the markdown — same as Obsidian.
 
+// Keyed by note path + src: the same relative name ("files/img.png") in two
+// different workspaces must never serve each other's cached bytes.
 const imageCache = new Map<string, string>()
 
 class ImageWidget extends WidgetType {
@@ -48,7 +50,8 @@ class ImageWidget extends WidgetType {
       wrap.textContent = `🖼 ${this.alt || this.src}`
     }
 
-    const cached = imageCache.get(this.src)
+    const cacheKey = `${this.basePath}|${this.src}`
+    const cached = imageCache.get(cacheKey)
     if (cached) {
       img.src = cached
     } else if (/^(data:|https?:|blob:)/i.test(this.src)) {
@@ -58,7 +61,7 @@ class ImageWidget extends WidgetType {
         .readImage(this.basePath, this.src)
         .then((url) => {
           if (!url) return fail()
-          imageCache.set(this.src, url)
+          imageCache.set(cacheKey, url)
           img.src = url
         })
         .catch(fail)

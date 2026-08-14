@@ -79,6 +79,9 @@ export default function ScratchBrowser({
   // Restore tabs — REUSING stored pane ids, so panes parked while you were in
   // a task revive without reloading.
   useEffect(() => {
+    // StrictMode double-mounts effects in dev; a second restore before the
+    // persist effect has written localStorage opened duplicate tabs + panes.
+    if (tabsRef.current.length > 0) return
     let restored: { tabs?: { id: string; url: string; title?: string }[]; active: number } | null =
       null
     try {

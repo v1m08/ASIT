@@ -29,8 +29,15 @@ function extractOtp(lines: string[]): string | null {
   return null
 }
 
-async function loadAndExtract(url: string, settleMs: number): Promise<string> {
-  const win = new BrowserWindow({
+// One warm hidden window, reused across queries and destroyed after idling —
+// a fresh Chromium renderer per "?query" cost ~100MB and a process start
+// every time. destroyed-on-error so a wedged page can't poison later queries.
+let fetchWin: BrowserWindow | null = null
+let fetchIdleTimer: NodeJS.Timeout | null = null
+
+function getFetchWindow(): BrowserWindow {
+  if (fetchWin && !fetchWin.isDestroyed()) return fetchWin
+  fetchWin = new BrowserWindow({
     show: false,
     width: 1200,
     height: 900,
@@ -40,19 +47,43 @@ async function loadAndExtract(url: string, settleMs: number): Promise<string> {
       contextIsolation: true
     }
   })
+  return fetchWin
+}
+
+function releaseFetchWindow(broken: boolean): void {
+  if (broken && fetchWin && !fetchWin.isDestroyed()) {
+    fetchWin.destroy()
+    fetchWin = null
+    return
+  }
+  if (fetchIdleTimer) clearTimeout(fetchIdleTimer)
+  fetchIdleTimer = setTimeout(() => {
+    if (fetchWin && !fetchWin.isDestroyed()) fetchWin.destroy()
+    fetchWin = null
+  }, 60_000)
+}
+
+async function loadAndExtract(url: string, settleMs: number): Promise<string> {
+  const win = getFetchWindow()
+  let broken = false
   try {
     await Promise.race([
       win.loadURL(url),
       new Promise((r) => setTimeout(r, 12000)) // heavy apps may never "finish"
     ]).catch(() => undefined)
     await new Promise((r) => setTimeout(r, settleMs)) // let SPA content render
-    const text = (await win.webContents.executeJavaScript(
-      'document.body ? document.body.innerText : ""',
-      true
-    )) as string
+    // The exec itself needs a timeout: a page whose main thread is wedged
+    // would otherwise hang the "?" bar forever and strand the renderer.
+    const text = (await Promise.race([
+      win.webContents.executeJavaScript('document.body ? document.body.innerText : ""', true),
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('page hung')), 10000))
+    ])) as string
     return text.slice(0, 120000)
+  } catch (err) {
+    broken = true
+    throw err
   } finally {
-    win.destroy()
+    releaseFetchWindow(broken)
   }
 }
 
@@ -102,12 +133,8 @@ function bestSentence(
 // distill a DIRECT answer locally (answer box, else best-sentence heuristic),
 // with a compact "More" line of links. No tabs, no model.
 async function googleSearch(q: string): Promise<QuickFetchResult> {
-  const win = new BrowserWindow({
-    show: false,
-    width: 1200,
-    height: 900,
-    webPreferences: { partition: 'persist:asit-browse', sandbox: true, contextIsolation: true }
-  })
+  const win = getFetchWindow()
+  let broken = false
   try {
     await Promise.race([
       win.loadURL(`https://www.google.com/search?q=${encodeURIComponent(q)}`),
@@ -115,7 +142,9 @@ async function googleSearch(q: string): Promise<QuickFetchResult> {
     ]).catch(() => undefined)
     await new Promise((r) => setTimeout(r, 900)) // results render almost immediately
 
-    const extracted = (await win.webContents.executeJavaScript(
+    const extracted = (await Promise.race([
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('page hung')), 10000)),
+      win.webContents.executeJavaScript(
       `(() => {
         const answer = document.querySelector('[data-attrid="wa:/description"], .hgKElc, .IZ6rdc, .Z0LcW')
         const results = Array.from(document.querySelectorAll('#search h3')).slice(0, 6).map(h => {
@@ -130,8 +159,9 @@ async function googleSearch(q: string): Promise<QuickFetchResult> {
         }).filter(r => r.title)
         return { answer: answer ? answer.innerText.replace(/\\s+/g, ' ').trim().slice(0, 400) : null, results }
       })()`,
-      true
-    )) as { answer: string | null; results: { title: string; url: string; snippet: string }[] }
+        true
+      )
+    ])) as { answer: string | null; results: { title: string; url: string; snippet: string }[] }
 
     const hostOf = (u: string): string => {
       try {
@@ -166,8 +196,11 @@ async function googleSearch(q: string): Promise<QuickFetchResult> {
 
     if (lines.length === 0) return { source: 'Google', otp: null, lines: [], error: 'no results extracted' }
     return { source: 'Google', otp: null, lines }
+  } catch (err) {
+    broken = true
+    throw err
   } finally {
-    win.destroy()
+    releaseFetchWindow(broken)
   }
 }
 

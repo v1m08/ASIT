@@ -181,6 +181,7 @@ export function updateTask(id: string, input: UpdateTaskInput): Task | null {
 
   const updated = getTask(id)!
   refreshClaudeMd(id)
+  writeTasksIndex() // title/status/priority/due show in the global index
   return updated
 }
 
@@ -210,25 +211,31 @@ export function trashRoot(): string {
   return join(app.getPath('documents'), 'ASIT', '.trash')
 }
 
-export function deleteTask(id: string): void {
+export function deleteTask(id: string): { ok: boolean; reason?: string } {
   const db = getDb()
   const task = getTask(id)
-  if (!task) return
+  if (!task) return { ok: true }
 
-  // DB first — if this fails, nothing has moved and the task is intact.
-  db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
-
-  // Never hard-delete user files: move the folder into the shared trash.
+  // FOLDER FIRST. The old DB-first order could delete the row and then fail
+  // the trash move (open file handle) — leaving "deleted" content sitting in
+  // the AI-readable tree forever, invisible to the UI. Now a failed move
+  // aborts the delete: the task stays, visibly, and the caller can retry
+  // after panes are closed.
   if (existsSync(task.folderPath)) {
     mkdirSync(trashRoot(), { recursive: true })
     const dest = join(trashRoot(), `${task.slug}-${task.id.slice(0, 6)}-${Date.now()}`)
     try {
       renameSync(task.folderPath, dest)
-    } catch {
-      // Folder in use (e.g. open PDF) — leave it on disk rather than fail the delete.
+    } catch (err) {
+      return {
+        ok: false,
+        reason: `folder is in use (${err instanceof Error ? err.message : 'locked'}) — close its tabs and try again`
+      }
     }
   }
+  db.prepare('DELETE FROM tasks WHERE id = ?').run(id)
   writeTasksIndex()
+  return { ok: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,11 +314,14 @@ export function saveScratchSession(name: string): Task {
   const scratch = getOrCreateScratch()
   const task = createTask({ title: name })
 
-  // Adopt resources, chats, and their files into the new task.
-  db.prepare('UPDATE resources SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
-  db.prepare('UPDATE chat_sessions SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
-  db.prepare('UPDATE questions SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
-  db.prepare('UPDATE usage_log SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
+  // Adopt resources, chats, and their files into the new task — atomically,
+  // so a crash can't strand half the session in each place.
+  db.transaction(() => {
+    db.prepare('UPDATE resources SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
+    db.prepare('UPDATE chat_sessions SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
+    db.prepare('UPDATE questions SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
+    db.prepare('UPDATE usage_log SET task_id = ? WHERE task_id = ?').run(task.id, scratch.id)
+  })()
 
   const fileRows = db
     .prepare('SELECT id, file_path FROM resources WHERE task_id = ? AND file_path IS NOT NULL')
@@ -554,7 +564,10 @@ export function refreshClaudeMd(taskId: string): void {
   const task = getTask(taskId)
   if (!task) return
   writeClaudeMd(task, listResources(taskId))
-  writeTasksIndex()
+  // NOTE: no writeTasksIndex() here — the index only carries task METADATA
+  // (title/status/priority/due), which resource churn never changes. Bundling
+  // it meant N+1 full index rewrites at startup and one per resource rename.
+  // Metadata mutators call writeTasksIndex explicitly.
 }
 
 // Index at the tasks ROOT — the global assistant runs with this as cwd, so a

@@ -76,6 +76,9 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   // scrolling up to read must never be fought by incoming stream chunks.
   const pinnedRef = useRef(true)
   const sessionIdRef = useRef<string | null>(null)
+  const taskIdRef = useRef(task.id)
+  taskIdRef.current = task.id
+  const pumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   sessionIdRef.current = sessionId
   const expand = useSnippets()
 
@@ -100,7 +103,12 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   }, [task.id])
 
   const loadSessions = useCallback(async (): Promise<void> => {
-    const list = await window.asit.chat.listSessions(task.id)
+    const forTask = task.id
+    const list = await window.asit.chat.listSessions(forTask)
+    // A task switch may have happened while we awaited — applying the old
+    // task's sessions here was exactly the cross-task leak the reset effect
+    // above exists to prevent.
+    if (taskIdRef.current !== forTask) return
     setSessions(list)
     if (list.length > 0) {
       setSessionId((prev) => prev ?? list[0].id)
@@ -247,7 +255,8 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
       // Refresh the session list so the auto-title (first message) shows up.
       loadSessions().catch(() => undefined)
       // Turn finished → send the next queued message (unless paused).
-      setTimeout(() => pumpRef.current?.(), 80)
+      if (pumpTimerRef.current) clearTimeout(pumpTimerRef.current)
+      pumpTimerRef.current = setTimeout(() => pumpRef.current?.(), 80)
     })
     const offError = window.asit.on(IPC.CHAT_ERROR, (...args: unknown[]) => {
       const p = args[0] as StreamPayload
@@ -266,6 +275,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
       offUsageTick()
       offDone()
       offError()
+      if (pumpTimerRef.current) clearTimeout(pumpTimerRef.current) // no pump after unmount
     }
   }, [loadSessions])
 

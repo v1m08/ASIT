@@ -20,7 +20,9 @@ import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
-import { runFlow, stopWatching, watchTaskActions, watchedTaskId_ } from './services/actions'
+import * as whatsapp from './services/whatsapp'
+import { isWatchingTask, runFlow, stopWatchingTask, watchTaskActions } from './services/actions'
+import { stopWatchesForTask } from './services/watchers'
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 
@@ -33,18 +35,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     tasks.updateTask(id, input)
   )
   ipcMain.handle(IPC.TASKS_DELETE, (_e, id: string) => {
-    // Release the actions-file watcher first: its open directory handle would
-    // block the folder rename on Windows.
-    if (watchedTaskId_() === id) stopWatching()
-    tasks.deleteTask(id)
+    // Everything holding handles into the folder goes first: the task's
+    // panes (a parked PDF viewer pins its file), its actions watcher (open
+    // dir handle), and its page watches (they'd keep polling a ghost).
+    paneManager.closeByOwner(id)
+    stopWatchingTask(id)
+    stopWatchesForTask(id)
+    const result = tasks.deleteTask(id)
+    if (!result.ok) {
+      const win = getWindow()
+      if (win && !win.isDestroyed())
+        win.webContents.send(IPC.APP_EVENT, { type: 'toast', text: `Delete failed: ${result.reason}` })
+    }
+    return result
   })
   ipcMain.handle(IPC.TASKS_OPEN, (_e, id: string) => {
     const result = tasks.openTask(id)
-    if (result) {
-      // App-action protocol only exists where AI exists.
-      if (result.task.aiDisabled) stopWatching()
-      else watchTaskActions(id)
-    }
+    // App-action protocol only exists where AI exists. Watchers for other
+    // tasks stay live — background chats keep their action channel.
+    if (result && !result.task.aiDisabled) watchTaskActions(id)
     return result
   })
   ipcMain.handle(IPC.TASKS_STATS, () => tasks.homeStats())
@@ -52,8 +61,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     tasks.setTaskCoding(id, coding)
   )
   ipcMain.handle(IPC.TASKS_SET_PRIVACY, (_e, id: string, aiDisabled: boolean) => {
-    const wasWatched = watchedTaskId_() === id
-    if (wasWatched) stopWatching() // open dir handle would block the folder move
+    const wasWatched = isWatchingTask(id)
+    paneManager.closeByOwner(id) // pane file handles would block the folder move
+    stopWatchingTask(id)
+    if (aiDisabled) stopWatchesForTask(id)
     const result = tasks.setTaskPrivacy(id, aiDisabled)
     if (wasWatched && result && !result.aiDisabled) watchTaskActions(id)
     return result
@@ -179,6 +190,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.ASSISTANT_CANCEL, () => assistant.cancelAssistant())
   ipcMain.handle(IPC.ASSISTANT_HISTORY, (_e, limit?: number) => assistant.assistantHistory(limit))
   ipcMain.handle(IPC.QUICKFETCH_RUN, (_e, query: string) => quickfetch.quickFetch(query))
+  ipcMain.handle(IPC.WHATSAPP_SEND, (_e, recipient: string, message: string) =>
+    whatsapp.sendWhatsApp(recipient, message)
+  )
 
   // --- usage / cost ---
   ipcMain.handle(IPC.USAGE_TASK, (_e, taskId: string) => usage.taskUsage(taskId))

@@ -330,8 +330,39 @@ class PaneManager {
   // action protocol — fast, no extra processes.
   // -------------------------------------------------------------------------
 
-  private refToPane = new Map<string, string>()
-  private prefixToPane = new Map<string, string>() // p1 → paneId (for key/type targeting)
+  // Ref maps are PER OWNER: two agents snapshotting concurrently (Jarvis +
+  // a background workspace chat) must not clear each other's live refs.
+  private refMaps = new Map<string, Map<string, string>>() // owner → ref → paneId
+  private prefixMaps = new Map<string, Map<string, string>>() // owner → pN → paneId
+
+  private ownerRefs(owner: string): Map<string, string> {
+    let m = this.refMaps.get(owner)
+    if (!m) {
+      m = new Map()
+      this.refMaps.set(owner, m)
+    }
+    return m
+  }
+
+  private ownerPrefixes(owner: string): Map<string, string> {
+    let m = this.prefixMaps.get(owner)
+    if (!m) {
+      m = new Map()
+      this.prefixMaps.set(owner, m)
+    }
+    return m
+  }
+
+  // Close every pane a task owns — called when the task is deleted or made
+  // private, BEFORE its folder moves (a parked PDF pane holds a file handle
+  // into the folder, which makes the Windows rename fail).
+  closeByOwner(owner: string): void {
+    for (const [paneId, pane] of [...this.panes]) {
+      if (pane.owner === owner) this.close(paneId)
+    }
+    this.refMaps.delete(owner)
+    this.prefixMaps.delete(owner)
+  }
 
   private capturScript(prefix: string): string {
     return `(() => {
@@ -384,8 +415,10 @@ class PaneManager {
     const pagesDir = join(taskFolder, '.asit', 'pages')
     mkdirSync(pagesDir, { recursive: true })
     for (const f of readdirSync(pagesDir)) rmSync(join(pagesDir, f), { force: true })
-    this.refToPane.clear()
-    this.prefixToPane.clear()
+    const refs = this.ownerRefs(owner)
+    const prefixes = this.ownerPrefixes(owner)
+    refs.clear()
+    prefixes.clear()
 
     let count = 0
     let paneIndex = 0
@@ -399,7 +432,7 @@ class PaneManager {
       // A pane showing a PDF: DOM capture sees only viewer chrome. Download
       // + extract the text instead and point the model at it.
       if (/\.pdf([?#]|$)/i.test(url)) {
-        this.prefixToPane.set(prefix, paneId)
+        prefixes.set(prefix, paneId)
         try {
           const { ensureWebPdfText } = await import('./resources')
           const txt = await ensureWebPdfText(taskFolder, url)
@@ -450,14 +483,14 @@ class PaneManager {
               true
             )) as CaptureResult
             if (result && (result.elements.length > 0 || result.text.trim().length > 0)) {
-              for (const el of result.elements) this.refToPane.set(el.ref, paneId)
+              for (const el of result.elements) refs.set(el.ref, paneId)
               sections.push({ fi, url: frames[fi].url, result })
             }
           } catch {
             // frame gone / inaccessible — skip
           }
         }
-        this.prefixToPane.set(prefix, paneId)
+        prefixes.set(prefix, paneId)
         if (sections.length === 0) continue
 
         const main = sections[0]
@@ -515,7 +548,7 @@ class PaneManager {
     const refMatch = ref.match(/^p\d{1,4}(?:f(\d{1,3}))?e\d{1,4}$/)
     if (!refMatch) return `invalid ref "${ref.slice(0, 40)}"`
     const frameIndex = refMatch[1] ? Number(refMatch[1]) : 0
-    const paneId = this.refToPane.get(ref)
+    const paneId = this.ownerRefs(owner).get(ref)
     if (!paneId) return `unknown ref ${ref} — run page_snapshot first`
     const pane = this.panes.get(paneId)
     if (!pane) return `pane for ${ref} is gone`
@@ -632,6 +665,7 @@ class PaneManager {
       ).replace(/\\s+/g, ' ').trim().toLowerCase()
       const el = els.find(e => labelOf(e) === target) || els.find(e => labelOf(e).includes(target))
       if (!el) return null
+      el.setAttribute('data-asit-flow-target', '')
       ${
         fillValue !== undefined
           ? `
@@ -737,11 +771,13 @@ class PaneManager {
             return `clicked "${label}"`
           }
           // Iframe hit: synthetic pointer sequence in-frame (coords don't
-          // cross frame boundaries).
-          await frames[fi].executeJavaScript(
+          // cross frame boundaries). The find script tagged the element with
+          // data-asit-flow-target — VERIFY we actually dispatched on it; a
+          // silent miss here used to report "clicked" for a no-op.
+          const hit = await frames[fi].executeJavaScript(
             `(() => {
               const el = document.querySelector('[data-asit-flow-target]')
-              if (!el) return
+              if (!el) return false
               el.removeAttribute('data-asit-flow-target')
               const r = el.getBoundingClientRect()
               const opts = { bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, button: 0 }
@@ -750,9 +786,11 @@ class PaneManager {
               el.dispatchEvent(new PointerEvent('pointerup', opts))
               el.dispatchEvent(new MouseEvent('mouseup', opts))
               el.click()
+              return true
             })()`,
             true
           )
+          if (!hit) continue
           return `clicked "${label}" (in frame ${fi})`
         } catch {
           // try next frame
@@ -800,7 +838,7 @@ class PaneManager {
   private paneForRef(owner: string, refOrPrefix: string): WebContentsView | null {
     const prefix = refOrPrefix.match(/^p\d{1,4}/)?.[0]
     if (!prefix) return null
-    const paneId = this.refToPane.get(refOrPrefix) ?? this.prefixToPane.get(prefix)
+    const paneId = this.ownerRefs(owner).get(refOrPrefix) ?? this.ownerPrefixes(owner).get(prefix)
     if (!paneId) return null
     const pane = this.panes.get(paneId)
     return pane && pane.owner === owner ? pane.view : null

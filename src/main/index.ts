@@ -159,6 +159,8 @@ app.on('window-all-closed', async () => {
   const { killAllClaudeChildren } = await import('./services/claude')
   killAllClaudeChildren()
   globalShortcut.unregisterAll() // navigation keys grabbed while a page had focus
+  const { closeWhatsApp } = await import('./services/whatsapp')
+  closeWhatsApp()
   stopCompanion()
   closeDb()
   app.quit()
@@ -470,19 +472,20 @@ async function runCompanionSmokeTest(): Promise<void> {
     console.log('[companion-smoke] push subscriptions validated + stored')
 
     // Offline sync: queued ops replay in order, junk ops are skipped
+    const syncOps = [
+      { t: 'todoadd', text: 'offline-queued todo', opId: 'smoke-op-1' },
+      { t: 'capture', text: 'offline capture\nto-do: from the bus', opId: 'smoke-op-2' },
+      { t: 'bogus', x: 1 }
+    ]
     const sync = (await (
-      await api('sync', {
-        method: 'POST',
-        body: JSON.stringify({
-          ops: [
-            { t: 'todoadd', text: 'offline-queued todo' },
-            { t: 'capture', text: 'offline capture\nto-do: from the bus' },
-            { t: 'bogus', x: 1 }
-          ]
-        })
-      })
+      await api('sync', { method: 'POST', body: JSON.stringify({ ops: syncOps }) })
     ).json()) as { applied: number }
     if (sync.applied !== 2) fail(`sync applied ${sync.applied}, expected 2`)
+    // Replay of the same batch (lost-response retry) must be a no-op.
+    const replay = (await (
+      await api('sync', { method: 'POST', body: JSON.stringify({ ops: syncOps }) })
+    ).json()) as { applied: number }
+    if (replay.applied !== 0) fail(`sync replay applied ${replay.applied}, expected 0 (idempotency)`)
     if (!todosSvc.listTodos(false).some((t) => t.text === 'offline-queued todo'))
       fail('synced todo missing')
     if (!todosSvc.listTodos(false).some((t) => t.text === 'from the bus'))

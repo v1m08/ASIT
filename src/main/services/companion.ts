@@ -20,6 +20,7 @@ import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
 import { askJarvisText } from './jarvis'
+import { parseSendCommand, sendWhatsApp } from './whatsapp'
 
 // Phone companion: a small HTTP+WebSocket server for the PWA on the user's
 // phone. SECURITY MODEL — three layers, all required:
@@ -107,15 +108,27 @@ function prunePairs(): void {
   }
 }
 
+// pair/start is necessarily unauthenticated — rate-limit it so a hostile
+// local process or drive-by web page can't spam approval toasts or exhaust
+// the pending slots (it can never obtain the token either way).
+let pairStarts: number[] = []
+let lastPairToast = 0
+
 function startPair(): { requestId: string; code: string } | null {
+  const now = Date.now()
+  pairStarts = pairStarts.filter((t) => now - t < 60_000)
+  if (pairStarts.length >= 5) return null
+  pairStarts.push(now)
   prunePairs()
   if (pendingPairs.size >= MAX_PENDING) return null
   const requestId = randomBytes(16).toString('base64url')
   const code = String(Math.floor(100000 + Math.random() * 900000)) // 6 digits
   pendingPairs.set(requestId, { requestId, code, createdAt: Date.now(), approved: false })
   // Surface it in the app immediately — the user is standing at their phone.
+  // (One toast per 30s: repeated requests still show in Settings.)
   const win = getWindow?.()
-  if (win && !win.isDestroyed()) {
+  if (win && !win.isDestroyed() && Date.now() - lastPairToast > 30_000) {
+    lastPairToast = Date.now()
     win.webContents.send(IPC.APP_EVENT, {
       type: 'toast',
       text: `📱 Phone asking to pair — code ${code}. Approve in Settings → Phone.`
@@ -227,7 +240,9 @@ export async function notifyPhone(title: string, body: string, tag?: string): Pr
     })
   )
   if (dead.length > 0) {
-    setSettings({ companionSubs: s.companionSubs.filter((x) => !dead.includes(x.endpoint)) })
+    // Re-read before pruning: a subscription added mid-send must survive.
+    const fresh = getSettings().companionSubs
+    setSettings({ companionSubs: fresh.filter((x) => !dead.includes(x.endpoint)) })
   }
 }
 
@@ -242,6 +257,12 @@ let phoneBusy = false
 
 async function phoneAssistant(prompt: string): Promise<string> {
   const q = prompt.trim()
+  if (q.startsWith('>')) {
+    const cmd = parseSendCommand(q)
+    if (!cmd) return 'Format: > name: message (sends on WhatsApp from your linked account)'
+    const res = await sendWhatsApp(cmd.recipient, cmd.message)
+    return res.ok ? `✅ ${res.detail}` : `⚠️ ${res.detail}`
+  }
   if (q.startsWith('?')) {
     const res = await quickFetch(q.slice(1).trim())
     if (res.otp) return `🔑 ${res.otp} (${res.source})`
@@ -285,6 +306,8 @@ async function phoneAssistant(prompt: string): Promise<string> {
 // HTTP server
 // ---------------------------------------------------------------------------
 
+const appliedOpIds = new Set<string>()
+
 function captureToScratch(text: string): void {
   const scratch = getOrCreateScratch()
   const notePath = join(scratch.folderPath, 'notes.md')
@@ -307,11 +330,20 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  // Enforce the cap WHILE streaming — buffering first would let a client OOM
+  // the main process before the check ever ran.
   const chunks: Buffer[] = []
-  for await (const c of req) chunks.push(c as Buffer)
+  let total = 0
+  for await (const c of req) {
+    total += (c as Buffer).length
+    if (total > 64 * 1024) {
+      req.destroy()
+      throw new Error('body too large')
+    }
+    chunks.push(c as Buffer)
+  }
   const raw = Buffer.concat(chunks).toString('utf-8')
   if (!raw) return {}
-  if (raw.length > 64 * 1024) throw new Error('body too large')
   return JSON.parse(raw) as Record<string, unknown>
 }
 
@@ -382,11 +414,24 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
   }
   // Offline catch-up: the phone queues review grades, to-do changes, and
   // captures while the PC is unreachable, then replays them here in order.
+  // Ops carry client ids and are deduped: a retry after a lost response (or
+  // two racing flushes) must never double-apply an SM-2 grade.
   if (path === 'sync' && method === 'POST') {
     const b = await readBody(req)
     const ops = Array.isArray(b.ops) ? (b.ops as Record<string, unknown>[]) : []
     let applied = 0
     for (const op of ops.slice(0, 300)) {
+      const opId = typeof op.opId === 'string' ? op.opId.slice(0, 64) : null
+      if (opId) {
+        if (appliedOpIds.has(opId)) continue
+        appliedOpIds.add(opId)
+        if (appliedOpIds.size > 2000) {
+          for (const id of appliedOpIds) {
+            appliedOpIds.delete(id)
+            if (appliedOpIds.size <= 1000) break
+          }
+        }
+      }
       try {
         if (op.t === 'review' && [0, 1, 2, 3].includes(Number(op.grade))) {
           await answerQuestion(String(op.id), { selfGrade: Number(op.grade) as 0 | 1 | 2 | 3 })
@@ -483,9 +528,14 @@ export function startCompanion(getWin: () => BrowserWindow | null): void {
       socket.destroy()
       return
     }
+    if (sockets.size >= 10) {
+      socket.destroy()
+      return
+    }
     wss!.handleUpgrade(req, socket, head, (ws) => {
       sockets.add(ws)
       ws.on('close', () => sockets.delete(ws))
+      ws.on('error', () => sockets.delete(ws)) // errored sockets never emit a clean close
     })
   })
 

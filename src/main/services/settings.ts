@@ -26,7 +26,12 @@ const DEFAULTS: Settings = {
   companionSubs: []
 }
 
+// getSettings is on hot paths (every CLI spawn, CLAUDE.md write, quickfetch,
+// timer tick validation) — cache the merged object; setSettings invalidates.
+let cache: Settings | null = null
+
 export function getSettings(): Settings {
+  if (cache) return cache
   const rows = getDb().prepare('SELECT key, value FROM settings').all() as {
     key: string
     value: string
@@ -41,6 +46,7 @@ export function getSettings(): Settings {
       merged.fetchSources = [...(merged.fetchSources ?? []), d]
     }
   }
+  cache = merged
   return merged
 }
 
@@ -54,5 +60,6 @@ export function setSettings(patch: Partial<Settings>): Settings {
       if (v !== undefined) stmt.run(k, JSON.stringify(v))
     }
   })()
+  cache = null
   return getSettings()
 }

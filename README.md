@@ -76,6 +76,7 @@ npm run dist
 | `?keywords` | assistant | Agentless grep of your default mail source (Gmail) in a hidden logged-in page — no tokens. First word = source name to target another (`?outlook interview time`). |
 | `?otp` | assistant | Pulls the newest login code from mail → clipboard, and auto-types it into the visible page. |
 | `?g query` | assistant | Instant Google answer, extractive (built for speed: deadlines, dates, numbers). |
+| `> name: message` | assistant (PC + phone) | Sends a WhatsApp message from your own linked account (Settings → 🔑 Connected accounts → WhatsApp, one-time QR). Deterministic — no AI touches the text — and it reports back exactly who it went to. Jarvis can also send when you explicitly ask ("text Manav that…"). |
 | paste an image | notes | Saved into the workspace's `files/` and shown inline. |
 
 ### Places

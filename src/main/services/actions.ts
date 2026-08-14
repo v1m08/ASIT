@@ -96,6 +96,7 @@ class ActionsWatcher {
   // this it was acting blind — the single biggest reason agent flows failed.
   private batchCounter = 0
   private recentBatches: string[] = []
+  private chain: Promise<void> = Promise.resolve()
 
   start(taskId: string): void {
     if (this.taskId === taskId && this.watcher) return
@@ -123,7 +124,11 @@ class ActionsWatcher {
     this.watcher = watch(dir, (_event, filename) => {
       if (filename !== 'actions.ndjson') return
       if (this.debounceTimer) clearTimeout(this.debounceTimer)
-      this.debounceTimer = setTimeout(() => void this.processNewLines(taskId, file), 120)
+      // Serialize batches: processNewLines awaits page settles/snapshots, and
+      // a second fs event mid-run must not interleave its actions with ours.
+      this.debounceTimer = setTimeout(() => {
+        this.chain = this.chain.then(() => this.processNewLines(taskId, file)).catch(() => undefined)
+      }, 120)
     })
     // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
     // renamed; without a handler that would crash the main process.
@@ -203,19 +208,51 @@ class ActionsWatcher {
   }
 }
 
-const workspaceWatcher = new ActionsWatcher()
+// One PERSISTENT watcher per task, never stopped by navigation. Chats keep
+// running in main after the user leaves a workspace; with a single re-homing
+// watcher (the old design), a background agent's dispatched actions were
+// executed by nobody — and worse, silently skipped when the user returned
+// (start() fast-forwarded past them). Watchers are only stopped explicitly
+// (task deleted / made private) or LRU-evicted well above any real fan-out.
+const taskWatchers = new Map<string, ActionsWatcher>()
+const MAX_TASK_WATCHERS = 12
 const jarvisWatcher = new ActionsWatcher()
 
 export function watchTaskActions(taskId: string): void {
-  workspaceWatcher.start(taskId)
+  const existing = taskWatchers.get(taskId)
+  if (existing) {
+    existing.start(taskId) // no-op if already live; resumes at stored offset
+    return
+  }
+  if (taskWatchers.size >= MAX_TASK_WATCHERS) {
+    const oldest = taskWatchers.keys().next().value
+    if (oldest) {
+      taskWatchers.get(oldest)?.stop()
+      taskWatchers.delete(oldest)
+    }
+  }
+  const w = new ActionsWatcher()
+  w.start(taskId)
+  taskWatchers.set(taskId, w)
 }
 
 export function watchedTaskId_(): string | null {
-  return workspaceWatcher.current()
+  // Compat shim for lifecycle call sites: "is this task being watched".
+  return null
+}
+
+export function isWatchingTask(taskId: string): boolean {
+  return taskWatchers.has(taskId)
+}
+
+export function stopWatchingTask(taskId: string): void {
+  taskWatchers.get(taskId)?.stop()
+  taskWatchers.delete(taskId)
 }
 
 export function stopWatching(): void {
-  workspaceWatcher.stop()
+  for (const w of taskWatchers.values()) w.stop()
+  taskWatchers.clear()
 }
 
 export function watchJarvisActions(taskId: string): void {
@@ -305,6 +342,8 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
 
     case 'set_task': {
       const patch: Record<string, unknown> = {}
+      if (typeof action.title === 'string' && action.title.trim())
+        patch.title = action.title.trim().slice(0, 120)
       if (action.priority !== undefined) patch.priority = Math.min(3, Math.max(1, action.priority))
       if (action.due_date !== undefined) patch.dueDate = action.due_date
       if (action.status === 'done' || action.status === 'active') patch.status = action.status
@@ -380,6 +419,20 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
     case 'page_snapshot': {
       const n = await paneManager.snapshotAll(task.folderPath, taskId)
       return `${n} page snapshots refreshed`
+    }
+    // Jarvis-only: messaging exfiltration via prompt injection is the risk —
+    // agents that read arbitrary web-page snapshots must not be able to send
+    // messages, so the verb is refused for workspace agents. Every send also
+    // raises a visible toast naming the recipient.
+    case 'send_whatsapp': {
+      if (taskId !== jarvisTaskId()) return 'send_whatsapp is only available to the universal agent'
+      const to = String(action.target ?? action.title ?? '')
+      const msg = String(action.value ?? action.content ?? '')
+      if (!to || !msg) return 'send_whatsapp: need target (recipient) and value (message)'
+      const { sendWhatsApp } = await import('./whatsapp')
+      const res = await sendWhatsApp(to, msg)
+      push({ type: 'toast', text: res.ok ? `📨 WhatsApp ${res.detail}` : `📨 WhatsApp send failed: ${res.detail}` })
+      return res.ok ? res.detail : `FAILED: ${res.detail}`
     }
     case 'watch': {
       const { startWatch } = await import('./watchers')

@@ -1,6 +1,6 @@
 import AdmZip from 'adm-zip'
 import { basename, dirname, join, resolve, sep } from 'path'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs'
 import { getDb, newId, nowIso } from '../db'
 import type { Settings, Task, WorkspaceLayout } from '@shared/types'
 import { createTask, listTasks, refreshClaudeMd, updateTask } from './tasks'
@@ -208,10 +208,24 @@ export function importFromZip(zipPath: string): { tasks: number; questions: numb
       idMap.set(er.key, rid)
       let filePath: string | null = null
       if (er.fileName) {
-        filePath =
-          er.kind === 'pdf'
-            ? join(task.folderPath, 'pdfs', er.fileName)
-            : join(task.folderPath, er.fileName)
+        if (er.kind === 'pdf') {
+          filePath = join(task.folderPath, 'pdfs', er.fileName)
+        } else if (er.kind === 'file') {
+          // Library-style attachments live under files/ — CLAUDE.md points the
+          // AI there, so a restored backup must match (the zip stores them flat).
+          const flat = join(task.folderPath, er.fileName)
+          filePath = join(task.folderPath, 'files', er.fileName)
+          try {
+            if (existsSync(flat) && !existsSync(filePath)) {
+              mkdirSync(join(task.folderPath, 'files'), { recursive: true })
+              renameSync(flat, filePath)
+            }
+          } catch {
+            filePath = flat // move failed — keep pointing at where it really is
+          }
+        } else {
+          filePath = join(task.folderPath, er.fileName)
+        }
       }
       insertResourceStmt.run(
         rid,

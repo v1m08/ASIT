@@ -100,6 +100,9 @@ function spawnClaude(args: string[], cwd: string, prompt: string): ChildProcess 
   activeChildren.add(child)
   child.once('close', () => activeChildren.delete(child))
   // Prompt goes through stdin: no Windows arg-quoting pain, no length limits.
+  // A broken/locked exe can fail AFTER spawn returns; the buffered write then
+  // EPIPEs on a stream with no error listener — an uncaught crash of main.
+  child.stdin!.on('error', () => undefined)
   child.stdin!.write(prompt)
   child.stdin!.end()
   return child

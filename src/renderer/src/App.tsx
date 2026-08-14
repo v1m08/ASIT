@@ -17,6 +17,17 @@ export default function App(): JSX.Element {
   // Tab / Shift+Tab move between real zones; Ctrl+1…9 jump; Ctrl+K assistant.
   useFocusRing()
 
+  // ONE owner for the right-column reservation. When both panels toggled the
+  // body class themselves, switching Jarvis→assistant ran the effects in tree
+  // order and the loser REMOVED the class — panes then painted over the open
+  // panel (invariant 2).
+  const assistantOpen = useStore((s) => s.assistantOpen)
+  const jarvisOpen = useStore((s) => s.jarvisOpen)
+  useEffect(() => {
+    document.body.classList.toggle('assistant-open', assistantOpen || jarvisOpen)
+    return () => document.body.classList.remove('assistant-open')
+  }, [assistantOpen, jarvisOpen])
+
   useEffect(() => {
     loadTasks()
     loadSettings()

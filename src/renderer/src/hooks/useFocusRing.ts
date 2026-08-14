@@ -137,10 +137,12 @@ function toggleJarvis(): void {
 function focusSelector(selector: string): void {
   const el = document.querySelector<HTMLElement>(selector)
   if (!el) return
-  const zone = el.closest<HTMLElement>('[data-focus-zone]')
-  if (!zone) returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
+  // Always record where the jump came from — Escape hands focus back there.
+  // (Recording only for zoneless targets left a STALE returnZone behind for
+  // the address bar / chat box, so Escape jumped somewhere old.)
+  returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
   currentPaneId = null
-  mark(zone)
+  mark(el.closest<HTMLElement>('[data-focus-zone]'))
   el.focus()
   if (el instanceof HTMLInputElement) el.select()
 }

@@ -18,6 +18,14 @@ export function getDb(): Database.Database {
 
 export function closeDb(): void {
   if (db) {
+    try {
+      // SQLite's recommended shutdown hygiene: refresh planner stats and fold
+      // the WAL back into the main file so the db starts compact next launch.
+      db.pragma('optimize')
+      db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch {
+      // never let cleanup block shutdown
+    }
     db.close()
     db = null
   }

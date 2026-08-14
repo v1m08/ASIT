@@ -28,10 +28,7 @@ export default function JarvisPanel(): JSX.Element | null {
   const pinnedRef = useRef(true)
   const expand = useSnippets()
 
-  useEffect(() => {
-    document.body.classList.toggle('assistant-open', open)
-    return () => document.body.classList.remove('assistant-open')
-  }, [open])
+  // Right-column reservation is owned by App.tsx (shared with the assistant).
 
   useEffect(() => {
     const offStream = window.asit.on(IPC.JARVIS_STREAM, (...args: unknown[]) => {

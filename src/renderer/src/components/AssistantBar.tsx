@@ -30,13 +30,8 @@ export default function AssistantBar(): JSX.Element | null {
   const assistantRecall = useStore((s) => s.assistantRecall)
   const setAssistantRecall = useStore((s) => s.setAssistantRecall)
 
-  // The panel docks right and the app RESERVES space for it (body class →
-  // content margin → pane bounds shrink), so browser tabs stay visible and
-  // usable while the assistant is open. No overlay-hiding.
-  useEffect(() => {
-    document.body.classList.toggle('assistant-open', open)
-    return () => document.body.classList.remove('assistant-open')
-  }, [open])
+  // The app reserves the right column for this panel (body class set in
+  // App.tsx — single owner, shared with Jarvis).
 
   // A past chat clicked in the sidebar opens here.
   useEffect(() => {
@@ -87,7 +82,11 @@ export default function AssistantBar(): JSX.Element | null {
       setError((args[0] as { message: string }).message)
     })
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setOpen(false)
+      // Only when the Escape happened INSIDE this panel — a window-wide close
+      // stole Escapes meant for the notes "/" popup and chat mention popup.
+      if (e.key !== 'Escape') return
+      const t = e.target instanceof HTMLElement ? e.target : null
+      if (t?.closest('.assistant-panel:not(.jarvis-panel)')) setOpen(false)
     }
     window.addEventListener('keydown', onKey)
     return () => {
@@ -112,6 +111,36 @@ export default function AssistantBar(): JSX.Element | null {
     setOpen(true)
     setBusy(true)
     pinnedRef.current = true
+
+    // ">name: message" = send a WhatsApp message from your linked account.
+    // Deterministic (no model): exactly what you typed, to whom it matched,
+    // reported back by name.
+    if (prompt.startsWith('>')) {
+      const m = prompt.match(/^>\s*(?:wa|whatsapp)?\s*([^:]{1,60}):\s*(.+)$/is)
+      setExchanges((prev) => [...prev.slice(-6), { prompt, reply: '', done: false }])
+      if (!m) {
+        setExchanges((prev) => {
+          const last = prev[prev.length - 1]
+          return [...prev.slice(0, -1), { ...last, reply: 'Format: `> name: message` (WhatsApp)', done: true }]
+        })
+        setBusy(false)
+        return
+      }
+      setStatus('📨 Sending on WhatsApp…')
+      try {
+        const res = await window.asit.quickfetch.sendWhatsApp(m[1].trim(), m[2].trim())
+        setExchanges((prev) => {
+          const last = prev[prev.length - 1]
+          return [...prev.slice(0, -1), { ...last, reply: res.ok ? `✅ ${res.detail}` : `⚠️ ${res.detail}`, done: true }]
+        })
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Send failed.')
+      } finally {
+        setBusy(false)
+        setStatus(null)
+      }
+      return
+    }
 
     // "?query" = Quick Fetch: agentless grep of your logged-in sites via a
     // hidden background page. Instant, no tokens. "?otp" auto-grabs a code.

@@ -123,6 +123,15 @@ export default function Home(): JSX.Element {
   const [showReview, setShowReview] = useState(false)
   const [dueCount, setDueCount] = useState(0)
   const [menuTaskId, setMenuTaskId] = useState<string | null>(null)
+
+  // The click-away backdrop is DOM, and pages paint above DOM — a click into
+  // the browser area never reaches it. Close the ⋯ menu when a pane takes
+  // focus (that's what "clicked elsewhere" means here).
+  useEffect(() => {
+    return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      if ((args[0] as { type: string }).type === 'pane-focused') setMenuTaskId(null)
+    })
+  }, [])
   const [questionsTask, setQuestionsTask] = useState<Task | null>(null)
   const [title, setTitle] = useState('')
   const [priority, setPriority] = useState(2)
@@ -329,8 +338,20 @@ export default function Home(): JSX.Element {
             </button>
             {!task.aiDisabled && (
               <button
+                title={
+                  task.coding
+                    ? undefined
+                    : 'Coding chats can run terminal commands with YOUR full user permissions — treat this workspace as fully trusted'
+                }
                 onClick={async () => {
                   setMenuTaskId(null)
+                  if (
+                    !task.coding &&
+                    !window.confirm(
+                      'Coding mode gives this workspace’s chat a real terminal (Bash) with your full user permissions — it can touch files outside this workspace, including private ones. Only use it for work you’d run in a terminal yourself.\n\nEnable coding mode?'
+                    )
+                  )
+                    return
                   await window.asit.tasks.setCoding(task.id, !task.coding)
                   await loadTasks()
                 }}

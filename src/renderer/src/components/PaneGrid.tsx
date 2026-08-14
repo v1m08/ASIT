@@ -25,6 +25,7 @@ interface TabInfo {
 }
 
 function clampSplit(v: number): number {
+  if (!Number.isFinite(v)) return 0.55 // NaN from corrupted layout_json collapses both slots
   return Math.min(0.8, Math.max(0.2, v))
 }
 
