@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { CreateTaskInput, Settings, UpdateTaskInput } from '@shared/types'
 import * as tasks from './services/tasks'
@@ -24,10 +24,41 @@ import * as whatsapp from './services/whatsapp'
 import * as voice from './services/voice'
 import { isWatchingTask, runFlow, stopWatchingTask, watchTaskActions } from './services/actions'
 import { stopWatchesForTask } from './services/watchers'
-import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  watch,
+  writeFileSync,
+  type FSWatcher
+} from 'fs'
 import { dirname, join, resolve, sep } from 'path'
 
 export function registerIpc(getWindow: () => BrowserWindow | null): void {
+  // A rejected handler used to vanish: the renderer's loader had no catch, so
+  // the panel just rendered empty and the user read that as lost data. Leave a
+  // trace on disk for every failure so the next one is diagnosable.
+  type Handler = (event: Electron.IpcMainInvokeEvent, ...args: any[]) => any
+  const rawHandle = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = ((channel: string, listener: Handler) =>
+    rawHandle(channel, async (event, ...args: any[]) => {
+      try {
+        return await listener(event, ...args)
+      } catch (err) {
+        const line = `[${new Date().toISOString()}] ipc ${channel} failed: ${
+          err instanceof Error ? (err.stack ?? err.message) : String(err)
+        }\n`
+        console.error(line)
+        try {
+          appendFileSync(join(app.getPath('userData'), 'error.log'), line)
+        } catch {
+          // logging must never be the thing that breaks a handler
+        }
+        throw err
+      }
+    })) as typeof ipcMain.handle
+
   // --- tasks ---
   ipcMain.handle(IPC.TASKS_LIST, () => tasks.listTasks())
   ipcMain.handle(IPC.TASKS_GET, (_e, id: string) => tasks.getTask(id))

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
+import { reliably } from '../lib/reliably'
 
 interface Todo {
   id: string
@@ -36,7 +37,8 @@ export default function TodoList(): JSX.Element {
   const openTaskAndResource = useStore((s) => s.openTaskAndResource)
 
   const load = useCallback(async (): Promise<void> => {
-    setTodos(await window.asit.todos.list(false))
+    const list = await reliably('to-dos', () => window.asit.todos.list(false))
+    if (list) setTodos(list)
   }, [])
 
   useEffect(() => {

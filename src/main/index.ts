@@ -196,10 +196,22 @@ app.whenReady().then(() => {
     console.error('jarvis init failed:', err)
   }
   if (getSettings().companionEnabled) startCompanion(() => mainWindow)
-  relocateLegacyTrash() // old .trash lived inside the assistant-readable tree
-  writeTasksIndex() // keep the global-assistant index fresh from startup
-  refreshAllTaskContexts() // guidance updates reach existing tasks immediately
+
   createWindow()
+
+  // Housekeeping walks EVERY task folder, and those live in OneDrive — a
+  // cold boot can leave it blocking on cloud placeholders for a long time.
+  // Run it after the window exists so a slow (or failing) filesystem can
+  // never delay or poison the first data load, and never take startup down.
+  setImmediate(() => {
+    try {
+      relocateLegacyTrash() // old .trash lived inside the assistant-readable tree
+      writeTasksIndex() // keep the global-assistant index fresh from startup
+      refreshAllTaskContexts() // guidance updates reach existing tasks immediately
+    } catch (err) {
+      console.error('startup housekeeping failed:', err)
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

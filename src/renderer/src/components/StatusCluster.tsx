@@ -17,6 +17,8 @@ export default function StatusCluster(): JSX.Element {
   const activity = useStore((s) => s.activity)
   const jobStatus = useStore((s) => s.jobStatus)
   const notice = useStore((s) => s.notice)
+  const loadError = useStore((s) => s.loadError)
+  const retryLoad = useStore((s) => s.retryLoad)
   const assistantOpen = useStore((s) => s.assistantOpen)
   const setAssistantOpen = useStore((s) => s.setAssistantOpen)
   const jarvisOpen = useStore((s) => s.jarvisOpen)
@@ -33,6 +35,15 @@ export default function StatusCluster(): JSX.Element {
 
   return (
     <div className="status-cluster">
+      {loadError && (
+        <button
+          className="status-load-error"
+          title={`${loadError}. Your data is still on disk — this is a load failure, not data loss. Click to retry.`}
+          onClick={() => void retryLoad()}
+        >
+          ⚠ {loadError} — retry
+        </button>
+      )}
       {notice && (
         <span className={`status-notice status-notice-${notice.kind}`} title={notice.text}>
           {notice.text}

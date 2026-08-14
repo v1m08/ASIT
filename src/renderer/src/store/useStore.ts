@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Resource, Settings, Task } from '@shared/types'
+import { reliably, setLoadFailureSink } from '../lib/reliably'
 
 export interface ActivityItem {
   id: string
@@ -40,6 +41,12 @@ interface AsitState {
   pendingResourceId: string | null
   consumePendingResource: () => string | null
   openTaskAndResource: (taskId: string, resourceId: string) => Promise<void>
+
+  // Set when a startup load exhausted its retries. Rendering an empty panel in
+  // that case would claim the user's data is gone, so the header says so
+  // instead and offers a retry.
+  loadError: string | null
+  retryLoad: () => Promise<void>
 
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
@@ -94,14 +101,22 @@ export const useStore = create<AsitState>((set, get) => ({
     }
   },
 
+  loadError: null,
+  retryLoad: async () => {
+    set({ loadError: null })
+    await Promise.all([get().loadTasks(), get().loadSettings()])
+  },
+
+  // Both loaders leave existing state alone when they fail — never overwrite
+  // real data (or an unknown state) with an empty one.
   loadTasks: async () => {
-    const tasks = await window.asit.tasks.list()
-    set({ tasks })
+    const tasks = await reliably('workspaces', () => window.asit.tasks.list())
+    if (tasks) set({ tasks })
   },
 
   loadSettings: async () => {
-    const settings = await window.asit.settings.get()
-    set({ settings })
+    const settings = await reliably('settings', () => window.asit.settings.get())
+    if (settings) set({ settings })
   },
 
   openTask: async (id: string) => {
@@ -124,3 +139,13 @@ export const useStore = create<AsitState>((set, get) => ({
 
   setActiveResources: (resources) => set({ activeResources: resources })
 }))
+
+// A load that ran out of retries becomes visible chrome in the header, not an
+// empty list that reads as "your data is gone".
+setLoadFailureSink(
+  (label, detail) =>
+    useStore.setState({ loadError: `Couldn't load your ${label} — ${detail.slice(0, 80)}` }),
+  () => {
+    if (useStore.getState().loadError) useStore.setState({ loadError: null })
+  }
+)

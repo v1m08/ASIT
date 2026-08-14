@@ -1690,6 +1690,20 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.4;
 }
 
+.status-load-error {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field-hint {
   color: var(--text-dim);
   font-size: 0.72rem;

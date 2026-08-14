@@ -13,6 +13,7 @@ import NotesEditor from '../components/NotesEditor'
 import ChatPanel from '../components/ChatPanel'
 import { useOverlay } from '../hooks/useOverlay'
 import { fmtCost } from '../utils/fmt'
+import { reliablyInto } from '../lib/reliably'
 
 const PRIORITY_LABEL: Record<number, string> = { 1: 'High', 2: 'Normal', 3: 'Low' }
 
@@ -106,7 +107,7 @@ export default function Home(): JSX.Element {
   const [showTodos, setShowTodos] = useState(true)
 
   useEffect(() => {
-    window.asit.assistant.history(15).then(setAssistantHistory)
+    reliablyInto('quick chats', () => window.asit.assistant.history(15), setAssistantHistory)
   }, [showQuickChats])
 
   const [sideCollapsed, setSideCollapsed] = useState(
@@ -162,9 +163,9 @@ export default function Home(): JSX.Element {
   }, [loadScratch])
 
   useEffect(() => {
-    window.asit.tasks.stats().then(setStats)
-    window.asit.usage.summary().then(setAiUsage)
-    window.asit.questions.due(50).then((due) => setDueCount(due.length))
+    reliablyInto('stats', () => window.asit.tasks.stats(), setStats)
+    reliablyInto('usage', () => window.asit.usage.summary(), setAiUsage)
+    reliablyInto('review queue', () => window.asit.questions.due(50), (due) => setDueCount(due.length))
   }, [tasks])
 
   const refreshScratchResources = useCallback(async (): Promise<void> => {
