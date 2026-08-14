@@ -279,6 +279,23 @@ class PaneManager {
     this.releaseNavKeys()
   }
 
+  // The user's open WhatsApp Web pane, if any. USER-COMMAND path only (the
+  // "> name: message" sender): WhatsApp allows one active tab per session, so
+  // a hidden window would fight the visible pane for the session. Scoped hard
+  // to web.whatsapp.com — this is not a general AI pane accessor.
+  whatsappWebContents(): Electron.WebContents | null {
+    for (const pane of this.panes.values()) {
+      try {
+        if (pane.view.webContents.getURL().startsWith('https://web.whatsapp.com')) {
+          return pane.view.webContents
+        }
+      } catch {
+        // view mid-destroy
+      }
+    }
+    return null
+  }
+
   // Autotype into whichever pane is currently visible (quick-fetch OTP flow).
   async typeToFirstVisible(text: string): Promise<string> {
     const pane = [...this.panes.values()].find(
