@@ -893,6 +893,38 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   margin-right: 464px;
 }
 
+.voice-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  min-width: 30px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 0.8rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.voice-btn:hover {
+  border-color: var(--accent-dim);
+  background: var(--bg-hover);
+}
+
+.voice-listening {
+  border-color: var(--danger);
+  animation: voice-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-speaking {
+  border-color: var(--accent);
+}
+
+@keyframes voice-pulse {
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--danger) 25%, transparent);
+  }
+}
+
 .jarvis-steps {
   margin-top: 8px;
   border-left: 2px solid var(--border);

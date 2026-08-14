@@ -196,6 +196,13 @@ declare global {
           }[]
         >
       }
+      voice: {
+        status: () => Promise<{ modelsReady: boolean; listening: boolean }>
+        download: () => Promise<void>
+        start: () => Promise<void>
+        stop: () => Promise<void>
+        chunk: (buf: ArrayBuffer) => void
+      }
       jarvis: {
         ask: (prompt: string) => Promise<void>
         cancel: () => Promise<void>

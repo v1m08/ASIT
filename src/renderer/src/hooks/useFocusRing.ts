@@ -176,6 +176,9 @@ export function installFocusRing(): () => void {
     } else if (k === 'j') {
       e.preventDefault()
       toggleJarvis()
+    } else if (e.code === 'Space') {
+      e.preventDefault()
+      useStore.getState().bumpVoice()
     } else if (k === 'l') {
       e.preventDefault()
       focusSelector('.browser-address')
@@ -207,6 +210,7 @@ export function installFocusRing(): () => void {
     else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
     else if (p.type === 'focus-assistant') toggleAssistant()
     else if (p.type === 'focus-jarvis') toggleJarvis()
+    else if (p.type === 'voice-toggle') useStore.getState().bumpVoice()
     else if (p.type === 'focus-address') focusSelector('.browser-address')
     else if (p.type === 'focus-chat') focusSelector('.chat-input-box textarea')
   })

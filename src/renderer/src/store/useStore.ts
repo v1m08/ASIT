@@ -26,6 +26,10 @@ interface AsitState {
   setAssistantOpen: (open: boolean) => void
   jarvisOpen: boolean
   setJarvisOpen: (open: boolean) => void
+  // Ctrl+Space (from anywhere, including inside a page) bumps this; the
+  // Jarvis panel reacts by toggling the mic.
+  voiceTick: number
+  bumpVoice: () => void
   // Background status shown in the header cluster (one listener, many headers).
   activity: ActivityItem[]
   setActivity: (items: ActivityItem[]) => void
@@ -59,6 +63,8 @@ export const useStore = create<AsitState>((set, get) => ({
   setAssistantOpen: (open) => set({ assistantOpen: open, ...(open ? { jarvisOpen: false } : {}) }),
   jarvisOpen: false,
   setJarvisOpen: (open) => set({ jarvisOpen: open, ...(open ? { assistantOpen: false } : {}) }),
+  voiceTick: 0,
+  bumpVoice: () => set((s) => ({ voiceTick: s.voiceTick + 1, jarvisOpen: true, assistantOpen: false })),
   activity: [],
   setActivity: (items) => set({ activity: items }),
   jobStatus: null,

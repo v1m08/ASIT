@@ -30,6 +30,118 @@ export default function JarvisPanel(): JSX.Element | null {
 
   // Right-column reservation is owned by App.tsx (shared with the assistant).
 
+  // ---- Voice: mic → main (VAD + local STT) → Jarvis → spoken reply ----
+  const [voiceState, setVoiceState] = useState<'off' | 'listening' | 'thinking' | 'speaking' | 'download'>('off')
+  const [downloadPct, setDownloadPct] = useState<number | null>(null)
+  const voiceTick = useStore((s) => s.voiceTick)
+  const captureRef = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null)
+  const voiceStateRef = useRef(voiceState)
+  voiceStateRef.current = voiceState
+
+  const stopCapture = (): void => {
+    const c = captureRef.current
+    captureRef.current = null
+    if (c) {
+      c.stream.getTracks().forEach((t) => t.stop())
+      void c.ctx.close()
+    }
+  }
+
+  const startCapture = async (): Promise<void> => {
+    if (captureRef.current) return
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+    })
+    const ctx = new AudioContext({ sampleRate: 16000 })
+    const source = ctx.createMediaStreamSource(stream)
+    const proc = ctx.createScriptProcessor(2048, 1, 1)
+    proc.onaudioprocess = (e) => {
+      const data = e.inputBuffer.getChannelData(0)
+      window.asit.voice.chunk(data.slice().buffer)
+    }
+    source.connect(proc)
+    proc.connect(ctx.destination) // required for onaudioprocess to fire
+    captureRef.current = { ctx, stream }
+  }
+
+  const toggleVoice = async (): Promise<void> => {
+    const s = voiceStateRef.current
+    if (s === 'listening') {
+      await window.asit.voice.stop()
+      stopCapture()
+      setVoiceState('off')
+      return
+    }
+    if (s === 'download') return
+    const status = await window.asit.voice.status()
+    if (!status.modelsReady) {
+      setVoiceState('download')
+      setDownloadPct(0)
+      try {
+        await window.asit.voice.download()
+      } catch (err) {
+        setError(`Voice model download failed: ${err instanceof Error ? err.message : String(err)}`)
+        setVoiceState('off')
+        setDownloadPct(null)
+        return
+      }
+      setDownloadPct(null)
+    }
+    try {
+      await window.asit.voice.start() // also silences any reply mid-speech
+      await startCapture()
+      setVoiceState('listening')
+    } catch (err) {
+      setError(`Mic failed: ${err instanceof Error ? err.message : String(err)}`)
+      setVoiceState('off')
+    }
+  }
+  const toggleVoiceRef = useRef(toggleVoice)
+  toggleVoiceRef.current = toggleVoice
+
+  // Ctrl+Space from anywhere.
+  useEffect(() => {
+    if (voiceTick > 0) void toggleVoiceRef.current()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceTick])
+
+  useEffect(() => {
+    const offState = window.asit.on(IPC.VOICE_STATE, (...args: unknown[]) => {
+      const p = args[0] as { state: string; detail?: string }
+      if (p.state === 'idle') setVoiceState('off')
+      else setVoiceState(p.state as 'listening' | 'thinking' | 'speaking')
+      if (p.state !== 'listening') stopCapture() // utterance captured — mic off
+      if (p.state === 'thinking' && p.detail) setStatus(p.detail)
+    })
+    const offTranscript = window.asit.on(IPC.VOICE_TRANSCRIPT, (...args: unknown[]) => {
+      const p = args[0] as { text: string }
+      setBusy(true)
+      setError(null)
+      setExchanges((prev) => [...prev.slice(-8), { prompt: `🎙 ${p.text}`, reply: '', done: false }])
+    })
+    const offReply = window.asit.on(IPC.VOICE_REPLY, (...args: unknown[]) => {
+      const p = args[0] as { text: string }
+      setBusy(false)
+      setStatus(null)
+      setSteps([])
+      setExchanges((prev) => {
+        const last = prev[prev.length - 1]
+        if (!last || last.done) return prev
+        return [...prev.slice(0, -1), { ...last, reply: p.text, done: true }]
+      })
+    })
+    const offProgress = window.asit.on(IPC.VOICE_DOWNLOAD_PROGRESS, (...args: unknown[]) => {
+      setDownloadPct((args[0] as { pct: number }).pct)
+    })
+    return () => {
+      offState()
+      offTranscript()
+      offReply()
+      offProgress()
+      stopCapture()
+    }
+  }, [])
+
   useEffect(() => {
     const offStream = window.asit.on(IPC.JARVIS_STREAM, (...args: unknown[]) => {
       const p = args[0] as { delta: string }
@@ -109,6 +221,29 @@ export default function JarvisPanel(): JSX.Element | null {
     <div className="assistant-panel jarvis-panel">
       <div className="assistant-panel-head">
         <span className="assistant-title">🤖 Jarvis</span>
+        <button
+          className={`voice-btn voice-${voiceState}`}
+          title={
+            voiceState === 'listening'
+              ? 'Listening — pause to send, click to cancel (Ctrl+Space)'
+              : voiceState === 'download'
+                ? `Downloading voice models… ${downloadPct ?? 0}%`
+                : voiceState === 'speaking'
+                  ? 'Speaking — click to interrupt and talk'
+                  : 'Talk to Jarvis (Ctrl+Space) — first use downloads ~130MB of local speech models'
+          }
+          onClick={() => void toggleVoice()}
+        >
+          {voiceState === 'listening'
+            ? '🔴'
+            : voiceState === 'thinking'
+              ? '💭'
+              : voiceState === 'speaking'
+                ? '🔊'
+                : voiceState === 'download'
+                  ? `${downloadPct ?? 0}%`
+                  : '🎙'}
+        </button>
         {lastCost !== null && <span className="assistant-cost">{fmtCost(lastCost)}</span>}
         <button
           className="btn btn-ghost"

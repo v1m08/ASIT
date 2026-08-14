@@ -76,6 +76,13 @@ const api = {
   activity: {
     list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST)
   },
+  voice: {
+    status: () => ipcRenderer.invoke(IPC.VOICE_STATUS),
+    download: () => ipcRenderer.invoke(IPC.VOICE_DOWNLOAD),
+    start: () => ipcRenderer.invoke(IPC.VOICE_START),
+    stop: () => ipcRenderer.invoke(IPC.VOICE_STOP),
+    chunk: (buf: ArrayBuffer) => ipcRenderer.send(IPC.VOICE_CHUNK, buf)
+  },
   jarvis: {
     ask: (prompt: string) => ipcRenderer.invoke(IPC.JARVIS_ASK, prompt),
     cancel: () => ipcRenderer.invoke(IPC.JARVIS_CANCEL),

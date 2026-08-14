@@ -139,6 +139,17 @@ export const IPC = {
   JARVIS_DONE: 'jarvis:done', // push M→R
   JARVIS_ERROR: 'jarvis:error', // push M→R
 
+  // voice (Jarvis's ears + mouth)
+  VOICE_STATUS: 'voice:status',
+  VOICE_DOWNLOAD: 'voice:download',
+  VOICE_START: 'voice:start',
+  VOICE_STOP: 'voice:stop',
+  VOICE_CHUNK: 'voice:chunk', // renderer → main, fire-and-forget PCM
+  VOICE_STATE: 'voice:state', // push M→R: idle|listening|thinking|speaking
+  VOICE_TRANSCRIPT: 'voice:transcript', // push M→R
+  VOICE_REPLY: 'voice:reply', // push M→R
+  VOICE_DOWNLOAD_PROGRESS: 'voice:download-progress', // push M→R
+
   // phone companion
   COMPANION_STATUS: 'companion:status',
   COMPANION_SET_ENABLED: 'companion:set-enabled',

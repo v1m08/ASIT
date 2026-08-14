@@ -13,6 +13,7 @@ import { initActivity } from './services/activity'
 import { initWatchers } from './services/watchers'
 import { initTodos } from './services/todos'
 import { startCompanion, stopCompanion } from './services/companion'
+import { initVoice, shutdownVoice } from './services/voice'
 import { getSettings } from './services/settings'
 import {
   getOrCreateJarvis,
@@ -126,6 +127,10 @@ app.whenReady().then(() => {
     runJarvisSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_VOICE === '1') {
+    runVoiceSmokeTest()
+    return
+  }
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -135,6 +140,7 @@ app.whenReady().then(() => {
   initActivity(() => mainWindow)
   initWatchers(() => mainWindow)
   initTodos(() => mainWindow)
+  initVoice(() => mainWindow)
   // Jarvis's action file is watched for the app's whole lifetime — the
   // universal agent can act regardless of which screen is open.
   try {
@@ -161,6 +167,7 @@ app.on('window-all-closed', async () => {
   globalShortcut.unregisterAll() // navigation keys grabbed while a page had focus
   const { closeWhatsApp } = await import('./services/whatsapp')
   closeWhatsApp()
+  shutdownVoice()
   stopCompanion()
   closeDb()
   app.quit()
@@ -273,6 +280,77 @@ async function runTransferSmokeTest(): Promise<void> {
   } catch (err) {
     settingsSvc.setSettings({ escapePhrase: originalPhrase })
     console.error('[transfer-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless voice check: ASIT_SMOKE_VOICE=1 electron out/main/index.js
+// Closed loop with no microphone: Windows TTS renders a known phrase to a
+// 16kHz WAV, and the local sherpa/Moonshine pipeline must transcribe it back.
+// Downloads the models on first run (~130MB, cached in userData).
+async function runVoiceSmokeTest(): Promise<void> {
+  const voiceSvc = await import('./services/voice')
+  const { execFile } = await import('child_process')
+  const { readFileSync } = await import('fs')
+  const { join } = await import('path')
+  const { tmpdir } = await import('os')
+
+  const fail = (msg: string): never => {
+    console.error('[voice-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    if (!voiceSvc.voiceModelsReady()) {
+      console.log('[voice-smoke] downloading speech models (one-time)…')
+      await voiceSvc.downloadVoiceModels((pct, file) =>
+        console.log(`[voice-smoke]   ${pct}% ${file}`)
+      )
+    }
+    console.log('[voice-smoke] models present')
+
+    const wav = join(tmpdir(), 'asit-voice-smoke.wav')
+    const phrase = 'open the biology notes and start a timer'
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          `Add-Type -AssemblyName System.Speech
+$fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+$sp = New-Object System.Speech.Synthesis.SpeechSynthesizer
+$sp.SetOutputToWaveFile('${wav.replace(/\\/g, '\\\\')}', $fmt)
+$sp.Speak('${phrase}')
+$sp.Dispose()`
+        ],
+        { timeout: 30000 },
+        (err) => (err ? reject(err) : resolve())
+      )
+    })
+    console.log('[voice-smoke] test WAV synthesized via Windows TTS')
+
+    // WAV → Float32: 44-byte canonical header, 16-bit little-endian PCM.
+    const buf = readFileSync(wav)
+    const pcm = new Float32Array((buf.length - 44) / 2)
+    for (let i = 0; i < pcm.length; i++) pcm[i] = buf.readInt16LE(44 + i * 2) / 32768
+    if (pcm.length < 16000) fail('synthesized wav suspiciously short')
+
+    const t0 = Date.now()
+    const text = await voiceSvc.transcribeSamples(pcm)
+    const ms = Date.now() - t0
+    console.log(`[voice-smoke] transcribed in ${ms}ms: "${text}"`)
+    const lower = text.toLowerCase()
+    for (const word of ['biology', 'notes', 'timer']) {
+      if (!lower.includes(word)) fail(`transcript missing "${word}"`)
+    }
+    if (ms > 8000) fail(`decode too slow: ${ms}ms`)
+
+    console.log('[voice-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[voice-smoke] FAIL:', err)
     app.exit(1)
   }
 }

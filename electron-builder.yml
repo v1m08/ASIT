@@ -14,6 +14,10 @@ files:
   - '!node_modules/pdf-parse/lib/pdf.js/v2.0.550/**'
 asarUnpack:
   - node_modules/better-sqlite3/**
+  # Native speech stack: the .node addon + its DLLs must live on the real
+  # filesystem for the loader to find them.
+  - node_modules/sherpa-onnx-node/**
+  - node_modules/sherpa-onnx-win-x64/**
 win:
   target:
     - nsis

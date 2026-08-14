@@ -21,6 +21,7 @@ import * as todos from './services/todos'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
 import * as whatsapp from './services/whatsapp'
+import * as voice from './services/voice'
 import { isWatchingTask, runFlow, stopWatchingTask, watchTaskActions } from './services/actions'
 import { stopWatchesForTask } from './services/watchers'
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'fs'
@@ -310,6 +311,23 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(IPC.JARVIS_ASK, (e, prompt: string) => jarvis.askJarvisIpc(prompt, e.sender))
   ipcMain.handle(IPC.JARVIS_CANCEL, () => jarvis.cancelJarvis())
   ipcMain.handle(IPC.JARVIS_NEW, () => jarvis.resetJarvisSession())
+
+  // --- voice ---
+  ipcMain.handle(IPC.VOICE_STATUS, () => ({
+    modelsReady: voice.voiceModelsReady(),
+    listening: voice.voiceListening()
+  }))
+  ipcMain.handle(IPC.VOICE_DOWNLOAD, (e) =>
+    voice.downloadVoiceModels((pct, file) => {
+      if (!e.sender.isDestroyed()) e.sender.send(IPC.VOICE_DOWNLOAD_PROGRESS, { pct, file })
+    })
+  )
+  ipcMain.handle(IPC.VOICE_START, () => voice.voiceStart())
+  ipcMain.handle(IPC.VOICE_STOP, () => voice.voiceStop())
+  // High-frequency PCM chunks: plain send, zero round-trips.
+  ipcMain.on(IPC.VOICE_CHUNK, (_e, buf: ArrayBuffer) => {
+    voice.acceptAudioChunk(new Float32Array(buf))
+  })
 
   // --- phone companion ---
   ipcMain.handle(IPC.COMPANION_STATUS, () => companion.companionStatus())
