@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState, Resource, Task, WorkspaceLayout } from '@shared/types'
 import NotesEditor from './NotesEditor'
+import TerminalPane from './TerminalPane'
 import ReviewPane from './ReviewPane'
+import { useStore } from '../store/useStore'
+import { useOverlay } from '../hooks/useOverlay'
 
 export const BUILTIN_NOTES = 'builtin-notes'
 export const BUILTIN_SEARCH = 'builtin-search'
 export const BUILTIN_REVIEW = 'builtin-review'
+export const BUILTIN_TERMINAL = 'builtin-terminal'
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   slots: [[], []],
@@ -19,7 +23,7 @@ const DEFAULT_LAYOUT: WorkspaceLayout = {
 interface TabInfo {
   id: string
   title: string
-  kind: 'url' | 'pdf' | 'note' | 'file' | 'builtin-note' | 'builtin-review'
+  kind: 'url' | 'pdf' | 'note' | 'file' | 'builtin-note' | 'builtin-review' | 'builtin-terminal'
   viewBacked: boolean
   resource: Resource | null
 }
@@ -38,6 +42,9 @@ export function tabInfoFor(id: string, task: Task, resources: Resource[]): TabIn
   }
   if (id === BUILTIN_REVIEW) {
     return { id, title: 'Review', kind: 'builtin-review', viewBacked: false, resource: null }
+  }
+  if (id === BUILTIN_TERMINAL) {
+    return { id, title: 'Terminal', kind: 'builtin-terminal', viewBacked: false, resource: null }
   }
   const r = resources.find((res) => res.id === id)
   if (!r) return null
@@ -65,12 +72,15 @@ export default function PaneGrid({
   task,
   resources,
   onApi,
-  onPin
+  onPin,
+  onAttachLibrary
 }: {
   task: Task
   resources: Resource[]
   onApi?: (api: PaneGridApi) => void
   onPin?: (title: string, url: string) => void
+  // Dropping a global library file attaches a copy to this workspace first.
+  onAttachLibrary?: (name: string) => Promise<Resource | null>
 }): JSX.Element {
   const [layout, setLayout] = useState<WorkspaceLayout>(() => {
     if (task.layoutJson) {
@@ -91,6 +101,12 @@ export default function PaneGrid({
   })
   const [navStates, setNavStates] = useState<Record<string, PaneNavState>>({})
   const [dragging, setDragging] = useState(false)
+  const dragItem = useStore((st) => st.dragItem)
+  const setDragItem = useStore((st) => st.setDragItem)
+  const [dropTarget, setDropTarget] = useState<0 | 1 | null>(null)
+  // A page painted over the slot would eat every drag event, so the views go
+  // away for the duration of the drag — same rule as any overlay (invariant 2).
+  useOverlay(dragItem !== null)
   const gridRef = useRef<HTMLDivElement>(null)
   const slotContentRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)]
   const openedPanes = useRef(new Set<string>())
@@ -258,6 +274,48 @@ export default function PaneGrid({
     [setLayout]
   )
 
+  // Drop target version of openResource: put the tab in a CHOSEN slot, moving
+  // it out of the other one so dragging between slots works as expected.
+  const openResourceInSlot = useCallback(
+    (id: string, slotIndex: 0 | 1): void => {
+      setLayout((prev) => {
+        const slots: [string[], string[]] = [
+          prev.slots[0].filter((x) => x !== id),
+          prev.slots[1].filter((x) => x !== id)
+        ]
+        slots[slotIndex].push(id)
+        const active: [string | null, string | null] = [...prev.active]
+        active[slotIndex] = id
+        // The slot it came from may have lost its active tab.
+        const other = slotIndex === 0 ? 1 : 0
+        if (!active[other] || !slots[other].includes(active[other]!)) {
+          active[other] = slots[other][slots[other].length - 1] ?? null
+        }
+        const collapsed: [boolean, boolean] = [...(prev.collapsed ?? [false, false])]
+        collapsed[slotIndex] = false
+        return { ...prev, slots, active, collapsed }
+      })
+    },
+    [setLayout]
+  )
+
+  const handleDrop = useCallback(
+    async (slotIndex: 0 | 1): Promise<void> => {
+      const item = useStore.getState().dragItem
+      setDragItem(null)
+      setDropTarget(null)
+      if (!item) return
+      if (item.kind === 'resource') {
+        openResourceInSlot(item.value, slotIndex)
+        return
+      }
+      // Global library file: attach a copy to this workspace, then show it.
+      const resource = await onAttachLibrary?.(item.value)
+      if (resource) openResourceInSlot(resource.id, slotIndex)
+    },
+    [onAttachLibrary, openResourceInSlot, setDragItem]
+  )
+
   const openSearch = useCallback(
     (query: string): void => {
       const url = query.trim()
@@ -398,6 +456,8 @@ export default function PaneGrid({
                     ? '🔍'
                     : tab.kind === 'builtin-review'
                       ? '🧠'
+                      : tab.kind === 'builtin-terminal'
+                      ? '▶_'
                       : tab.kind === 'url'
                       ? '🌐'
                       : tab.kind === 'pdf'
@@ -493,7 +553,11 @@ export default function PaneGrid({
         )}
         <div className="slot-content" ref={slotContentRefs[slotIndex]} data-focus-body>
           {activeTab?.kind === 'builtin-review' && <ReviewPane key={task.id} task={task} />}
-          {activeTab && !activeTab.viewBacked && activeTab.kind !== 'builtin-review' && (
+          {activeTab?.kind === 'builtin-terminal' && <TerminalPane key={task.id} task={task} />}
+          {activeTab &&
+            !activeTab.viewBacked &&
+            activeTab.kind !== 'builtin-review' &&
+            activeTab.kind !== 'builtin-terminal' && (
             <NotesEditor
               key={activeTab.id}
               filePath={
@@ -508,6 +572,42 @@ export default function PaneGrid({
           {!activeTab && (
             <div className="slot-empty">
               <p>Open a resource from the left rail.</p>
+            </div>
+          )}
+          {dragItem && (
+            <div className="drop-zones">
+              <div
+                className={`drop-zone ${dropTarget === slotIndex ? 'drop-zone-on' : ''}`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'copy'
+                  setDropTarget(slotIndex)
+                }}
+                onDragLeave={() => setDropTarget((t) => (t === slotIndex ? null : t))}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  void handleDrop(slotIndex)
+                }}
+              >
+                <span>Drop to open here</span>
+              </div>
+              {slotIndex === 0 && !bothSlotsUsed && (
+                <div
+                  className={`drop-zone drop-zone-split ${dropTarget === 1 ? 'drop-zone-on' : ''}`}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'copy'
+                    setDropTarget(1)
+                  }}
+                  onDragLeave={() => setDropTarget((t) => (t === 1 ? null : t))}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    void handleDrop(1)
+                  }}
+                >
+                  <span>Drop to open in a split</span>
+                </div>
+              )}
             </div>
           )}
           {dragging && <div className="drag-cover" />}

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Resource, Task } from '@shared/types'
-import { BUILTIN_NOTES, BUILTIN_REVIEW } from './PaneGrid'
+import { BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './PaneGrid'
+import { useStore } from '../store/useStore'
 
 function railIcon(kind: string): string {
   return kind === 'url' ? '🌐' : kind === 'pdf' ? '📄' : kind === 'file' ? '📎' : '📝'
@@ -25,6 +26,7 @@ export default function ResourceRail({
   onSearch: (query: string) => void
   onResourcesChanged: () => Promise<void>
 }): JSX.Element {
+  const setDragItem = useStore((s) => s.setDragItem)
   const [showAddUrl, setShowAddUrl] = useState(false)
   const [urlTitle, setUrlTitle] = useState('')
   const [urlValue, setUrlValue] = useState('')
@@ -127,6 +129,9 @@ export default function ResourceRail({
         <div className="rail-item rail-item-mini" title="Review questions" onClick={() => onOpen(BUILTIN_REVIEW)}>
           🧠
         </div>
+        <div className="rail-item rail-item-mini" title="Terminal" onClick={() => onOpen(BUILTIN_TERMINAL)}>
+          ▶_
+        </div>
         {resources.map((r) => (
           <div
             key={r.id}
@@ -159,9 +164,24 @@ export default function ResourceRail({
           <span className="rail-icon">🧠</span>
           <span className="rail-title">Review</span>
         </div>
+        <div className="rail-item" onClick={() => onOpen(BUILTIN_TERMINAL)}>
+          <span className="rail-icon">▶_</span>
+          <span className="rail-title">Terminal</span>
+        </div>
 
         {resources.map((r) => (
-          <div key={r.id} className="rail-item" onClick={() => renaming?.id !== r.id && onOpen(r.id)}>
+          <div
+            key={r.id}
+            className="rail-item"
+            draggable={renaming?.id !== r.id}
+            onDragStart={(e) => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData('text/plain', r.title)
+              setDragItem({ kind: 'resource', value: r.id })
+            }}
+            onDragEnd={() => setDragItem(null)}
+            onClick={() => renaming?.id !== r.id && onOpen(r.id)}
+          >
             <span className="rail-icon">{railIcon(r.kind)}</span>
             {renaming?.id === r.id ? (
               <input
@@ -301,7 +321,21 @@ export default function ResourceRail({
               </p>
             )}
             {libraryFiles.map((f) => (
-              <div key={f.name} className="rail-item" onClick={() => attachFromLibrary(f.name)}>
+              <div
+                key={f.name}
+                className="rail-item"
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'copy'
+                  e.dataTransfer.setData('text/plain', f.name)
+                  setDragItem({ kind: 'library', value: f.name })
+                }}
+                onDragEnd={() => {
+                  setDragItem(null)
+                  setShowLibrary(false) // the drop already put it in a slot
+                }}
+                onClick={() => attachFromLibrary(f.name)}
+              >
                 <span className="rail-icon">{/\.pdf$/i.test(f.name) ? '📄' : '📎'}</span>
                 <span className="rail-title" title={`Attach ${f.name} to this task`}>
                   {f.name}

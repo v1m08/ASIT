@@ -27,6 +27,7 @@ declare global {
         }>
         setPrivacy: (id: string, aiDisabled: boolean) => Promise<Task | null>
         setCoding: (id: string, coding: boolean) => Promise<Task | null>
+        setTerminalAiRead: (id: string, allowed: boolean) => Promise<Task | null>
         scratchGet: () => Promise<{ task: Task; resources: Resource[] }>
         scratchSave: (name: string) => Promise<Task>
       }
@@ -84,6 +85,14 @@ declare global {
         }) => Promise<unknown>
         setDone: (id: string, done: boolean) => Promise<void>
         delete: (id: string) => Promise<void>
+      }
+      terminal: {
+        open: (taskId: string, shell?: string) => Promise<{ id?: string; error?: string }>
+        write: (id: string, data: string) => Promise<void>
+        resize: (id: string, cols: number, rows: number) => Promise<void>
+        close: (id: string) => Promise<void>
+        replay: (id: string) => Promise<string>
+        shells: () => Promise<string[]>
       }
       terms: {
         list: (taskId: string) => Promise<{ term: string; definition: string }[]>

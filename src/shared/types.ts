@@ -12,6 +12,9 @@ export interface Task {
   layoutJson: string | null
   aiDisabled: boolean // private task: no chat, no generation, invisible to AI
   coding: boolean // coding task: chat is a coding agent (Fable 5 + command execution)
+  // Opt-in: may this workspace's agent READ its terminal output? Off by
+  // default. There is no write equivalent — agents cannot type into a pty.
+  terminalAiRead: boolean
   createdAt: string
   lastOpenedAt: string | null
 }

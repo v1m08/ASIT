@@ -183,6 +183,12 @@ const migrations: string[] = [
     created_at TEXT NOT NULL,
     completed_at TEXT
   );
+  `,
+  // 10: per-workspace opt-in for agents READING that workspace's terminal
+  // output. There is deliberately no "write" counterpart — agents have no
+  // path to type into a terminal at all (see services/terminal.ts).
+  `
+  ALTER TABLE tasks ADD COLUMN terminal_ai_read INTEGER NOT NULL DEFAULT 0;
   `
 ]
 

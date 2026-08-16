@@ -17,6 +17,8 @@ const api = {
       ipcRenderer.invoke(IPC.TASKS_SET_PRIVACY, id, aiDisabled),
     setCoding: (id: string, coding: boolean) =>
       ipcRenderer.invoke(IPC.TASKS_SET_CODING, id, coding),
+    setTerminalAiRead: (id: string, allowed: boolean) =>
+      ipcRenderer.invoke(IPC.TASKS_SET_TERMINAL_AI_READ, id, allowed),
     scratchGet: () => ipcRenderer.invoke(IPC.SCRATCH_GET),
     scratchSave: (name: string) => ipcRenderer.invoke(IPC.SCRATCH_SAVE, name)
   },
@@ -57,6 +59,16 @@ const api = {
       ipcRenderer.invoke(IPC.TODOS_ADD, input),
     setDone: (id: string, done: boolean) => ipcRenderer.invoke(IPC.TODOS_SET_DONE, id, done),
     delete: (id: string) => ipcRenderer.invoke(IPC.TODOS_DELETE, id)
+  },
+  terminal: {
+    open: (taskId: string, shell?: string) => ipcRenderer.invoke(IPC.TERMINAL_OPEN, taskId, shell),
+    // User keystrokes from the focused terminal view. Nothing else may call it.
+    write: (id: string, data: string) => ipcRenderer.invoke(IPC.TERMINAL_WRITE, id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke(IPC.TERMINAL_RESIZE, id, cols, rows),
+    close: (id: string) => ipcRenderer.invoke(IPC.TERMINAL_CLOSE, id),
+    replay: (id: string) => ipcRenderer.invoke(IPC.TERMINAL_REPLAY, id),
+    shells: () => ipcRenderer.invoke(IPC.TERMINAL_SHELLS)
   },
   terms: {
     list: (taskId: string) => ipcRenderer.invoke(IPC.TERMS_LIST, taskId),

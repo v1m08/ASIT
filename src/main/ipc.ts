@@ -18,6 +18,7 @@ import * as skills from './services/skills'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
+import * as terminal from './services/terminal'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
 import * as whatsapp from './services/whatsapp'
@@ -71,6 +72,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     // panes (a parked PDF viewer pins its file), its actions watcher (open
     // dir handle), and its page watches (they'd keep polling a ghost).
     paneManager.closeByOwner(id)
+    terminal.closeTerminalsForTask(id) // a live shell holds a handle on the cwd
     stopWatchingTask(id)
     stopWatchesForTask(id)
     const result = tasks.deleteTask(id)
@@ -93,12 +95,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return result
   })
   ipcMain.handle(IPC.TASKS_STATS, () => tasks.homeStats())
+  ipcMain.handle(IPC.TASKS_SET_TERMINAL_AI_READ, (_e, id: string, allowed: boolean) =>
+    tasks.setTaskTerminalAiRead(id, allowed)
+  )
   ipcMain.handle(IPC.TASKS_SET_CODING, (_e, id: string, coding: boolean) =>
     tasks.setTaskCoding(id, coding)
   )
   ipcMain.handle(IPC.TASKS_SET_PRIVACY, (_e, id: string, aiDisabled: boolean) => {
     const wasWatched = isWatchingTask(id)
     paneManager.closeByOwner(id) // pane file handles would block the folder move
+    terminal.closeTerminalsForTask(id) // same: a shell cwd'd into it blocks the move
     stopWatchingTask(id)
     if (aiDisabled) stopWatchesForTask(id)
     const result = tasks.setTaskPrivacy(id, aiDisabled)
@@ -321,6 +327,22 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   )
   ipcMain.handle(IPC.TODOS_SET_DONE, (_e, id: string, done: boolean) => todos.setTodoDone(id, done))
   ipcMain.handle(IPC.TODOS_DELETE, (_e, id: string) => todos.deleteTodo(id))
+
+  // --- terminals ---
+  // TERMINAL_WRITE is the user's keyboard, arriving from the focused xterm
+  // view. Nothing in main may call writeFromUser: agents get read only.
+  ipcMain.handle(IPC.TERMINAL_OPEN, (_e, taskId: string, shell?: string) =>
+    terminal.openTerminal(taskId, shell, getWindow)
+  )
+  ipcMain.handle(IPC.TERMINAL_WRITE, (_e, id: string, data: string) =>
+    terminal.writeFromUser(id, data)
+  )
+  ipcMain.handle(IPC.TERMINAL_RESIZE, (_e, id: string, cols: number, rows: number) =>
+    terminal.resizeTerminal(id, cols, rows)
+  )
+  ipcMain.handle(IPC.TERMINAL_CLOSE, (_e, id: string) => terminal.closeTerminal(id))
+  ipcMain.handle(IPC.TERMINAL_REPLAY, (_e, id: string) => terminal.replayBuffer(id))
+  ipcMain.handle(IPC.TERMINAL_SHELLS, () => terminal.listShells())
 
   // --- key terms ---
   ipcMain.handle(IPC.TERMS_LIST, (_e, taskId: string) => questions.keyTerms(taskId))

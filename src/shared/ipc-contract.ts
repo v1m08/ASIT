@@ -13,6 +13,7 @@ export const IPC = {
   TASKS_STATS: 'tasks:stats',
   TASKS_SET_PRIVACY: 'tasks:set-privacy',
   TASKS_SET_CODING: 'tasks:set-coding',
+  TASKS_SET_TERMINAL_AI_READ: 'tasks:set-terminal-ai-read',
   SCRATCH_GET: 'scratch:get',
   SCRATCH_SAVE: 'scratch:save',
 
@@ -123,6 +124,18 @@ export const IPC = {
   TODOS_SET_DONE: 'todos:set-done',
   TODOS_DELETE: 'todos:delete',
   TODOS_CHANGED: 'todos:changed', // push M→R
+
+  // Terminal panes. TERMINAL_WRITE carries USER keystrokes only — it is
+  // reachable from the focused xterm view and nowhere else. No agent-facing
+  // write channel exists anywhere in the app.
+  TERMINAL_OPEN: 'terminal:open',
+  TERMINAL_WRITE: 'terminal:write',
+  TERMINAL_RESIZE: 'terminal:resize',
+  TERMINAL_CLOSE: 'terminal:close',
+  TERMINAL_REPLAY: 'terminal:replay',
+  TERMINAL_SHELLS: 'terminal:shells',
+  TERMINAL_DATA: 'terminal:data', // push M→R
+  TERMINAL_EXIT: 'terminal:exit', // push M→R
 
   // key terms from notes
   TERMS_LIST: 'terms:list',

@@ -10,6 +10,9 @@ import { addUrlResource } from './resources'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
 import { saveSkill } from './skills'
+// Read only — `writeFromUser` is deliberately NOT imported here, and must
+// never be: actions.ts is the agent's hands.
+import { readForAgent } from './terminal'
 
 // ---------------------------------------------------------------------------
 // App-action protocol: the Claude CLI (which only has file tools) controls the
@@ -272,6 +275,12 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
   // scope, same folder, no special powers. Every other agent is refused: a
   // workspace agent must never reach into another workspace.
   if (action.workspace !== undefined) {
+    // Terminal output is never reachable across workspaces — not even by
+    // Jarvis. A shell's scrollback is the most sensitive surface in the app,
+    // so it stays readable only by the workspace that owns it, and only when
+    // that workspace opted in.
+    if (action.action === 'read_terminal')
+      return 'read_terminal cannot be re-targeted at another workspace'
     if (taskId !== jarvisTaskId())
       return 'workspace targeting is only available to the universal agent'
     const target = resolveWorkspace(String(action.workspace))
@@ -283,6 +292,14 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
   if (!task) return 'task not found'
 
   switch (action.action) {
+    // READ ONLY, and deliberately the only terminal verb that exists. There is
+    // no write/run counterpart anywhere in the protocol — an agent cannot type
+    // into a shell because no such code path was written. Every gate (opt-in
+    // flag, ownership, private workspaces, protected-topic filtering) lives in
+    // terminal.readForAgent, in main, on data the model can't influence.
+    case 'read_terminal':
+      return readForAgent(taskId, action.ref)
+
     case 'open': {
       const target = (action.target ?? '').toLowerCase()
       if (!target) return 'open: no target'
@@ -511,7 +528,7 @@ export function appendResultNote(taskId: string, note: string): void {
 // messages a person or crosses into another workspace is refused even if a
 // poisoned flow encodes it. (Navigation/clicks stay allowed: that's what
 // automation flows are for, and each navigate is toasted.)
-const FLOW_FORBIDDEN = new Set(['send_whatsapp'])
+const FLOW_FORBIDDEN = new Set(['send_whatsapp', 'read_terminal'])
 
 export async function runFlow(taskId: string, steps: AppAction[]): Promise<string[]> {
   const log: string[] = []

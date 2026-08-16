@@ -48,6 +48,13 @@ interface AsitState {
   loadError: string | null
   retryLoad: () => Promise<void>
 
+  // What the user is currently dragging (a rail resource or a global library
+  // file). Shared because the drag STARTS in the rail and ENDS in the pane
+  // grid, and the grid must hide its WebContentsViews while it's set —
+  // otherwise a page painted over the slot swallows the drop (invariant 2).
+  dragItem: { kind: 'library' | 'resource'; value: string } | null
+  setDragItem: (item: { kind: 'library' | 'resource'; value: string } | null) => void
+
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
   openTask: (id: string) => Promise<void>
@@ -101,6 +108,8 @@ export const useStore = create<AsitState>((set, get) => ({
     }
   },
 
+  dragItem: null,
+  setDragItem: (dragItem) => set({ dragItem }),
   loadError: null,
   retryLoad: async () => {
     set({ loadError: null })

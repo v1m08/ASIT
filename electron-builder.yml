@@ -18,6 +18,9 @@ asarUnpack:
   # filesystem for the loader to find them.
   - node_modules/sherpa-onnx-node/**
   - node_modules/sherpa-onnx-win-x64/**
+  # Terminal panes: the pty addon spawns conpty.dll/winpty-agent.exe as real
+  # processes, so they cannot live inside the asar.
+  - node_modules/node-pty/**
 win:
   target:
     - nsis

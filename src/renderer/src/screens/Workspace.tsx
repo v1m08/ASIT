@@ -125,6 +125,11 @@ export default function Workspace(): JSX.Element {
             await window.asit.resources.addUrl(task.id, title.slice(0, 60), url)
             await refreshResources()
           }}
+          onAttachLibrary={async (name) => {
+            const r = await window.asit.library.attach(task.id, name)
+            if (r) await refreshResources()
+            return r
+          }}
         />
         {chatOpen && !task.aiDisabled && (
           <>

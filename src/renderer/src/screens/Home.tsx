@@ -360,6 +360,18 @@ export default function Home(): JSX.Element {
                 {task.coding ? '📖 Switch to study mode' : '⌨ Make coding workspace'}
               </button>
             )}
+            {!task.aiDisabled && (
+              <button
+                title="Lets this workspace's chat READ its terminal output (e.g. why a build failed). It can never type into the terminal — there is no such capability in the app."
+                onClick={async () => {
+                  setMenuTaskId(null)
+                  await window.asit.tasks.setTerminalAiRead(task.id, !task.terminalAiRead)
+                  await loadTasks()
+                }}
+              >
+                {task.terminalAiRead ? '🚫 Stop AI reading terminal' : '👁 Let AI read terminal'}
+              </button>
+            )}
             <button onClick={() => { setMenuTaskId(null); togglePrivacy(task) }}>
               {task.aiDisabled ? '✨ Enable AI' : '🔒 Make private (no AI)'}
             </button>

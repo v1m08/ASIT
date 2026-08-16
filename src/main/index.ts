@@ -178,6 +178,10 @@ app.whenReady().then(() => {
     runSecuritySmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_TERMINAL === '1') {
+    runTerminalSmokeTest()
+    return
+  }
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -228,6 +232,8 @@ app.on('window-all-closed', async () => {
   closeWhatsApp()
   shutdownVoice()
   stopCompanion()
+  const { shutdownTerminals } = await import('./services/terminal')
+  shutdownTerminals() // orphaned shells would outlive the app (Windows)
   closeDb()
   app.quit()
 })
@@ -482,6 +488,113 @@ async function runSecuritySmokeTest(): Promise<void> {
     app.exit(0)
   } catch (err) {
     console.error('[security-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless terminal-containment check: ASIT_SMOKE_TERMINAL=1 electron out/main/index.js
+// Terminals are the most dangerous surface in the app, so the boundaries get
+// their own smoke: a real pty is spawned, then every path an agent could take
+// to reach or drive it is asserted to fail.
+async function runTerminalSmokeTest(): Promise<void> {
+  const term = await import('./services/terminal')
+  const actions = await import('./services/actions')
+  const tasksSvc = await import('./services/tasks')
+
+  const fail = (msg: string): never => {
+    console.error('[terminal-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+  const waitFor = async (test: () => boolean, ms = 15000): Promise<boolean> => {
+    const started = Date.now()
+    while (Date.now() - started < ms) {
+      if (test()) return true
+      await new Promise((r) => setTimeout(r, 120))
+    }
+    return false
+  }
+
+  try {
+    const task = tasksSvc.createTask({ title: 'Term Test' })
+    const other = tasksSvc.createTask({ title: 'Term Other' })
+
+    // A real pty must actually work — otherwise the rest proves nothing.
+    const opened = term.openTerminal(task.id, 'cmd', () => null)
+    if (!('id' in opened) || !opened.id) fail(`terminal did not open: ${JSON.stringify(opened)}`)
+    const termId = (opened as { id: string }).id
+    term.writeFromUser(termId, 'echo SMOKE_MARKER_OK\r\n')
+    if (!(await waitFor(() => term.replayBuffer(termId).includes('SMOKE_MARKER_OK'))))
+      fail('pty produced no output')
+    console.log('[terminal-smoke] real pty spawns and echoes')
+
+    // Reading is OFF by default — the flag must be opt-in, not opt-out.
+    const denied = await actions.executeAction(task.id, { action: 'read_terminal' })
+    if (!denied.startsWith('BLOCKED:')) fail(`terminal readable while opt-in is off: ${denied}`)
+    console.log('[terminal-smoke] agent read denied until the workspace opts in')
+
+    // With the flag on, the agent sees output — and ONLY then.
+    tasksSvc.setTaskTerminalAiRead(task.id, true)
+    const allowed = await actions.executeAction(task.id, { action: 'read_terminal' })
+    if (!allowed.includes('SMOKE_MARKER_OK')) fail(`opted-in read returned nothing: ${allowed}`)
+    if (/\[/.test(allowed)) fail('ANSI escapes leaked into the agent-facing read')
+    console.log('[terminal-smoke] opted-in read works and is ANSI-stripped')
+
+    // Protected topics are stripped from terminal output too (invariant 14) —
+    // shells print tokens and env dumps.
+    term.writeFromUser(termId, 'echo my password is hunter2\r\n')
+    if (!(await waitFor(() => term.replayBuffer(termId).includes('hunter2'))))
+      fail('secret line never reached the buffer')
+    const filtered = await actions.executeAction(task.id, { action: 'read_terminal' })
+    if (filtered.includes('hunter2')) fail('protected line leaked to the agent')
+    console.log('[terminal-smoke] protected topics stripped from terminal reads')
+
+    // Another workspace must not see this terminal, even opted in.
+    tasksSvc.setTaskTerminalAiRead(other.id, true)
+    const cross = await actions.executeAction(other.id, { action: 'read_terminal' })
+    if (cross.includes('SMOKE_MARKER_OK')) fail('terminal readable from another workspace')
+    const crossRef = await actions.executeAction(other.id, { action: 'read_terminal', ref: termId })
+    if (crossRef.includes('SMOKE_MARKER_OK')) fail('terminal readable cross-owner by id')
+    console.log('[terminal-smoke] terminals are owner-scoped')
+
+    // Jarvis cannot re-target a terminal read at another workspace.
+    const jarvis = tasksSvc.getOrCreateJarvis()
+    const retarget = await actions.executeAction(jarvis.id, {
+      action: 'read_terminal',
+      workspace: 'Term Test'
+    })
+    if (retarget.includes('SMOKE_MARKER_OK')) fail('Jarvis re-targeted a terminal read')
+    if (!retarget.includes('cannot be re-targeted')) fail(`unexpected retarget result: ${retarget}`)
+    console.log('[terminal-smoke] terminal reads cannot be re-targeted across workspaces')
+
+    // A replayed skill flow (no model, no live user) may not read terminals.
+    const flow = await actions.runFlow(task.id, [{ action: 'read_terminal' }] as never)
+    if (!flow[0]?.includes('not allowed inside a replayed skill flow'))
+      fail(`flow terminal read not refused: ${flow[0]}`)
+    console.log('[terminal-smoke] replayed flows cannot read terminals')
+
+    // Private workspaces are never readable, and can't even be opted in.
+    const priv = tasksSvc.createTask({ title: 'Term Private', aiDisabled: true })
+    tasksSvc.setTaskTerminalAiRead(priv.id, true)
+    if (tasksSvc.getTask(priv.id)?.terminalAiRead) fail('private workspace accepted the opt-in')
+    console.log('[terminal-smoke] private workspaces cannot enable terminal reads')
+
+    // The protocol has NO write verb — an agent asking for one gets nothing.
+    for (const verb of ['write_terminal', 'run_command', 'terminal_write', 'exec']) {
+      const res = await actions.executeAction(task.id, { action: verb, value: 'echo PWNED\r\n' })
+      if (!/unknown action/i.test(res)) fail(`"${verb}" was not rejected as unknown: ${res}`)
+    }
+    if (term.replayBuffer(termId).includes('PWNED')) fail('an action reached the pty')
+    console.log('[terminal-smoke] no agent write verb exists in the protocol')
+
+    term.shutdownTerminals()
+    tasksSvc.deleteTask(task.id)
+    tasksSvc.deleteTask(other.id)
+    tasksSvc.deleteTask(priv.id)
+    console.log('[terminal-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[terminal-smoke] FAIL:', err)
     app.exit(1)
   }
 }

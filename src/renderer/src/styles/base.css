@@ -1690,6 +1690,105 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.4;
 }
 
+/* Drag a rail resource or a global library file onto a slot.
+   Only rendered while a drag is in flight — panes are hidden then, so these
+   are actually reachable by the pointer. */
+.drop-zones {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.drop-zone {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+  margin: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.drop-zone span {
+  pointer-events: none; /* the label must not steal dragleave/drop from its zone */
+}
+
+.drop-zone-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg));
+}
+
+/* Terminal pane */
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: #12141a;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.terminal-shell {
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 0.72rem;
+  padding: 2px 4px;
+}
+
+.terminal-cwd {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.terminal-ai-badge {
+  font-size: 0.68rem;
+  color: var(--warn, #e0af68);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.terminal-ai-badge.terminal-ai-off {
+  color: var(--text-dim);
+}
+
+.terminal-error {
+  color: var(--danger);
+  font-size: 0.75rem;
+  padding: 6px 10px;
+  margin: 0;
+}
+
+/* xterm needs a concrete box to measure against */
+.terminal-host {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0 0 6px;
+  overflow: hidden;
+}
+
 .status-load-error {
   background: color-mix(in srgb, var(--danger) 18%, transparent);
   border: 1px solid var(--danger);
