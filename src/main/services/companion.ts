@@ -19,7 +19,8 @@ import { readNote, writeNote } from './resources'
 import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
-import { askJarvisText } from './jarvis'
+import { cancelJarvis, jarvisBusy, jarvisLive, startJarvisTurn } from './jarvis'
+import { assistantHistory } from './assistant'
 import { parseSendCommand, sendWhatsApp } from './whatsapp'
 
 // Phone companion: a small HTTP+WebSocket server for the PWA on the user's
@@ -461,12 +462,29 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     const b = await readBody(req)
     const prompt = String(b.prompt ?? '').trim()
     if (!prompt) return sendJson(res, 400, { error: 'empty' })
-    // mode 'jarvis' = the universal agent (can act); default = fast read-only.
-    const reply =
-      b.mode === 'jarvis'
-        ? await askJarvisText(prompt.slice(0, 2000))
-        : await phoneAssistant(prompt.slice(0, 2000))
+    if (b.mode === 'jarvis') {
+      // Fire and forget: a Jarvis turn can now run far longer than any phone
+      // or proxy will hold a request open, so the phone watches /api/jarvis
+      // instead of blocking on the reply.
+      const started = startJarvisTurn(prompt.slice(0, 2000))
+      return sendJson(res, started.started ? 200 : 409, started)
+    }
+    const reply = await phoneAssistant(prompt.slice(0, 2000))
     return sendJson(res, 200, { reply })
+  }
+
+  // The agent conversation: what it's doing right now plus past exchanges,
+  // shared with the desktop panel (same log, same rolling session).
+  if (path === 'jarvis' && method === 'GET') {
+    return sendJson(res, 200, {
+      live: jarvisLive(),
+      busy: jarvisBusy(),
+      history: assistantHistory(25)
+    })
+  }
+  if (path === 'jarvis/cancel' && method === 'POST') {
+    cancelJarvis()
+    return sendJson(res, 200, { ok: true })
   }
   if (path === 'push/key' && method === 'GET') {
     return sendJson(res, 200, { key: ensureCompanionConfig().vapidPublic })

@@ -318,7 +318,7 @@
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data)
-          if (m.type === 'changed' && (tab === 'todos' || tab === 'review' || tab === 'agents')) render()
+          if (m.type === 'changed' && (tab === 'todos' || tab === 'review' || tab === 'agents' || tab === 'ask')) render()
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
@@ -595,7 +595,10 @@
   // ---- Ask: ⚡ quick lookup (read-only, fast) or 🤖 Jarvis (acts on the app)
   const askLog = []
   let askMode = localStorage.getItem('asit-askmode') || 'quick'
-  function renderAsk() {
+  // ---- Ask: a real conversation with the agent, not a one-shot box.
+  // The turn runs on the PC; this view watches it live over the socket and
+  // can send follow-ups into the SAME session the desktop panel uses.
+  async function renderAsk() {
     if (offlineSince) {
       main.innerHTML = `${offlineBanner()}
         <h2>Ask</h2>
@@ -603,43 +606,72 @@
         Use <b>Capture</b> to jot it down now; it syncs the moment your PC is back.</p>`
       return
     }
+
+    let data = { live: null, busy: false, history: [] }
+    if (askMode === 'jarvis') {
+      try { data = await api('jarvis') } catch { /* show the shell anyway */ }
+    }
+    const live = data.live
+    const busy = !!data.busy
+
+    const turns = []
+    // Oldest first so the newest sits at the bottom, like any chat.
+    for (const h of (data.history || []).slice().reverse()) {
+      if (live && h.prompt === live.prompt && !live.running) continue // avoid dupe
+      turns.push({ q: h.prompt, a: h.reply, busy: false, status: null })
+    }
+    if (live) turns.push({ q: live.prompt, a: live.reply, busy: live.running, status: live.status, error: live.error })
+    for (const x of askLog) turns.push(x) // quick-mode replies live only here
+
     main.innerHTML = `
       <h2>Ask</h2>
       <div class="row" style="margin-bottom:10px">
-        <button class="btn btn-sm ${askMode === 'quick' ? '' : 'btn-ghost'}" id="mode-quick">⚡ Quick</button>
-        <button class="btn btn-sm ${askMode === 'jarvis' ? '' : 'btn-ghost'}" id="mode-jarvis">🤖 Jarvis</button>
+        <button class="btn btn-sm ${askMode === 'quick' ? '' : 'btn-ghost'}" id="mode-quick">Quick</button>
+        <button class="btn btn-sm ${askMode === 'jarvis' ? '' : 'btn-ghost'}" id="mode-jarvis">Agent</button>
+        ${busy ? '<button class="btn btn-sm btn-ghost" id="ask-stop">◼ Stop</button>' : ''}
       </div>
-      <div class="card row">
-        <input type="text" id="ask-in" placeholder="${askMode === 'jarvis' ? 'Tell Jarvis what to do…' : 'Ask anything… ( ?g search · ?otp )'}" class="grow" />
-        <button class="btn btn-sm" id="ask-go">➤</button>
-      </div>
-      <div id="ask-log"></div>`
-    document.getElementById('mode-quick').onclick = () => { askMode = 'quick'; localStorage.setItem('asit-askmode', askMode); renderAsk() }
-    document.getElementById('mode-jarvis').onclick = () => { askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode); renderAsk() }
-    const log = $('#ask-log')
-    const draw = () => {
-      log.innerHTML = askLog.map((x) => `
+      <div id="ask-log">${turns.map((x) => `
         <div class="card">
           <div class="chat-q">${esc(x.q)}</div>
-          <div class="chat-a">${x.busy ? '<span class="spin"></span>' : esc(x.a)}</div>
-        </div>`).join('')
-    }
-    draw()
+          ${x.status && x.busy ? `<div class="dim" style="margin:4px 0">${esc(x.status)}</div>` : ''}
+          <div class="chat-a">${esc(x.a || '')}${x.busy ? ' <span class="spin"></span>' : ''}</div>
+          ${x.error ? `<div class="dim" style="color:var(--danger)">${esc(x.error)}</div>` : ''}
+        </div>`).join('')}</div>
+      <div class="card row">
+        <input type="text" id="ask-in" placeholder="${askMode === 'jarvis' ? (busy ? 'Queue a follow-up…' : 'Tell the agent what to do…') : 'Ask anything… ( ?g search · ?otp )'}" class="grow" />
+        <button class="btn btn-sm" id="ask-go">➤</button>
+      </div>`
+
+    $('#mode-quick').onclick = () => { askMode = 'quick'; localStorage.setItem('asit-askmode', askMode); render() }
+    $('#mode-jarvis').onclick = () => { askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode); render() }
+    const stop = $('#ask-stop')
+    if (stop) stop.onclick = async () => { try { await api('jarvis/cancel', { method: 'POST' }) } catch {} ; render() }
+
+    const log = $('#ask-log')
+    if (log) log.scrollTop = log.scrollHeight
+    main.scrollTop = main.scrollHeight
+
     const go = async () => {
       const v = $('#ask-in').value.trim()
       if (!v) return
       $('#ask-in').value = ''
-      const entry = { q: v, a: '', busy: true }
-      askLog.unshift(entry)
-      draw()
-      try {
-        const { reply } = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v, mode: askMode }) })
-        entry.a = reply
-      } catch (err) {
-        entry.a = 'Failed: ' + err.message
+      if (askMode === 'jarvis') {
+        try {
+          const r = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v, mode: 'jarvis' }) })
+          if (!r.started) toast(r.reason || 'Busy')
+        } catch (err) { toast('Failed: ' + err.message) }
+        render() // live state takes over from here
+        return
       }
+      const entry = { q: v, a: '', busy: true }
+      askLog.push(entry)
+      renderAsk()
+      try {
+        const { reply } = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v, mode: 'quick' }) })
+        entry.a = reply
+      } catch (err) { entry.a = 'Failed: ' + err.message }
       entry.busy = false
-      if (tab === 'ask') draw()
+      if (tab === 'ask') renderAsk()
     }
     $('#ask-go').onclick = go
     $('#ask-in').onkeydown = (e) => { if (e.key === 'Enter') go() }
@@ -651,7 +683,7 @@
     else if (tab === 'agents') renderAgents().catch(errorCard)
     else if (tab === 'review') renderReview().catch(errorCard)
     else if (tab === 'capture') renderCapture()
-    else renderAsk()
+    else renderAsk().catch(errorCard)
   }
   render()
 

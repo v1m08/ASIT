@@ -153,7 +153,14 @@ export interface ClaudeStreamHandle {
   cancel: () => void
 }
 
-const CHAT_TIMEOUT_MS = 5 * 60 * 1000
+// IDLE timeout, not a wall-clock one. The old 5-minute total killed turns
+// that were still actively streaming — a long agent run (reading PDFs,
+// driving pages, generating questions) legitimately exceeds five minutes and
+// was being executed mid-thought. What we actually want to catch is a HUNG
+// process, so the clock restarts on every byte the CLI produces.
+const IDLE_TIMEOUT_MS = 5 * 60 * 1000
+// Absolute backstop so a process that chatters forever still can't run away.
+const MAX_TURN_MS = 60 * 60 * 1000
 
 // Streaming chat turn. Read-only tools, cwd = task folder (context source).
 export function runClaudeStream(
@@ -191,14 +198,37 @@ export function runClaudeStream(
   let stderrText = ''
   let sawResult = false
 
-  const timeoutMs = opts.timeoutMs ?? CHAT_TIMEOUT_MS
-  const timeout = setTimeout(() => {
-    if (!finished) {
-      finished = true
-      killTree(child)
-      handlers.onError(`Claude timed out after ${Math.round(timeoutMs / 60000)} minutes.`)
+  const idleMs = opts.timeoutMs ?? IDLE_TIMEOUT_MS
+  const startedAt = Date.now()
+  let timeout: NodeJS.Timeout
+
+  const giveUp = (reason: string): void => {
+    if (finished) return
+    finished = true
+    killTree(child)
+    handlers.onError(reason)
+  }
+
+  // Restarted by `touch()` on every chunk of CLI output.
+  const arm = (): void => {
+    timeout = setTimeout(() => {
+      giveUp(
+        `Claude went quiet for ${Math.round(idleMs / 60000)} minutes with no output, so the turn was stopped. It was probably stuck rather than thinking — try again, or narrow the request.`
+      )
+    }, idleMs)
+  }
+
+  /** Any output means it's alive: reset the idle clock. */
+  const touch = (): void => {
+    if (finished) return
+    clearTimeout(timeout)
+    if (Date.now() - startedAt > MAX_TURN_MS) {
+      giveUp('Claude ran for over an hour on a single turn and was stopped.')
+      return
     }
-  }, timeoutMs)
+    arm()
+  }
+  arm()
 
   const feed = createLineBuffer((line) => {
     if (finished) return
@@ -248,9 +278,13 @@ export function runClaudeStream(
   })
 
   child.stdout!.setEncoding('utf-8')
-  child.stdout!.on('data', feed)
+  child.stdout!.on('data', (chunk: string) => {
+    touch() // still producing output → still working
+    feed(chunk)
+  })
   child.stderr!.setEncoding('utf-8')
   child.stderr!.on('data', (chunk: string) => {
+    touch()
     stderrText += chunk
   })
 

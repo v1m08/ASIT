@@ -45,6 +45,32 @@ let sessionId: string | undefined
 let lastTurnAt = 0
 let running: ClaudeStreamHandle | null = null
 
+// The turn in flight, mirrored so remote surfaces can SEE it rather than
+// block on an HTTP request until it finishes. The desktop panel gets the same
+// data through its callbacks; this is the shared read model.
+export interface JarvisLive {
+  prompt: string
+  reply: string
+  status: string | null
+  running: boolean
+  error: string | null
+  startedAt: number
+}
+let live: JarvisLive | null = null
+let liveNotifyAt = 0
+
+export function jarvisLive(): JarvisLive | null {
+  return live
+}
+
+/** Throttled: deltas arrive per token and each one would be a socket write. */
+function publishLive(force = false): void {
+  const now = Date.now()
+  if (!force && now - liveNotifyAt < 400) return
+  liveNotifyAt = now
+  bus.emit('changed', 'jarvis')
+}
+
 function jarvisFolder(): string {
   return getOrCreateJarvis().folderPath
 }
@@ -129,7 +155,9 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
   const fullPrompt = fresh ? `${briefing()}\n\n---\n\n${prompt}` : prompt
 
   running = { cancel: () => undefined }
-  reportActivity('jarvis', { kind: 'jarvis', label: '🤖 Jarvis', detail: prompt.slice(0, 120) })
+  live = { prompt, reply: '', status: null, running: true, error: null, startedAt: Date.now() }
+  publishLive(true)
+  reportActivity('jarvis', { kind: 'jarvis', label: 'Jarvis', detail: prompt.slice(0, 120) })
 
   const handle = runClaudeStream(
     {
@@ -149,10 +177,16 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
       onInit: (id) => {
         sessionId = id
       },
-      onDelta: cb.onDelta,
+      onDelta: (d) => {
+        if (live) live.reply += d
+        publishLive()
+        cb.onDelta(d)
+      },
       onToolUse: (name, input) => {
         const status = toolStatus(name, input)
-        reportActivity('jarvis', { kind: 'jarvis', label: '🤖 Jarvis', detail: status })
+        if (live) live.status = status
+        publishLive(true)
+        reportActivity('jarvis', { kind: 'jarvis', label: 'Jarvis', detail: status })
         cb.onStatus(status)
       },
       onResult: ({ text, isError, usage }) => {
@@ -162,15 +196,21 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
         clearActivity('jarvis')
         logUsage(null, 'jarvis', usage)
         if (isError) {
+          if (live) { live.running = false; live.error = text || 'Jarvis returned an error.' }
+          publishLive(true)
           cb.onError(text || 'Jarvis returned an error.')
           return
         }
+        if (live) { live.reply = text || live.reply; live.status = null; live.running = false }
+        publishLive(true)
         appendWorklog(prompt, text)
         logExchange(prompt, text) // shows up in the assistant's history panel
         cb.onDone(text, usage.costUsd)
       },
       onError: (message) => {
         running = null
+        if (live) { live.running = false; live.error = message }
+        publishLive(true)
         clearActivity('jarvis')
         cb.onError(message)
       }
@@ -208,8 +248,26 @@ export function askJarvisText(prompt: string): Promise<string> {
   })
 }
 
+/**
+ * Start a turn and return immediately. The phone uses this: holding an HTTP
+ * request open for the whole turn breaks now that turns can legitimately run
+ * far longer than any proxy timeout.
+ */
+export function startJarvisTurn(prompt: string): { started: boolean; reason?: string } {
+  if (running) return { started: false, reason: 'Jarvis is mid-task — stop it first.' }
+  askJarvis(prompt, {
+    onDelta: () => undefined,
+    onStatus: () => undefined,
+    onDone: () => undefined,
+    onError: () => undefined
+  })
+  return { started: true }
+}
+
 export function cancelJarvis(): void {
   running?.cancel()
   running = null
+  if (live) { live.running = false; live.error = 'Stopped.' }
+  publishLive(true)
   clearActivity('jarvis')
 }
