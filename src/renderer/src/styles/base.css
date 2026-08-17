@@ -1690,6 +1690,42 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.4;
 }
 
+/* Settings: feature toggles + shortcut reference */
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text);
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.shortcut-table {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.shortcut-row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 10px;
+  font-size: 0.76rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-row:last-child { border-bottom: none; }
+
+.shortcut-row code {
+  min-width: 168px;
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.shortcut-row span { color: var(--text-dim); }
+
 /* Links inside a to-do are real links now (markdown or bare URL) */
 .todo-inline-link {
   color: var(--accent);

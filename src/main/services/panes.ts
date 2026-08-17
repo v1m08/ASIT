@@ -194,7 +194,7 @@ class PaneManager {
     }
   }
 
-  /** Ctrl+F and the zoom keys, aimed at the focused pane. */
+  /** The browser keys, aimed at whichever pane has focus. */
   private paneAccelerators(): { accel: string; run: () => void }[] {
     const focused = (): string | null => this.focusedPaneId
     const zoomBy = (delta: number) => () => {
@@ -203,6 +203,17 @@ class PaneManager {
       const level = this.zoom(id, delta)
       this.sendAppEvent({ type: 'pane-zoom', paneId: id, zoom: level })
     }
+    // Navigation acts directly on the page — no renderer round trip.
+    const nav = (what: 'back' | 'forward' | 'reload') => () => {
+      const wc = this.panes.get(focused() ?? '')?.view.webContents
+      if (!wc) return
+      if (what === 'reload') wc.reload()
+      else if (what === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
+      else if (what === 'forward' && wc.navigationHistory.canGoForward())
+        wc.navigationHistory.goForward()
+    }
+    // Tab operations belong to the renderer — it owns the layout.
+    const toRenderer = (type: string) => () => this.sendAppEvent({ type })
     return [
       {
         accel: 'CommandOrControl+F',
@@ -214,7 +225,16 @@ class PaneManager {
       { accel: 'CommandOrControl+=', run: zoomBy(0.5) },
       { accel: 'CommandOrControl+Plus', run: zoomBy(0.5) },
       { accel: 'CommandOrControl+-', run: zoomBy(-0.5) },
-      { accel: 'CommandOrControl+0', run: zoomBy(0) }
+      { accel: 'CommandOrControl+0', run: zoomBy(0) },
+      { accel: 'CommandOrControl+R', run: nav('reload') },
+      { accel: 'F5', run: nav('reload') },
+      { accel: 'Alt+Left', run: nav('back') },
+      { accel: 'Alt+Right', run: nav('forward') },
+      { accel: 'CommandOrControl+T', run: toRenderer('new-tab') },
+      { accel: 'CommandOrControl+W', run: toRenderer('close-tab') },
+      { accel: 'CommandOrControl+Shift+T', run: toRenderer('reopen-tab') },
+      { accel: 'Control+Tab', run: toRenderer('next-tab') },
+      { accel: 'Control+Shift+Tab', run: toRenderer('prev-tab') }
     ]
   }
 
@@ -328,6 +348,11 @@ class PaneManager {
     // key is consumed before the page sees it — so there is no double-handling.
     view.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
+      if (input.key === 'Tab' && input.control) {
+        event.preventDefault()
+        this.sendAppEvent({ type: input.shift ? 'prev-tab' : 'next-tab' })
+        return
+      }
       if (input.key === 'Tab' && !input.control && !input.alt && !input.meta) {
         event.preventDefault()
         this.sendAppEvent({ type: 'cycle-focus', back: input.shift })
@@ -357,6 +382,15 @@ class PaneManager {
         event.preventDefault()
         const level = this.zoom(paneId, k === '0' ? 0 : k === '-' ? -0.5 : 0.5)
         this.sendAppEvent({ type: 'pane-zoom', paneId, zoom: level })
+      } else if (k === 'r') {
+        event.preventDefault()
+        view.webContents.reload()
+      } else if (k === 't') {
+        event.preventDefault()
+        this.sendAppEvent({ type: input.shift ? 'reopen-tab' : 'new-tab' })
+      } else if (k === 'w') {
+        event.preventDefault()
+        this.sendAppEvent({ type: 'close-tab' })
       }
     })
 

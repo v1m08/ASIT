@@ -12,6 +12,13 @@ const DEFAULTS: Settings = {
   chatModel: 'default',
   codingModel: 'claude-fable-5',
   jarvisModel: 'default',
+  adBlock: true, // the user asked for ads filtered by default
+  blockedDomains: [],
+  extensionPaths: [],
+  hidePin: false,
+  hideReview: false,
+  hideTerminal: false,
+  hideAppWindow: false,
   sensitiveTerms: [], // empty → SENSITIVE_DEFAULTS in guardrails.ts
   sendAllowlist: [], // empty → any recipient (still intent-gated)
   onboarded: false,

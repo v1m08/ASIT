@@ -5,6 +5,7 @@ import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
 import { paneManager } from './services/panes'
+import { initBrowserFilters, loadExtensions } from './services/browser'
 import { lockdown } from './services/lockdown'
 import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
@@ -182,6 +183,11 @@ app.whenReady().then(() => {
     runTerminalSmokeTest()
     return
   }
+
+  // Ad/tracker blocking installs on the browse partition before any pane
+  // exists; saved extensions load in the background.
+  initBrowserFilters()
+  void loadExtensions()
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)

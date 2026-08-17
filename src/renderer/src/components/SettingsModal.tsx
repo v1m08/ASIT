@@ -206,6 +206,127 @@ function VaultSection(): JSX.Element {
   )
 }
 
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl+T', 'New tab'],
+  ['Ctrl+W', 'Close tab'],
+  ['Ctrl+Shift+T', 'Reopen closed tab'],
+  ['Ctrl+Tab', 'Next tab'],
+  ['Ctrl+Shift+Tab', 'Previous tab'],
+  ['Ctrl+R  ·  F5', 'Reload'],
+  ['Alt+←  ·  Alt+→', 'Back / forward'],
+  ['Ctrl+F', 'Find in page'],
+  ['Ctrl+= · Ctrl+- · Ctrl+0', 'Zoom in / out / reset'],
+  ['Ctrl+L', 'Address bar'],
+  ['Ctrl+1…9', 'Jump to panel'],
+  ['Tab / Shift+Tab', 'Move between panels'],
+  ['Ctrl+K  ·  Ctrl+J', 'Quick assistant · Jarvis'],
+  ['Ctrl+Space', 'Talk to Jarvis']
+]
+
+function BrowserSection({
+  settings,
+  setSettings
+}: {
+  settings: Settings
+  setSettings: (s: Settings) => void
+}): JSX.Element {
+  const [blocked, setBlocked] = useState(0)
+  const [exts, setExts] = useState<{ name: string; id: string; path: string }[]>([])
+  const [extMsg, setExtMsg] = useState<string | null>(null)
+  const [showKeys, setShowKeys] = useState(false)
+
+  const refreshExts = async (): Promise<void> => setExts(await window.asit.browser.extList())
+
+  useEffect(() => {
+    void window.asit.browser.stats().then((s) => setBlocked(s.blocked))
+    void refreshExts()
+  }, [])
+
+  const toggle = (key: keyof Settings, label: string, hint?: string): JSX.Element => (
+    <label className="settings-check" title={hint}>
+      <input
+        type="checkbox"
+        checked={Boolean(settings[key])}
+        onChange={(e) => setSettings({ ...settings, [key]: e.target.checked })}
+      />
+      {label}
+    </label>
+  )
+
+  return (
+    <div className="snippets-section">
+      <div className="rail-header">Browser</div>
+
+      {toggle('adBlock', `Block ads & trackers${blocked ? ` — ${blocked} blocked so far` : ''}`,
+        'Blocks known ad and tracking domains in every embedded page.')}
+      <ListField
+        label="Also block these domains"
+        hint="One per line. Added to the built-in ad/tracker list."
+        placeholder={'ads.example.com'}
+        value={settings.blockedDomains ?? []}
+        onChange={(blockedDomains) => setSettings({ ...settings, blockedDomains })}
+      />
+
+      <div className="rail-header" style={{ marginTop: 14 }}>Hide what you don’t use</div>
+      {toggle('hidePin', 'Hide 📌 save-page button', 'The closest thing to bookmarks.')}
+      {toggle('hideReview', 'Hide Review tab')}
+      {toggle('hideTerminal', 'Hide Terminal tab')}
+      {toggle('hideAppWindow', 'Hide App window tab')}
+
+      <div className="rail-header" style={{ marginTop: 14 }}>Extensions</div>
+      <p className="transfer-note">
+        Unpacked Chrome extensions only — there is no Web Store install, and Electron implements
+        just part of the extension API, so content-script extensions (blockers, restylers) work
+        while ones relying on background service workers often don’t.
+      </p>
+      {exts.map((e) => (
+        <div key={e.id} className="snippet-row">
+          <code>{e.name}</code>
+          <span className="snippet-value" title={e.path}>
+            {e.path}
+          </span>
+          <button
+            className="rail-btn rail-toggle"
+            title="Remove (takes effect next launch)"
+            onClick={async () => {
+              await window.asit.browser.extRemove(e.path)
+              setExtMsg('Removed — restart ASIT to unload it.')
+              await refreshExts()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        className="btn"
+        onClick={async () => {
+          const r = await window.asit.browser.extAdd()
+          if (r.message) setExtMsg(r.message)
+          await refreshExts()
+        }}
+      >
+        + Load unpacked extension…
+      </button>
+      {extMsg && <p className="transfer-note">{extMsg}</p>}
+
+      <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={() => setShowKeys((v) => !v)}>
+        ⌨ {showKeys ? 'Hide' : 'Show'} keyboard shortcuts
+      </button>
+      {showKeys && (
+        <div className="shortcut-table">
+          {SHORTCUTS.map(([keys, what]) => (
+            <div key={keys} className="shortcut-row">
+              <code>{keys}</code>
+              <span>{what}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PhoneSection(): JSX.Element {
   const [status, setStatus] = useState<import('@shared/types').CompanionStatus | null>(null)
   const [qr, setQr] = useState<{ url: string | null; dataUrl: string | null } | null>(null)
@@ -575,6 +696,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
             }
           />
         </div>
+
+        <BrowserSection settings={settings} setSettings={setSettings} />
 
         <VaultSection />
 

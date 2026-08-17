@@ -125,6 +125,9 @@ export default function PaneGrid({
   const [findResult, setFindResult] = useState<{ activeMatch: number; matches: number } | null>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const [zoomLabel, setZoomLabel] = useState<number | null>(null)
+  // Ctrl+Shift+T: the tab ids most recently removed from the layout.
+  const closedTabs = useRef<string[]>([])
+  const hidePin = useStore((st) => st.settings?.hidePin ?? false)
   // A page painted over the slot would eat every drag event, so the views go
   // away for the duration of the drag — same rule as any overlay (invariant 2).
   useOverlay(dragItem !== null)
@@ -350,6 +353,15 @@ export default function PaneGrid({
       } else if (e.type === 'pane-zoom' && typeof e.zoom === 'number') {
         setZoomLabel(Math.round(100 * Math.pow(1.2, e.zoom)))
         setTimeout(() => setZoomLabel(null), 1400)
+      } else if (e.type === 'new-tab') {
+        openSearchRef.current?.('')
+      } else if (e.type === 'close-tab') {
+        closeActiveTabRef.current?.()
+      } else if (e.type === 'reopen-tab') {
+        const id = closedTabs.current.pop()
+        if (id) openResourceRef.current?.(id)
+      } else if (e.type === 'next-tab' || e.type === 'prev-tab') {
+        cycleTabRef.current?.(e.type === 'next-tab' ? 1 : -1)
       }
     })
     return () => {
@@ -400,6 +412,28 @@ export default function PaneGrid({
     [openResource]
   )
 
+  // Keyboard shortcuts fire from a listener registered once, so they reach the
+  // CURRENT versions of these through refs rather than a stale closure.
+  const openResourceRef = useRef(openResource)
+  const openSearchRef = useRef(openSearch)
+  const closeActiveTabRef = useRef<(() => void) | null>(null)
+  const cycleTabRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  openResourceRef.current = openResource
+  openSearchRef.current = openSearch
+  closeActiveTabRef.current = () => {
+    const slot = validLayout.active[0] ? 0 : 1
+    const id = validLayout.active[slot]
+    if (id) closeTab(slot as 0 | 1, id)
+  }
+  cycleTabRef.current = (dir) => {
+    const slot: 0 | 1 = validLayout.active[0] ? 0 : 1
+    const tabs = validLayout.slots[slot]
+    if (tabs.length < 2) return
+    const at = tabs.indexOf(validLayout.active[slot] ?? '')
+    const next = tabs[(at + dir + tabs.length) % tabs.length]
+    selectTab(slot, next)
+  }
+
   useEffect(() => {
     onApi?.({ openResource, openSearch, openUrl })
   }, [onApi, openResource, openSearch, openUrl])
@@ -413,6 +447,10 @@ export default function PaneGrid({
   }
 
   function closeTab(slotIndex: 0 | 1, id: string): void {
+    // Only real resources can be reopened; builtins are always one click away.
+    if (!id.startsWith('builtin-')) {
+      closedTabs.current = [...closedTabs.current.filter((t) => t !== id), id].slice(-10)
+    }
     setLayout((prev) => {
       const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
       slots[slotIndex] = slots[slotIndex].filter((t) => t !== id)
@@ -630,7 +668,7 @@ export default function PaneGrid({
             >
               🔍
             </button>
-            {onPin && (
+            {onPin && !hidePin && (
               <button
                 className="nav-btn"
                 title="Save this page as a task resource"

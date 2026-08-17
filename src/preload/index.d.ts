@@ -109,6 +109,12 @@ declare global {
         visible: (handle: string, visible: boolean) => Promise<void>
         release: (handle: string) => Promise<void>
       }
+      browser: {
+        stats: () => Promise<{ blocked: number }>
+        extList: () => Promise<{ name: string; id: string; path: string }[]>
+        extAdd: () => Promise<{ ok: boolean; message: string }>
+        extRemove: (path: string) => Promise<void>
+      }
       vault: {
         list: () => Promise<
           { id: string; origin: string; username: string; title: string; updatedAt: string }[]

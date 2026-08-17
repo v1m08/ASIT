@@ -20,6 +20,7 @@ import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
 import * as terminal from './services/terminal'
 import * as vault from './services/vault'
+import * as browser from './services/browser'
 import * as appwindows from './services/appwindows'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
@@ -213,6 +214,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     appwindows.setWindowVisible(handle, visible)
   )
   ipcMain.handle(IPC.APPWIN_RELEASE, (_e, handle: string) => appwindows.releaseWindow(handle))
+
+  // --- browser: ad blocking + extensions ---
+  ipcMain.handle(IPC.BROWSER_STATS, () => ({ blocked: browser.blockedRequestCount() }))
+  ipcMain.handle(IPC.BROWSER_EXT_LIST, () => browser.listExtensions())
+  ipcMain.handle(IPC.BROWSER_EXT_ADD, () => browser.addExtension(getWindow()))
+  ipcMain.handle(IPC.BROWSER_EXT_REMOVE, (_e, path: string) => browser.removeExtension(path))
 
   // --- password vault (never reachable from an agent) ---
   ipcMain.handle(IPC.VAULT_LIST, () => vault.listEntries())

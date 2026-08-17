@@ -56,6 +56,12 @@ export const IPC = {
   VAULT_REVEAL: 'vault:reveal',
   VAULT_STATUS: 'vault:status',
 
+  // Ad/tracker blocking + Chrome extensions for the embedded browser.
+  BROWSER_STATS: 'browser:stats',
+  BROWSER_EXT_LIST: 'browser:ext-list',
+  BROWSER_EXT_ADD: 'browser:ext-add',
+  BROWSER_EXT_REMOVE: 'browser:ext-remove',
+
   // Native app-window embedding (Windows only, user-driven, no agent path).
   APPWIN_LIST: 'appwin:list',
   APPWIN_EMBED: 'appwin:embed',

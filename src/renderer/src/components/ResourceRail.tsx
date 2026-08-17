@@ -27,6 +27,7 @@ export default function ResourceRail({
   onResourcesChanged: () => Promise<void>
 }): JSX.Element {
   const setDragItem = useStore((s) => s.setDragItem)
+  const settings = useStore((s) => s.settings)
   const [showAddUrl, setShowAddUrl] = useState(false)
   const [urlTitle, setUrlTitle] = useState('')
   const [urlValue, setUrlValue] = useState('')
@@ -163,18 +164,24 @@ export default function ResourceRail({
           <span className="rail-icon">📝</span>
           <span className="rail-title">Notes</span>
         </div>
-        <div className="rail-item" onClick={() => onOpen(BUILTIN_REVIEW)}>
-          <span className="rail-icon">🧠</span>
-          <span className="rail-title">Review</span>
-        </div>
-        <div className="rail-item" onClick={() => onOpen(BUILTIN_TERMINAL)}>
-          <span className="rail-icon">▶_</span>
-          <span className="rail-title">Terminal</span>
-        </div>
-        <div className="rail-item" onClick={() => onOpen(BUILTIN_APP)}>
-          <span className="rail-icon">🪟</span>
-          <span className="rail-title">App window</span>
-        </div>
+        {!settings?.hideReview && (
+          <div className="rail-item" onClick={() => onOpen(BUILTIN_REVIEW)}>
+            <span className="rail-icon">🧠</span>
+            <span className="rail-title">Review</span>
+          </div>
+        )}
+        {!settings?.hideTerminal && (
+          <div className="rail-item" onClick={() => onOpen(BUILTIN_TERMINAL)}>
+            <span className="rail-icon">▶_</span>
+            <span className="rail-title">Terminal</span>
+          </div>
+        )}
+        {!settings?.hideAppWindow && (
+          <div className="rail-item" onClick={() => onOpen(BUILTIN_APP)}>
+            <span className="rail-icon">🪟</span>
+            <span className="rail-title">App window</span>
+          </div>
+        )}
 
         {resources.map((r) => (
           <div

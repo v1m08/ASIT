@@ -79,6 +79,14 @@ export interface Settings {
   jarvisModel: string // model for the universal agent (same options)
   // Guardrails: terms the agent's mail/web search may never query or read
   // (empty = built-in defaults), and an optional recipient allowlist for sends.
+  // Browser behaviour the user controls.
+  adBlock: boolean
+  blockedDomains: string[]
+  extensionPaths: string[]
+  hidePin: boolean // the 📌 "save page" button — bookmarks, if you don't want them
+  hideReview: boolean
+  hideTerminal: boolean
+  hideAppWindow: boolean
   sensitiveTerms: string[]
   sendAllowlist: string[]
   onboarded: boolean

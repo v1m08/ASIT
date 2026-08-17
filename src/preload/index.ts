@@ -85,6 +85,12 @@ const api = {
       ipcRenderer.invoke(IPC.APPWIN_VISIBLE, handle, visible),
     release: (handle: string) => ipcRenderer.invoke(IPC.APPWIN_RELEASE, handle)
   },
+  browser: {
+    stats: () => ipcRenderer.invoke(IPC.BROWSER_STATS),
+    extList: () => ipcRenderer.invoke(IPC.BROWSER_EXT_LIST),
+    extAdd: () => ipcRenderer.invoke(IPC.BROWSER_EXT_ADD),
+    extRemove: (path: string) => ipcRenderer.invoke(IPC.BROWSER_EXT_REMOVE, path)
+  },
   vault: {
     list: () => ipcRenderer.invoke(IPC.VAULT_LIST),
     save: (input: { id?: string; origin: string; username: string; password: string; title?: string }) =>
