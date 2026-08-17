@@ -85,10 +85,10 @@ export default function AppWindowPane({ task }: { task: Task }): JSX.Element {
         {embedded ? (
           <>
             <span className="terminal-cwd" title={embedded.title}>
-              🪟 {embedded.title}
+              ▢ {embedded.title}
             </span>
             <span className="terminal-ai-badge terminal-ai-off" title="A native window has no page content, so the assistant can only see its title — not what's inside.">
-              🔒 AI sees title only
+              ⚿ AI sees title only
             </span>
             <button className="rail-btn rail-toggle" title="Give the window back to the desktop" onClick={release}>
               ⏏
@@ -110,18 +110,16 @@ export default function AppWindowPane({ task }: { task: Task }): JSX.Element {
         <div className="appwin-picker">
           {loading && <p className="slot-empty-hint">Looking for open windows…</p>}
           {!loading && windows.length === 0 && (
-            <p className="slot-empty-hint">
-              No embeddable windows found. Open the app first (Emacs, a file manager, anything with
+            <p className="slot-empty-hint"> No embeddable windows found. Open the app first (Emacs, a file manager, anything with
               a normal window), then hit ⟳.
             </p>
           )}
           {windows.map((w) => (
             <button key={w.handle} className="appwin-row" onClick={() => void embed(w)}>
-              🪟 <span className="appwin-title">{w.title}</span>
+              ▢ <span className="appwin-title">{w.title}</span>
             </button>
           ))}
-          <p className="slot-empty-hint appwin-note">
-            The window is moved into this slot, not copied. Its menus and dialogs still open as
+          <p className="slot-empty-hint appwin-note"> The window is moved into this slot, not copied. Its menus and dialogs still open as
             separate windows, and closing ASIT hands it back to the desktop.
           </p>
         </div>

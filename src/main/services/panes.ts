@@ -110,6 +110,10 @@ const NAV_ACCELERATORS: { accel: string; event: Record<string, unknown> }[] = [
   { accel: 'CommandOrControl+J', event: { type: 'focus-jarvis' } },
   { accel: 'CommandOrControl+L', event: { type: 'focus-address' } },
   { accel: 'CommandOrControl+Space', event: { type: 'voice-toggle' } },
+  { accel: 'CommandOrControl+Shift+E', event: { type: 'toggle-notes' } },
+  { accel: 'CommandOrControl+,', event: { type: 'open-settings' } },
+  { accel: 'CommandOrControl+H', event: { type: 'go-home' } },
+  { accel: 'CommandOrControl+B', event: { type: 'toggle-chat' } },
   ...Array.from({ length: 9 }, (_, i) => ({
     accel: `CommandOrControl+${i + 1}`,
     event: { type: 'focus-zone', index: i }

@@ -4,7 +4,7 @@ import { BUILTIN_APP, BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './
 import { useStore } from '../store/useStore'
 
 function railIcon(kind: string): string {
-  return kind === 'url' ? '🌐' : kind === 'pdf' ? '📄' : kind === 'file' ? '📎' : '📝'
+  return kind === 'url' ? '◍' : kind === 'pdf' ? '▤' : kind === 'file' ? '▥' : '✎'
 }
 
 interface LibraryFile {
@@ -93,7 +93,7 @@ export default function ResourceRail({
     setUrlValue('')
     setShowAddUrl(false)
     // A real URL becomes a resource; anything else opens an in-app web search
-    // (browse to the page, then 📌 pin it to the task).
+    // (browse to the page, then ⌾ pin it to the task).
     const looksLikeUrl = !/\s/.test(value) && value.includes('.')
     if (looksLikeUrl) {
       const r = await window.asit.resources.addUrl(task.id, urlTitle.trim(), value)
@@ -125,16 +125,16 @@ export default function ResourceRail({
           »
         </button>
         <div className="rail-item rail-item-mini" title="Notes" onClick={() => onOpen(BUILTIN_NOTES)}>
-          📝
+          ✎
         </div>
         <div className="rail-item rail-item-mini" title="Review questions" onClick={() => onOpen(BUILTIN_REVIEW)}>
-          🧠
+          ◎
         </div>
         <div className="rail-item rail-item-mini" title="Terminal" onClick={() => onOpen(BUILTIN_TERMINAL)}>
           ▶_
         </div>
         <div className="rail-item rail-item-mini" title="Embed an app window" onClick={() => onOpen(BUILTIN_APP)}>
-          🪟
+          ▢
         </div>
         {resources.map((r) => (
           <div
@@ -153,20 +153,19 @@ export default function ResourceRail({
   return (
     <aside className="resource-rail">
       <div className="rail-section">
-        <div className="rail-header">
-          Resources
+        <div className="rail-header"> Resources
           <button className="rail-btn rail-toggle" title="Collapse" onClick={toggleCollapsed}>
             «
           </button>
         </div>
 
         <div className="rail-item" onClick={() => onOpen(BUILTIN_NOTES)}>
-          <span className="rail-icon">📝</span>
+          <span className="rail-icon">✎</span>
           <span className="rail-title">Notes</span>
         </div>
         {!settings?.hideReview && (
           <div className="rail-item" onClick={() => onOpen(BUILTIN_REVIEW)}>
-            <span className="rail-icon">🧠</span>
+            <span className="rail-icon">◎</span>
             <span className="rail-title">Review</span>
           </div>
         )}
@@ -178,7 +177,7 @@ export default function ResourceRail({
         )}
         {!settings?.hideAppWindow && (
           <div className="rail-item" onClick={() => onOpen(BUILTIN_APP)}>
-            <span className="rail-icon">🪟</span>
+            <span className="rail-icon">▢</span>
             <span className="rail-title">App window</span>
           </div>
         )}
@@ -242,16 +241,14 @@ export default function ResourceRail({
                     setAiMenuFor(aiMenuFor === r.id ? null : r.id)
                   }}
                 >
-                  ✨
+                  ＋
                 </button>
                 {aiMenuFor === r.id && (
                   <div className="ai-menu" onClick={(e) => e.stopPropagation()}>
-                    <button onClick={() => requestQuestions(r.id, 'extract')}>
-                      Extract questions
+                    <button onClick={() => requestQuestions(r.id, 'extract')}> Extract questions
                       <small>pull existing problems/exercises out of the PDF</small>
                     </button>
-                    <button onClick={() => requestQuestions(r.id, 'generate')}>
-                      Generate questions
+                    <button onClick={() => requestQuestions(r.id, 'generate')}> Generate questions
                       <small>create new recall questions from the content</small>
                     </button>
                   </div>
@@ -299,11 +296,9 @@ export default function ResourceRail({
               onChange={(e) => setUrlTitle(e.target.value)}
             />
             <div className="rail-form-row">
-              <button type="submit" className="btn btn-primary">
-                Go
+              <button type="submit" className="btn btn-primary"> Go
               </button>
-              <button type="button" className="btn btn-ghost" onClick={() => setShowAddUrl(false)}>
-                Cancel
+              <button type="button" className="btn btn-ghost" onClick={() => setShowAddUrl(false)}> Cancel
               </button>
             </div>
           </form>
@@ -316,7 +311,7 @@ export default function ResourceRail({
               + PDF
             </button>
             <button className="btn rail-add" title="Attach from your global file library" onClick={openLibrary}>
-              📎
+              ▥
             </button>
           </>
         )}
@@ -329,8 +324,7 @@ export default function ResourceRail({
               </button>
             </div>
             {libraryFiles.length === 0 && (
-              <p className="library-empty">
-                Your library is empty. Add files you reuse across tasks — resume, transcript,
+              <p className="library-empty"> Your library is empty. Add files you reuse across tasks — resume, transcript,
                 formula sheets…
               </p>
             )}
@@ -350,7 +344,7 @@ export default function ResourceRail({
                 }}
                 onClick={() => attachFromLibrary(f.name)}
               >
-                <span className="rail-icon">{/\.pdf$/i.test(f.name) ? '📄' : '📎'}</span>
+                <span className="rail-icon">{/\.pdf$/i.test(f.name) ? '▤' : '▥'}</span>
                 <span className="rail-title" title={`Attach ${f.name} to this task`}>
                   {f.name}
                 </span>

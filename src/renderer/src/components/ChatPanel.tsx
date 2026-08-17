@@ -376,7 +376,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
     // drive the panes, not the conversation.
     const ranAuto: string[] = []
     for (const s of autoSkills) {
-      if (!busyAtEntry) setStatus(`⚡ Running ./${s.label}…`)
+      if (!busyAtEntry) setStatus(` Running ./${s.label}…`)
       const result = await window.asit.skills.run(task.id, s.label)
       ranAuto.push(s.label)
       setMessages((prev) => [
@@ -385,7 +385,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
           id: `local-skill-${Date.now()}-${s.label}`,
           chatSessionId: sessionId ?? 'local',
           role: 'assistant',
-          content: `⚡ Ran **./${s.label}** — ${result.log.length} steps:\n${result.log.map((l) => `- ${l}`).join('\n')}`,
+          content: ` Ran **./${s.label}** — ${result.log.length} steps:\n${result.log.map((l) => `- ${l}`).join('\n')}`,
           createdAt: new Date().toISOString()
         }
       ])
@@ -568,19 +568,17 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
                 setQueue([])
                 setQueuePaused(false)
               }}
-            >
-              Clear
+            > Clear
             </button>
           </div>
         )}
         {mentionFilter !== null && (mentionMatches.length > 0 || mentionKind === 'skill') && (
           <div className="mention-popup">
             <div className="mention-hint">
-              {mentionKind === 'skill' ? '⚡ Invoke a skill' : 'Reference a file'}
+              {mentionKind === 'skill' ? ' Invoke a skill' : 'Reference a file'}
             </div>
             {mentionMatches.length === 0 && mentionKind === 'skill' && (
-              <div className="mention-empty">
-                No skills yet — ask the chat to “save this flow as a skill” after it works
+              <div className="mention-empty"> No skills yet — ask the chat to “save this flow as a skill” after it works
                 something out.
               </div>
             )}
@@ -595,9 +593,9 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
               >
                 {c.kind === 'skill'
                   ? c.content?.includes('```asit-flow')
-                    ? '⚡'
-                    : '🤖'
-                  : '📄'}{' '}
+                    ? ''
+                    : ''
+                  : '▤'}{' '}
                 {c.label}
                 {c.kind === 'skill' && !c.content?.includes('```asit-flow') && (
                   <span className="mention-tag">agent-run</span>
@@ -632,7 +630,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
                     : undefined
                 }
               >
-                {r.kind === 'skill' ? (r.content?.includes('```asit-flow') ? '⚡' : '🤖') : '📎'}{' '}
+                {r.kind === 'skill' ? (r.content?.includes('```asit-flow') ? '' : '') : '▥'}{' '}
                 {r.label}
                 <button
                   onClick={() =>
@@ -703,7 +701,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
       <div className="chat-footer">
         {task.coding && (
           <span className="coding-agent-label" title="Coding task: command execution enabled, 15-min turns">
-            ⌨ Coding agent
+            ⌗ Coding agent
           </span>
         )}
         <select

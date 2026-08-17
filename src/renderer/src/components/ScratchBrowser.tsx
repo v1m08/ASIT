@@ -266,7 +266,7 @@ export default function ScratchBrowser({
           disabled={!active}
           onClick={() => active && onPin(active.title || active.url, active.url)}
         >
-          📌
+          ⌾
         </button>
       </div>
 

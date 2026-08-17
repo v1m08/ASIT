@@ -40,8 +40,7 @@ export default function AccountsModal({
         {welcome ? (
           <>
             <h2>Welcome to ASIT 👋</h2>
-            <p className="accounts-sub">
-              ASIT has its own built-in browser profile that stays logged in forever. Connect the
+            <p className="accounts-sub"> ASIT has its own built-in browser profile that stays logged in forever. Connect the
               accounts you study with once, and every task workspace opens pre-authenticated. Start
               with Google — it unlocks most &quot;Sign in with Google&quot; sites too.
             </p>
@@ -49,8 +48,7 @@ export default function AccountsModal({
         ) : (
           <>
             <h2>Connected accounts</h2>
-            <p className="accounts-sub">
-              Logins live in ASIT&apos;s persistent browser profile and are shared by every
+            <p className="accounts-sub"> Logins live in ASIT&apos;s persistent browser profile and are shared by every
               workspace pane.
             </p>
           </>
@@ -78,8 +76,7 @@ export default function AccountsModal({
           ))}
         </div>
 
-        <p className="accounts-note">
-          Need another site? Add it to any task as a website resource and sign in there — it sticks
+        <p className="accounts-note"> Need another site? Add it to any task as a website resource and sign in there — it sticks
           the same way.
         </p>
 

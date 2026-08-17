@@ -30,8 +30,8 @@ function finishLast(
   return prev
 }
 
-// Jarvis: the universal agent panel (Ctrl+J / 🤖). Works across every
-// workspace and can drive the app — unlike the ⚡ assistant, which is a fast
+// Jarvis: the universal agent panel (Ctrl+J / ). Works across every
+// workspace and can drive the app — unlike the  assistant, which is a fast
 // read-only lookup. Text today; the same core gains voice later.
 export default function JarvisPanel(): JSX.Element | null {
   const open = useStore((s) => s.jarvisOpen)
@@ -43,6 +43,10 @@ export default function JarvisPanel(): JSX.Element | null {
   const [exchanges, setExchanges] = useState<Exchange[]>([])
   const [lastCost, setLastCost] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Past conversations live behind a caret here instead of a separate
+  // "quick chats" list in the sidebar.
+  const [showHistory, setShowHistory] = useState(false)
+  const [history, setHistory] = useState<{ id: string; prompt: string; reply: string }[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const prewarmedRef = useRef(false)
@@ -229,7 +233,7 @@ export default function JarvisPanel(): JSX.Element | null {
       const p = args[0] as { text: string }
       setError(null)
       setBusy(true) // a voice turn is running → the Stop control appears
-      setExchanges((prev) => [...prev.slice(-8), { prompt: `🎙 ${p.text}`, reply: '', done: false, source: 'voice' }])
+      setExchanges((prev) => [...prev.slice(-8), { prompt: `◉ ${p.text}`, reply: '', done: false, source: 'voice' }])
     })
     const offReply = window.asit.on(IPC.VOICE_REPLY, (...args: unknown[]) => {
       const p = args[0] as { text: string }
@@ -318,7 +322,7 @@ export default function JarvisPanel(): JSX.Element | null {
     pinnedRef.current = true
 
     // Quick-command prefixes work right here — Jarvis is now a superset of the
-    // ⚡ assistant. "?g …" search, "?otp", "?keywords" (agentless mail grep),
+    //  assistant. "?g …" search, "?otp", "?keywords" (agentless mail grep),
     // "> name: message" (WhatsApp) — all instant, no agent, no OAuth.
     if (prompt.startsWith('?') || prompt.startsWith('>')) {
       setExchanges((prev) => [...prev.slice(-8), { prompt, reply: '', done: false, source: 'typed' }])
@@ -333,7 +337,7 @@ export default function JarvisPanel(): JSX.Element | null {
           }
         } else {
           const res = await window.asit.quickfetch.run(prompt.slice(1).trim())
-          if (res.otp) reply = `🔑 **${res.otp}** (${res.source}) — copied to clipboard.`
+          if (res.otp) reply = `⚿ **${res.otp}** (${res.source}) — copied to clipboard.`
           else if (res.error) reply = `Nothing found: ${res.error}`
           else if (res.lines.length > 0) reply = res.lines.map((l) => `- ${l}`).join('\n')
           else reply = `No matches in ${res.source || 'your sources'}.`
@@ -376,7 +380,7 @@ export default function JarvisPanel(): JSX.Element | null {
   return (
     <div className="assistant-panel jarvis-panel">
       <div className="assistant-panel-head">
-        <span className="assistant-title">🤖 Jarvis</span>
+        <span className="assistant-title">Jarvis</span>
         <button
           className={`voice-btn voice-${voiceState}`}
           title={
@@ -391,14 +395,14 @@ export default function JarvisPanel(): JSX.Element | null {
           onClick={() => void toggleVoice()}
         >
           {voiceState === 'listening'
-            ? '🔴'
+            ? '●'
             : voiceState === 'thinking'
-              ? '💭'
+              ? '⋯'
               : voiceState === 'speaking'
-                ? '🔊'
+                ? '◈'
                 : voiceState === 'download'
                   ? `${downloadPct ?? 0}%`
-                  : '🎙'}
+                  : '◉'}
         </button>
         {lastCost !== null && <span className="assistant-cost">{fmtCost(lastCost)}</span>}
         <button
@@ -412,10 +416,41 @@ export default function JarvisPanel(): JSX.Element | null {
         >
           ⟳
         </button>
+        <button
+          className="btn btn-ghost"
+          title="Past conversations"
+          onClick={async () => {
+            if (!showHistory) setHistory(await window.asit.assistant.history(40))
+            setShowHistory((v) => !v)
+          }}
+        >
+          ⌄
+        </button>
         <button className="btn btn-ghost" title="Close (Ctrl+J)" onClick={() => setOpen(false)}>
           ✕
         </button>
       </div>
+      {showHistory && (
+        <div className="jarvis-history">
+          {history.length === 0 && <p className="quick-chats-empty">Nothing yet.</p>}
+          {history.map((h) => (
+            <button
+              key={h.id}
+              className="quick-chat-item"
+              title={h.prompt}
+              onClick={() => {
+                setExchanges((prev) => [
+                  ...prev,
+                  { prompt: h.prompt, reply: h.reply, done: true, source: 'typed' as const }
+                ])
+                setShowHistory(false)
+              }}
+            >
+              {h.prompt.replace(/\s+/g, ' ').slice(0, 60)}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         className="assistant-scroll"
         ref={scrollRef}
@@ -425,8 +460,7 @@ export default function JarvisPanel(): JSX.Element | null {
         }}
       >
         {exchanges.length === 0 && !busy && (
-          <p className="assistant-hint">
-            The agent that works <b>across</b> your workspaces and can drive the app — "add the
+          <p className="assistant-hint"> The agent that works <b>across</b> your workspaces and can drive the app — "add the
             syllabus link to CS 1331", "what's due this week anywhere?", "generate 10 questions
             from the bio slides". It reads every workspace and acts through the same tools your
             workspace chats use.

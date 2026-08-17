@@ -81,8 +81,7 @@ export default function ActivityGraph(): JSX.Element | null {
         <span>more</span>
       </div>
 
-      <h2 className="activity-cost-title">
-        AI usage — last 30 days <span className="activity-total">{fmtCost(totalCost30)}</span>
+      <h2 className="activity-cost-title"> AI usage — last 30 days <span className="activity-total">{fmtCost(totalCost30)}</span>
       </h2>
       <div className="cost-chart" role="img" aria-label="Daily AI cost, last 30 days">
         {last30.map((d) => (

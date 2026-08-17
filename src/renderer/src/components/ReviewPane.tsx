@@ -42,20 +42,17 @@ export default function ReviewPane({ task }: { task: Task }): JSX.Element {
         <button
           className={`btn ${mode === 'due' ? 'btn-primary' : 'btn-ghost'}`}
           onClick={() => switchMode('due')}
-        >
-          Due ({counts.due})
+        > Due ({counts.due})
         </button>
         <button
           className={`btn ${mode === 'all' ? 'btn-primary' : 'btn-ghost'}`}
           onClick={() => switchMode('all')}
-        >
-          All questions ({counts.all})
+        > All questions ({counts.all})
         </button>
         <button
           className={`btn ${mode === 'terms' ? 'btn-primary' : 'btn-ghost'}`}
           onClick={() => switchMode('terms')}
-        >
-          Key terms ({counts.terms})
+        > Key terms ({counts.terms})
         </button>
       </div>
 
@@ -64,8 +61,7 @@ export default function ReviewPane({ task }: { task: Task }): JSX.Element {
           terms.length === 0 ? (
             <div className="review-pane-empty">
               <p>No key terms found.</p>
-              <p className="review-pane-hint">
-                Write definitions in your notes as “Term: definition” — they appear here
+              <p className="review-pane-hint"> Write definitions in your notes as “Term: definition” — they appear here
                 automatically.
               </p>
             </div>
@@ -107,8 +103,7 @@ export default function ReviewPane({ task }: { task: Task }): JSX.Element {
             {counts.all === 0 ? (
               <>
                 <p>No questions on this task yet.</p>
-                <p className="review-pane-hint">
-                  Hover a PDF in the left rail and use its ✨ menu to extract or generate questions
+                <p className="review-pane-hint"> Hover a PDF in the left rail and use its ＋ menu to extract or generate questions
                   — or ask the chat to quiz you.
                 </p>
               </>

@@ -1,15 +1,20 @@
 :root {
-  --bg: #12141a;
-  --bg-raised: #1a1d26;
-  --bg-hover: #22262f;
-  --border: #2c3038;
+  --bg: #101217;
+  /* Raised surfaces sit BARELY above the background now. The old contrast
+     made every panel read as a separate boxed-in widget. */
+  --bg-raised: #161920;
+  --bg-hover: #1e222b;
+  /* Borders are separators, not outlines — most chrome now leans on the
+     surface change and keeps the line only where it divides regions. */
+  --border: #23272f;
+  --border-strong: #2f343d;
   --text: #e6e8ee;
-  --text-dim: #9aa0ad;
+  --text-dim: #8d94a3;
   --accent: #7aa2f7;
   --accent-dim: #3d59a1;
   --danger: #f7768e;
   --ok: #9ece6a;
-  --radius: 10px;
+  --radius: 8px;
   font-size: 15px;
 }
 
@@ -189,10 +194,10 @@ select:focus {
 .workspace-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 12px;
+  gap: 10px;
+  padding: 4px 10px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-raised);
+  background: var(--bg);
   flex-shrink: 0;
 }
 
@@ -233,7 +238,7 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 8px;
+  padding: 5px 7px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -438,10 +443,10 @@ select:focus {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 4px 9px;
   border-radius: 6px 6px 0 0;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid transparent;
   border-bottom: none;
   cursor: pointer;
   max-width: 220px;
@@ -498,9 +503,9 @@ select:focus {
 .pane-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: var(--bg-raised);
+  gap: 2px;
+  padding: 2px 6px;
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -578,7 +583,7 @@ select:focus {
 }
 
 .modal {
-  width: min(440px, 90vw);
+  width: min(460px, 92vw);
   /* Settings has outgrown one screen — cap and scroll inside the card. */
   max-height: 88vh;
   overflow-y: auto;
@@ -999,7 +1004,7 @@ body.assistant-open:has(.jarvis-panel) .home-main {
 }
 
 .home-side {
-  width: 300px;
+  width: 268px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
@@ -2439,10 +2444,14 @@ body.assistant-open:has(.jarvis-panel) .home-main {
 
 .todo-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start; /* multi-line rows keep the checkbox at the top */
   gap: 8px;
-  padding: 4px 4px;
+  padding: 4px;
   border-radius: 6px;
+}
+
+.todo-row input[type='checkbox'] {
+  margin-top: 2px;
 }
 
 .todo-row:hover {
@@ -2458,9 +2467,9 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   flex: 1;
   min-width: 0;
   font-size: 0.84rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Long to-dos wrap: truncating them hid the actual task. */
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .todo-link {

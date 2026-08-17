@@ -70,8 +70,7 @@ function ReviewOverlay({ onClose }: { onClose: () => void }): JSX.Element {
           <h2>Quick recall</h2>
         </div>
         <ReviewCards onDone={onClose} />
-        <button className="btn btn-ghost" onClick={onClose}>
-          Close
+        <button className="btn btn-ghost" onClick={onClose}> Close
         </button>
       </div>
     </div>
@@ -85,8 +84,7 @@ function ActivityModal({ onClose }: { onClose: () => void }): JSX.Element {
       <div className="modal card activity-modal" onClick={(e) => e.stopPropagation()}>
         <ActivityGraph />
         <div className="modal-actions">
-          <button className="btn btn-primary" onClick={onClose}>
-            Done
+          <button className="btn btn-primary" onClick={onClose}> Done
           </button>
         </div>
       </div>
@@ -100,15 +98,7 @@ export default function Home(): JSX.Element {
   const openTask = useStore((s) => s.openTask)
   const startFocus = useStore((s) => s.startFocus)
   const setAssistantRecall = useStore((s) => s.setAssistantRecall)
-  const [assistantHistory, setAssistantHistory] = useState<
-    { id: string; prompt: string; reply: string }[]
-  >([])
-  const [showQuickChats, setShowQuickChats] = useState(false)
   const [showTodos, setShowTodos] = useState(true)
-
-  useEffect(() => {
-    reliablyInto('quick chats', () => window.asit.assistant.history(15), setAssistantHistory)
-  }, [showQuickChats])
 
   const [sideCollapsed, setSideCollapsed] = useState(
     () => localStorage.getItem('asit-side-collapsed') === '1'
@@ -119,7 +109,8 @@ export default function Home(): JSX.Element {
     costByTask: Record<string, number>
   } | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  const showSettings = useStore((s) => s.settingsOpen)
+  const setShowSettings = useStore((s) => s.setSettingsOpen)
   const [showActivity, setShowActivity] = useState(false)
   const [showReview, setShowReview] = useState(false)
   const [dueCount, setDueCount] = useState(0)
@@ -142,8 +133,10 @@ export default function Home(): JSX.Element {
   // Scratchpad workspace state
   const [scratch, setScratch] = useState<Task | null>(null)
   const [scratchResources, setScratchResources] = useState<Resource[]>([])
-  const [chatOpen, setChatOpen] = useState(false)
-  const [notesOpen, setNotesOpen] = useState(false)
+  const chatOpen = useStore((s) => s.chatOpen)
+  const setChatOpen = (v: boolean): void => useStore.setState({ chatOpen: v })
+  const notesOpen = useStore((s) => s.scratchNotesOpen)
+  const setNotesOpen = (v: boolean): void => useStore.setState({ scratchNotesOpen: v })
   const [saving, setSaving] = useState(false)
   const [sessionName, setSessionName] = useState('')
   const browserApi = useRef<ScratchBrowserApi | null>(null)
@@ -287,12 +280,12 @@ export default function Home(): JSX.Element {
           <span className="side-task-meta">
             {task.aiDisabled && (
               <span className="badge" title="Private — AI disabled">
-                🔒
+                ⚿
               </span>
             )}
             {task.coding && (
               <span className="badge" title="Coding task — chat is a coding agent (Fable 5)">
-                ⌨
+                ⌗
               </span>
             )}
             {isTop && <span className="badge badge-accent">start here</span>}
@@ -329,8 +322,7 @@ export default function Home(): JSX.Element {
                 >
                   ⏱ Focus with timer
                 </button>
-                <button onClick={() => { setMenuTaskId(null); openTask(task.id) }}>
-                  Open workspace
+                <button onClick={() => { setMenuTaskId(null); openTask(task.id) }}> Open workspace
                 </button>
               </>
             )}
@@ -357,7 +349,7 @@ export default function Home(): JSX.Element {
                   await loadTasks()
                 }}
               >
-                {task.coding ? '📖 Switch to study mode' : '⌨ Make coding workspace'}
+                {task.coding ? '📖 Switch to study mode' : '⌗ Make coding workspace'}
               </button>
             )}
             {!task.aiDisabled && (
@@ -369,11 +361,11 @@ export default function Home(): JSX.Element {
                   await loadTasks()
                 }}
               >
-                {task.terminalAiRead ? '🚫 Stop AI reading terminal' : '👁 Let AI read terminal'}
+                {task.terminalAiRead ? '⊘ Stop AI reading terminal' : '◉ Let AI read terminal'}
               </button>
             )}
             <button onClick={() => { setMenuTaskId(null); togglePrivacy(task) }}>
-              {task.aiDisabled ? '✨ Enable AI' : '🔒 Make private (no AI)'}
+              {task.aiDisabled ? '＋ Enable AI' : '⚿ Make private (no AI)'}
             </button>
             <button onClick={() => { setMenuTaskId(null); handleMarkDone(task) }}>
               {task.status === 'done' ? '↩ Reopen' : '✓ Mark done'}
@@ -401,11 +393,9 @@ export default function Home(): JSX.Element {
                 if (e.key === 'Escape') setSaving(false)
               }}
             />
-            <button className="btn btn-primary" type="submit" disabled={!sessionName.trim()}>
-              Save
+            <button className="btn btn-primary" type="submit" disabled={!sessionName.trim()}> Save
             </button>
-            <button className="btn btn-ghost" type="button" onClick={() => setSaving(false)}>
-              Cancel
+            <button className="btn btn-ghost" type="button" onClick={() => setSaving(false)}> Cancel
             </button>
           </form>
         ) : (
@@ -414,7 +404,7 @@ export default function Home(): JSX.Element {
             title="Turn the open tabs, notes, and chats into a named task"
             onClick={() => setSaving(true)}
           >
-            💾 Save session
+            ↧ Save session
           </button>
         )}
         <span className="scratch-hint">browse freely — save the session when it becomes a workspace</span>
@@ -422,16 +412,16 @@ export default function Home(): JSX.Element {
         <button
           className={`btn btn-ghost chat-toggle ${notesOpen ? 'chat-toggle-on' : ''}`}
           title="Session notes"
-          onClick={() => setNotesOpen((v) => !v)}
+          onClick={() => setNotesOpen(!notesOpen)}
         >
-          📝
+          ✎
         </button>
         <button
           className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
           title="AI chat (sees your open tabs)"
-          onClick={() => setChatOpen((v) => !v)}
+          onClick={() => setChatOpen(!chatOpen)}
         >
-          💬
+          ▭
         </button>
       </header>
       <div className="workspace-body">
@@ -478,8 +468,7 @@ export default function Home(): JSX.Element {
     return (
       <div className="home2">
         <aside className="home-side home-side-mini">
-          <span className="logo-mark" title="ASIT">
-            A
+          <span className="logo-mark" title="ASIT"> A
           </span>
           <button className="btn btn-ghost" title="Show tasks" onClick={toggleSidebar}>
             »
@@ -490,7 +479,7 @@ export default function Home(): JSX.Element {
               title={`${dueCount} questions due — review`}
               onClick={() => setShowReview(true)}
             >
-              🧠
+              ◎
             </button>
           )}
           <button className="btn btn-ghost" title="Settings" onClick={() => setShowSettings(true)}>
@@ -514,7 +503,7 @@ export default function Home(): JSX.Element {
           </span>
           <span className="side-header-actions">
             <button className="btn btn-ghost" title="Activity & usage" onClick={() => setShowActivity(true)}>
-              📊
+              ▦
             </button>
             <button className="btn btn-ghost" title="Settings" onClick={() => setShowSettings(true)}>
               ⚙
@@ -527,7 +516,7 @@ export default function Home(): JSX.Element {
 
         {dueCount > 0 && (
           <button className="review-banner" onClick={() => setShowReview(true)}>
-            🧠 {dueCount} question{dueCount === 1 ? '' : 's'} due — review now
+            ◎ {dueCount} question{dueCount === 1 ? '' : 's'} due — review now
           </button>
         )}
 
@@ -553,14 +542,12 @@ export default function Home(): JSX.Element {
                 checked={createPrivate}
                 onChange={(e) => setCreatePrivate(e.target.checked)}
               />
-              🔒 Private — no AI on this task
+              ⚿ Private — no AI on this task
             </label>
             <div className="form-row">
-              <button className="btn btn-primary" type="submit">
-                Create
+              <button className="btn btn-primary" type="submit"> Create
               </button>
-              <button className="btn btn-ghost" type="button" onClick={() => setShowCreate(false)}>
-                Cancel
+              <button className="btn btn-ghost" type="button" onClick={() => setShowCreate(false)}> Cancel
               </button>
             </div>
           </form>
@@ -596,27 +583,6 @@ export default function Home(): JSX.Element {
             ☑ To-dos {showTodos ? '▾' : '▸'}
           </button>
           {showTodos && <TodoList onOpenUrl={(url) => browserApi.current?.openTab(url)} />}
-        </div>
-
-        <div className="quick-chats">
-          <button className="quick-chats-toggle" onClick={() => setShowQuickChats((v) => !v)}>
-            ⚡ Quick chats {showQuickChats ? '▾' : '▸'}
-          </button>
-          {showQuickChats &&
-            (assistantHistory.length === 0 ? (
-              <p className="quick-chats-empty">No quick chats yet — ask something in the ⚡ bar.</p>
-            ) : (
-              assistantHistory.map((h) => (
-                <button
-                  key={h.id}
-                  className="quick-chat-item"
-                  title={h.prompt}
-                  onClick={() => setAssistantRecall({ prompt: h.prompt, reply: h.reply })}
-                >
-                  {h.prompt.replace(/\s+/g, ' ').slice(0, 48)}
-                </button>
-              ))
-            ))}
         </div>
 
         {stats && (

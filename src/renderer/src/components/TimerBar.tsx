@@ -69,7 +69,7 @@ export default function TimerBar({ task }: { task: Task }): JSX.Element {
       ) : (
         <>
           <span className={`timer-phase timer-${state.phase}`}>
-            {state.phase === 'work' ? '🔒 Focus' : state.phase === 'break' ? '☕ Break' : '⏸ Paused'}
+            {state.phase === 'work' ? '⚿ Focus' : state.phase === 'break' ? '☕ Break' : '⏸ Paused'}
           </span>
           <span className="timer-clock">
             {state.mode === 'stopwatch' ? fmt(state.elapsedSec) : fmt(state.remainingSec)}
@@ -78,12 +78,10 @@ export default function TimerBar({ task }: { task: Task }): JSX.Element {
             <span className="timer-meta">{state.phasesCompleted} done</span>
           )}
           {state.phase === 'paused' ? (
-            <button className="btn btn-ghost" onClick={() => window.asit.session.resume()}>
-              Resume
+            <button className="btn btn-ghost" onClick={() => window.asit.session.resume()}> Resume
             </button>
           ) : (
-            <button className="btn btn-ghost" onClick={() => window.asit.session.pause()}>
-              Pause
+            <button className="btn btn-ghost" onClick={() => window.asit.session.pause()}> Pause
             </button>
           )}
           <button className="btn btn-ghost" onClick={handleEnd}>

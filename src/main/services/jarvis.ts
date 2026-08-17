@@ -11,6 +11,7 @@ import { memorySection } from './memory'
 import { listSkills } from './skills'
 import { authorizeSendsFromUserMessage, clearSendAuthorization } from './guardrails'
 import { toolStatus } from './chat'
+import { logExchange } from './assistant'
 import { bus } from './bus'
 
 // Jarvis: the universal agent. One brain, many mouths — the desktop panel
@@ -165,6 +166,7 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
           return
         }
         appendWorklog(prompt, text)
+        logExchange(prompt, text) // shows up in the assistant's history panel
         cb.onDone(text, usage.costUsd)
       },
       onError: (message) => {

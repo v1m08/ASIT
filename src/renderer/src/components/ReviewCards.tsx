@@ -146,8 +146,7 @@ export default function ReviewCards({
               {current.answer && (
                 <p className="review-answer">{current.answer}</p>
               )}
-              <button className="btn btn-primary" onClick={advance}>
-                Next
+              <button className="btn btn-primary" onClick={advance}> Next
               </button>
             </>
           )}
@@ -165,8 +164,7 @@ export default function ReviewCards({
               {checking ? 'Checking…' : 'Check'}
             </button>
           </form>
-          <button className="btn btn-ghost review-reveal" onClick={() => setRevealed(true)}>
-            Show answer
+          <button className="btn btn-ghost review-reveal" onClick={() => setRevealed(true)}> Show answer
           </button>
         </>
       ) : (
@@ -181,8 +179,7 @@ export default function ReviewCards({
             </div>
           )}
           {feedback && feedback.grade >= 0 ? (
-            <button className="btn btn-primary" onClick={advance}>
-              Next
+            <button className="btn btn-primary" onClick={advance}> Next
             </button>
           ) : (
             <div className="review-grades">

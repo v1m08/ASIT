@@ -325,7 +325,7 @@ export default function NotesEditor({
         onClick={toggleRaw}
         title={raw ? 'Back to live preview (Ctrl+E)' : 'Show raw markdown (Ctrl+E)'}
       >
-        {raw ? '👁' : '⟨⟩'}
+        {raw ? '◉' : '⟨⟩'}
       </button>
       <div className="notes-editor" ref={containerRef} />
       {popup && (
@@ -339,7 +339,7 @@ export default function NotesEditor({
                 applyOption(opt)
               }}
             >
-              {opt.kind === 'file' ? '📄' : '⚡'} {opt.label}
+              {opt.kind === 'file' ? '▤' : ''} {opt.label}
               {opt.kind === 'snippet' && (
                 <span className="mention-tag">{opt.insert.slice(0, 24)}</span>
               )}

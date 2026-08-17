@@ -41,7 +41,7 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
       scrollback: 5000,
       // Match the app's palette so it doesn't look bolted on.
       theme: {
-        background: '#12141a',
+        background: '#101217',
         foreground: '#c8d0e0',
         cursor: '#7aa2f7',
         selectionBackground: '#2c3448'
@@ -125,11 +125,11 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
         </span>
         {task.terminalAiRead ? (
           <span className="terminal-ai-badge" title="This workspace's agent may READ this output. It can never type here.">
-            👁 AI can read
+            ◉ AI can read
           </span>
         ) : (
           <span className="terminal-ai-badge terminal-ai-off" title="No agent can see or type in this terminal.">
-            🔒 AI blocked
+            ⚿ AI blocked
           </span>
         )}
         <button className="rail-btn rail-toggle" title="Restart shell" onClick={() => setRestartTick((t) => t + 1)}>
@@ -138,8 +138,7 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
       </div>
       {error && <p className="terminal-error">Couldn’t start a terminal: {error}</p>}
       {exited !== null && (
-        <p className="terminal-error">
-          Shell exited (code {exited}) — press ⟳ to start a new one.
+        <p className="terminal-error"> Shell exited (code {exited}) — press ⟳ to start a new one.
         </p>
       )}
       <div className="terminal-host" ref={hostRef} />

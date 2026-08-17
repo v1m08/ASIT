@@ -41,7 +41,7 @@ export default function QuestionsModal({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal card questions-modal" onClick={(e) => e.stopPropagation()}>
         <h2>Questions — {task.title}</h2>
-        {questions.length === 0 && <p className="empty">No questions for this task yet. Use the ✨ menu on a PDF.</p>}
+        {questions.length === 0 && <p className="empty">No questions for this task yet. Use the ＋ menu on a PDF.</p>}
         <div className="questions-list">
           {questions.map((q) => (
             <div key={q.id} className={`question-row ${q.suspended ? 'question-suspended' : ''}`}>
@@ -67,8 +67,7 @@ export default function QuestionsModal({
           ))}
         </div>
         <div className="modal-actions">
-          <button className="btn btn-primary" onClick={onClose}>
-            Done
+          <button className="btn btn-primary" onClick={onClose}> Done
           </button>
         </div>
       </div>

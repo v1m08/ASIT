@@ -76,8 +76,7 @@ function GuardrailsSection({
   return (
     <div className="snippets-section">
       <div className="rail-header">Guardrails — what the assistant may never touch</div>
-      <p className="transfer-note">
-        Enforced in the app, not in the prompt. Blocked searches never run, so protected mail never
+      <p className="transfer-note"> Enforced in the app, not in the prompt. Blocked searches never run, so protected mail never
         reaches the model; sending is off unless the message you just typed asks for it.
       </p>
       <ListField
@@ -138,8 +137,7 @@ function VaultSection(): JSX.Element {
   return (
     <div className="snippets-section">
       <div className="rail-header">Passwords — autofill inside ASIT's browser</div>
-      <p className="transfer-note">
-        Stored on this machine only, encrypted with Windows’ own account protection, and kept
+      <p className="transfer-note"> Stored on this machine only, encrypted with Windows’ own account protection, and kept
         outside every folder the AI can read. <strong>No agent can see these</strong> — there is no
         action that reaches them, and password fields are hidden from the page snapshots agents
         read. Focus a login box on a saved site and it fills; signing in stays your click.
@@ -173,7 +171,7 @@ function VaultSection(): JSX.Element {
               if (value) setRevealed((p) => ({ ...p, [r.id]: value }))
             }}
           >
-            👁
+            ◉
           </button>
           <button
             className="rail-btn rail-toggle"
@@ -220,7 +218,12 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl+1…9', 'Jump to panel'],
   ['Tab / Shift+Tab', 'Move between panels'],
   ['Ctrl+K  ·  Ctrl+J', 'Quick assistant · Jarvis'],
-  ['Ctrl+Space', 'Talk to Jarvis']
+  ['Ctrl+Space', 'Talk to Jarvis'],
+  ['Ctrl+B', 'Show / hide chat'],
+  ['Ctrl+Shift+E', 'Show / hide notes'],
+  ['Ctrl+H', 'Back to home'],
+  ['Ctrl+,', 'Settings'],
+  ['Ctrl+E', 'Notes: live preview ↔ raw']
 ]
 
 function BrowserSection({
@@ -268,14 +271,13 @@ function BrowserSection({
       />
 
       <div className="rail-header" style={{ marginTop: 14 }}>Hide what you don’t use</div>
-      {toggle('hidePin', 'Hide 📌 save-page button', 'The closest thing to bookmarks.')}
+      {toggle('hidePin', 'Hide ⌾ save-page button', 'The closest thing to bookmarks.')}
       {toggle('hideReview', 'Hide Review tab')}
       {toggle('hideTerminal', 'Hide Terminal tab')}
       {toggle('hideAppWindow', 'Hide App window tab')}
 
       <div className="rail-header" style={{ marginTop: 14 }}>Extensions</div>
-      <p className="transfer-note">
-        Unpacked Chrome extensions only — there is no Web Store install, and Electron implements
+      <p className="transfer-note"> Unpacked Chrome extensions only — there is no Web Store install, and Electron implements
         just part of the extension API, so content-script extensions (blockers, restylers) work
         while ones relying on background service workers often don’t.
       </p>
@@ -311,7 +313,7 @@ function BrowserSection({
       {extMsg && <p className="transfer-note">{extMsg}</p>}
 
       <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={() => setShowKeys((v) => !v)}>
-        ⌨ {showKeys ? 'Hide' : 'Show'} keyboard shortcuts
+        ⌗ {showKeys ? 'Hide' : 'Show'} keyboard shortcuts
       </button>
       {showKeys && (
         <div className="shortcut-table">
@@ -389,7 +391,7 @@ function PhoneSection(): JSX.Element {
     <div className="phone-section">
       <div className="row-between">
         <span>
-          📱 Phone companion{' '}
+          ▯ Phone companion{' '}
           {status.running && <span className="badge badge-accent">running</span>}
         </span>
         <button className="btn" disabled={busy} onClick={toggle}>
@@ -399,7 +401,7 @@ function PhoneSection(): JSX.Element {
       {status.pendingPair && (
         <div className="pair-request">
           <span>
-            📱 A phone wants to pair — confirm it shows code <b>{status.pendingPair.code}</b>
+            ▯ A phone wants to pair — confirm it shows code <b>{status.pendingPair.code}</b>
           </span>
           <span className="pair-request-actions">
             <button
@@ -407,16 +409,14 @@ function PhoneSection(): JSX.Element {
               onClick={async () =>
                 setStatus(await window.asit.companion.pairApprove(status.pendingPair!.requestId))
               }
-            >
-              Approve
+            > Approve
             </button>
             <button
               className="btn btn-ghost"
               onClick={async () =>
                 setStatus(await window.asit.companion.pairDeny(status.pendingPair!.requestId))
               }
-            >
-              Deny
+            > Deny
             </button>
           </span>
         </div>
@@ -424,8 +424,7 @@ function PhoneSection(): JSX.Element {
       {status.enabled && (
         <>
           {status.tailscale === 'not-installed' && (
-            <p className="transfer-note">
-              Install <b>Tailscale</b> on this PC and your phone (free —{' '}
+            <p className="transfer-note"> Install <b>Tailscale</b> on this PC and your phone (free —{' '}
               <a
                 href="https://tailscale.com/download"
                 onClick={(e) => {
@@ -446,7 +445,7 @@ function PhoneSection(): JSX.Element {
             <>
               <div className="transfer-buttons">
                 <button className="btn" disabled={busy} onClick={serve}>
-                  🌐 Expose on my tailnet
+                  ◍ Expose on my tailnet
                 </button>
                 <button
                   className="btn"
@@ -454,24 +453,22 @@ function PhoneSection(): JSX.Element {
                   title={status.subscriptions === 0 ? 'Pair a phone first' : ''}
                   onClick={() => window.asit.companion.testPush()}
                 >
-                  🔔 Test notification
+                  ◔ Test notification
                 </button>
                 <button
                   className="btn btn-ghost"
                   disabled={busy}
                   title="Invalidates the QR link and disconnects all paired phones"
                   onClick={async () => setStatus(await window.asit.companion.revoke())}
-                >
-                  Revoke pairing
+                > Revoke pairing
                 </button>
               </div>
               {qr?.dataUrl && (
                 <div className="phone-qr">
                   <img src={qr.dataUrl} alt="Pairing QR" width={180} height={180} />
-                  <p className="transfer-note">
-                    On your phone (Tailscale connected): scan this, then in Safari{' '}
+                  <p className="transfer-note"> On your phone (Tailscale connected): scan this, then in Safari{' '}
                     <b>Share → Add to Home Screen</b> and open it from the home-screen icon. It
-                    will show a 6-digit code — approve it here when it appears. Then tap 🔔
+                    will show a 6-digit code — approve it here when it appears. Then tap ◔
                     Enable for notifications.{' '}
                     {status.subscriptions > 0 && `Paired devices with push: ${status.subscriptions}.`}
                   </p>
@@ -533,23 +530,21 @@ function VoiceSection(): JSX.Element {
   return (
     <div className="phone-section">
       <div className="row-between">
-        <span>🎙 Voice (talk to Jarvis — Ctrl+Space)</span>
+        <span>◉ Voice (talk to Jarvis — Ctrl+Space)</span>
       </div>
-      <p className="transfer-note">
-        Speech recognition and the spoken voice both run fully on your machine. Models download
+      <p className="transfer-note"> Speech recognition and the spoken voice both run fully on your machine. Models download
         once.
       </p>
       <div className="transfer-buttons">
         <button className="btn" disabled={!!busy || stt === true} onClick={getStt}>
-          {stt ? '✓ Recognition ready' : busy === 'stt' ? `Downloading… ${pct ?? 0}%` : '⬇ Speech recognition (~130MB)'}
+          {stt ? '✓ Recognition ready' : busy === 'stt' ? `Downloading… ${pct ?? 0}%` : '↓ Speech recognition (~130MB)'}
         </button>
         <button className="btn" disabled={!!busy || tts === true} onClick={getTts}>
-          {tts ? '✓ Natural voice ready' : busy === 'tts' ? `Downloading… ${pct ?? 0}%` : '✨ Natural voice (~370MB)'}
+          {tts ? '✓ Natural voice ready' : busy === 'tts' ? `Downloading… ${pct ?? 0}%` : '＋ Natural voice (~370MB)'}
         </button>
       </div>
       {tts !== true && (
-        <p className="transfer-note">
-          Until the natural voice is installed, replies use the built-in Windows voice.
+        <p className="transfer-note"> Until the natural voice is installed, replies use the built-in Windows voice.
         </p>
       )}
     </div>
@@ -561,6 +556,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
   const [settings, setSettings] = useState<Settings | null>(null)
   const [saved, setSaved] = useState(false)
   const [showAccounts, setShowAccounts] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [transferMsg, setTransferMsg] = useState<string | null>(null)
   const [transferBusy, setTransferBusy] = useState(false)
 
@@ -601,8 +597,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
     if (!settings) return
     // Clamp numerics — a cleared input would otherwise persist 0 and make
     // hold-to-quit instant (defeating the lockdown's whole point).
-    const clamp = (v: number, min: number, max: number, fallback: number): number =>
-      Number.isFinite(v) && v >= min ? Math.min(max, v) : fallback
+    const clamp = (v: number, min: number, max: number, fallback: number): number => Number.isFinite(v) && v >= min ? Math.min(max, v) : fallback
     await window.asit.settings.set({
       ...settings,
       workMin: clamp(settings.workMin, 1, 240, 25),
@@ -620,8 +615,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
       <div className="modal card" onClick={(e) => e.stopPropagation()}>
         <h2>Settings</h2>
 
-        <label className="settings-field">
-          Work minutes
+        <label className="settings-field"> Work minutes
           <input
             type="number"
             min={5}
@@ -631,8 +625,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </label>
 
-        <label className="settings-field">
-          Break minutes
+        <label className="settings-field"> Break minutes
           <input
             type="number"
             min={1}
@@ -642,8 +635,21 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </label>
 
-        <label className="settings-field">
-          Hold-to-quit seconds
+        <BrowserSection settings={settings} setSettings={setSettings} />
+
+        <VaultSection />
+
+        <PhoneSection />
+
+        <button
+          className="btn btn-ghost advanced-toggle"
+          onClick={() => setShowAdvanced((v) => !v)}
+        >
+          {showAdvanced ? '▾' : '▸'} Advanced
+        </button>
+        {showAdvanced && (
+          <div className="advanced-group">
+        <label className="settings-field"> Hold-to-quit seconds
           <input
             type="number"
             min={5}
@@ -653,8 +659,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </label>
 
-        <label className="settings-field">
-          Escape phrase
+        <label className="settings-field"> Escape phrase
           <textarea
             rows={2}
             value={settings.escapePhrase}
@@ -662,8 +667,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </label>
 
-        <label className="settings-field">
-          Claude CLI path
+        <label className="settings-field"> Claude CLI path
           <input
             value={settings.claudePath}
             onChange={(e) => setSettings({ ...settings, claudePath: e.target.value })}
@@ -697,40 +701,35 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </div>
 
-        <BrowserSection settings={settings} setSettings={setSettings} />
-
-        <VaultSection />
-
         <GuardrailsSection settings={settings} setSettings={setSettings} />
 
         <button className="btn" onClick={() => setShowAccounts(true)}>
-          🔑 Connected accounts…
+          ⚿ Connected accounts…
         </button>
 
         <VoiceSection />
 
-        <PhoneSection />
-
         <div className="transfer-section">
           <div className="transfer-buttons">
             <button className="btn" disabled={transferBusy} onClick={handleExport}>
-              ⬆ Export backup…
+              ↑ Export backup…
             </button>
             <button className="btn" disabled={transferBusy} onClick={handleImport}>
-              ⬇ Import backup…
+              ↓ Import backup…
             </button>
           </div>
-          <p className="transfer-note">
-            Backups include tasks, notes, PDFs, questions, and timer settings — never your logins,
+          <p className="transfer-note"> Backups include tasks, notes, PDFs, questions, and timer settings — never your logins,
             chat history, escape phrase, or usage data. Safe to share. Importing always adds new
             tasks; it never overwrites.
           </p>
           {transferMsg && <p className="transfer-msg">{transferMsg}</p>}
         </div>
 
+          </div>
+        )}
+
         <div className="modal-actions">
-          <button className="btn btn-ghost" onClick={onClose}>
-            Cancel
+          <button className="btn btn-ghost" onClick={onClose}> Cancel
           </button>
           <button className="btn btn-primary" onClick={save}>
             {saved ? 'Saved ✓' : 'Save'}

@@ -199,6 +199,30 @@ export function installFocusRing(): () => void {
     } else if (/^[1-9]$/.test(k)) {
       e.preventDefault()
       jumpTo(Number(k) - 1)
+    } else if (k === 'e' && e.shiftKey) {
+      e.preventDefault()
+      appAction('toggle-notes')
+    } else if (k === ',') {
+      e.preventDefault()
+      appAction('open-settings')
+    } else if (k === 'h') {
+      e.preventDefault()
+      appAction('go-home')
+    } else if (k === 'b') {
+      e.preventDefault()
+      appAction('toggle-chat')
+    }
+  }
+
+  // App-level shortcuts. Kept here because this hook is the one place that
+  // already sees BOTH real key events and the events main replays from pages.
+  function appAction(kind: string): void {
+    const store = useStore.getState()
+    if (kind === 'toggle-notes') store.toggleScratchNotes()
+    else if (kind === 'open-settings') store.setSettingsOpen(true)
+    else if (kind === 'toggle-chat') store.toggleChat()
+    else if (kind === 'go-home' && store.view === 'workspace') {
+      void window.asit.panes.park().then(() => store.goHome())
     }
   }
 
@@ -231,6 +255,10 @@ export function installFocusRing(): () => void {
     else if (p.type === 'voice-toggle') useStore.getState().bumpVoice()
     else if (p.type === 'focus-address') focusSelector('.browser-address')
     else if (p.type === 'focus-chat') focusSelector('.chat-input-box textarea')
+    else if (p.type === 'toggle-notes') appAction('toggle-notes')
+    else if (p.type === 'open-settings') appAction('open-settings')
+    else if (p.type === 'go-home') appAction('go-home')
+    else if (p.type === 'toggle-chat') appAction('toggle-chat')
   })
 
   // Clicking an embedded page blurs the whole renderer — that is main's cue to

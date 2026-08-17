@@ -57,6 +57,15 @@ interface AsitState {
   dragItem: { kind: 'library' | 'resource'; value: string } | null
   setDragItem: (item: { kind: 'library' | 'resource'; value: string } | null) => void
 
+  // Shortcut-driven UI toggles, kept in the store so a key pressed inside a
+  // page (which reaches main first) can drive the same state as a click.
+  scratchNotesOpen: boolean
+  toggleScratchNotes: () => void
+  settingsOpen: boolean
+  setSettingsOpen: (open: boolean) => void
+  chatOpen: boolean
+  toggleChat: () => void
+
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
   openTask: (id: string) => Promise<void>
@@ -112,6 +121,12 @@ export const useStore = create<AsitState>((set, get) => ({
 
   dragItem: null,
   setDragItem: (dragItem) => set({ dragItem }),
+  scratchNotesOpen: false,
+  toggleScratchNotes: () => set((st) => ({ scratchNotesOpen: !st.scratchNotesOpen })),
+  settingsOpen: false,
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  chatOpen: true,
+  toggleChat: () => set((st) => ({ chatOpen: !st.chatOpen })),
   loadError: null,
   retryLoad: async () => {
     set({ loadError: null })

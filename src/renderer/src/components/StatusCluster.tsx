@@ -21,8 +21,6 @@ export default function StatusCluster(): JSX.Element {
   const notice = useStore((s) => s.notice)
   const loadError = useStore((s) => s.loadError)
   const retryLoad = useStore((s) => s.retryLoad)
-  const assistantOpen = useStore((s) => s.assistantOpen)
-  const setAssistantOpen = useStore((s) => s.setAssistantOpen)
   const jarvisOpen = useStore((s) => s.jarvisOpen)
   const setJarvisOpen = useStore((s) => s.setJarvisOpen)
   const openTask = useStore((s) => s.openTask)
@@ -71,7 +69,7 @@ export default function StatusCluster(): JSX.Element {
           title={active.length ? `${active.length} downloading` : 'Downloads'}
           onClick={() => setShowDownloads((v) => !v)}
         >
-          {active.length > 0 && <span className="working-dot" />}⬇{' '}
+          {active.length > 0 && <span className="working-dot" />}↓{' '}
           {active.length > 0 ? active.length : downloads.length}
         </button>
       )}
@@ -142,19 +140,13 @@ export default function StatusCluster(): JSX.Element {
           </span>
         </button>
       ))}
-      <button
-        className={`assistant-launcher ${assistantOpen ? 'active' : ''}`}
-        title="Quick assistant (Ctrl+K)"
-        onClick={() => setAssistantOpen(!assistantOpen)}
-      >
-        ⚡
-      </button>
+      {/* One assistant button. Jarvis does everything the quick bar did — the
+           launcher was a second door to a subset of the same thing. */}
       <button
         className={`assistant-launcher ${jarvisOpen ? 'active' : ''}`}
-        title="Jarvis — universal agent (Ctrl+J)"
+        title="Assistant (Ctrl+J)"
         onClick={() => setJarvisOpen(!jarvisOpen)}
-      >
-        🤖
+      > Ask
       </button>
     </div>
   )

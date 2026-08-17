@@ -568,20 +568,20 @@ export default function PaneGrid({
                       onError={(e) => (e.currentTarget.style.display = 'none')}
                     />
                   ) : tab.id === BUILTIN_SEARCH
-                    ? '🔍'
+                    ? '⌕'
                     : tab.kind === 'builtin-review'
-                      ? '🧠'
+                      ? '◎'
                       : tab.kind === 'builtin-terminal'
                       ? '▶_'
                       : tab.kind === 'builtin-app'
-                      ? '🪟'
+                      ? '▢'
                       : tab.kind === 'url'
-                      ? '🌐'
+                      ? '◍'
                       : tab.kind === 'pdf'
-                        ? '📄'
+                        ? '▤'
                         : tab.kind === 'file'
-                          ? '📎'
-                          : '📝'}
+                          ? '▥'
+                          : '✎'}
                 </span>
                 <span className="tab-title">{tab.title}</span>
                 <button
@@ -666,7 +666,7 @@ export default function PaneGrid({
                 setTimeout(() => findInputRef.current?.select(), 40)
               }}
             >
-              🔍
+              ⌕
             </button>
             {onPin && !hidePin && (
               <button
@@ -674,7 +674,7 @@ export default function PaneGrid({
                 title="Save this page as a task resource"
                 onClick={() => onPin(nav.title || nav.url, nav.url)}
               >
-                📌
+                ⌾
               </button>
             )}
           </div>

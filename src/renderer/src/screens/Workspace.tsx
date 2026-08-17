@@ -14,11 +14,12 @@ export default function Workspace(): JSX.Element {
   const setActiveResources = useStore((s) => s.setActiveResources)
   const goHome = useStore((s) => s.goHome)
   const gridApi = useRef<PaneGridApi | null>(null)
-  const [chatOpen, setChatOpen] = useState(true)
+  const chatOpen = useStore((s) => s.chatOpen)
+  const setChatOpen = (v: boolean | ((p: boolean) => boolean)): void =>
+    useStore.setState((st) => ({ chatOpen: typeof v === 'function' ? v(st.chatOpen) : v }))
   // Chat can never starve the pane area: cap at what the window affords
   // (rail + panes need ~620px), re-clamped on every window resize.
-  const clampChatWidth = (w: number): number =>
-    Math.max(280, Math.min(560, window.innerWidth - 620, w))
+  const clampChatWidth = (w: number): number => Math.max(280, Math.min(560, window.innerWidth - 620, w))
   const [chatWidth, setChatWidth] = useState(() =>
     clampChatWidth(Number(localStorage.getItem('asit-chat-width')) || 360)
   )
@@ -93,7 +94,7 @@ export default function Workspace(): JSX.Element {
         <span className="workspace-title">
           {task.aiDisabled && (
             <span title="Private — AI disabled for this task" className="private-lock">
-              🔒{' '}
+              ⚿{' '}
             </span>
           )}
           {task.title}
@@ -105,7 +106,7 @@ export default function Workspace(): JSX.Element {
             className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
             onClick={() => setChatOpen((v) => !v)}
           >
-            💬 Chat
+            ▭ Chat
           </button>
         )}
       </header>

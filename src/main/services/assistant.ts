@@ -66,6 +66,18 @@ export function askAssistant(prompt: string, sender: WebContents): void {
   else handle.cancel() // cancelled during setup — kill the fresh spawn
 }
 
+/** One shared conversation log — Jarvis writes here too, so the history the
+ *  user browses is every question they've asked, not just the old quick bar's. */
+export function logExchange(prompt: string, reply: string): void {
+  try {
+    getDb()
+      .prepare('INSERT INTO assistant_log (id, prompt, reply, created_at) VALUES (?, ?, ?, ?)')
+      .run(newId(), prompt.slice(0, 2000), reply.slice(0, 8000), nowIso())
+  } catch {
+    // history is a convenience; never let it break a turn
+  }
+}
+
 export function assistantHistory(limit = 30): { id: string; prompt: string; reply: string; createdAt: string }[] {
   const rows = getDb()
     .prepare('SELECT * FROM assistant_log ORDER BY created_at DESC LIMIT ?')

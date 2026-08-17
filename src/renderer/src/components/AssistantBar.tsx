@@ -12,7 +12,7 @@ interface Exchange {
 }
 
 // Global quick assistant (haiku — fastest model); knows every task's files.
-// Opens from the ⚡ launcher in the header or Ctrl+K — nothing is docked while
+// Opens from the  launcher in the header or Ctrl+K — nothing is docked while
 // it is closed, so it costs no screen space.
 export default function AssistantBar(): JSX.Element | null {
   const [input, setInput] = useState('')
@@ -127,7 +127,7 @@ export default function AssistantBar(): JSX.Element | null {
         setBusy(false)
         return
       }
-      setStatus('📨 Sending on WhatsApp…')
+      setStatus('→ Sending on WhatsApp…')
       try {
         const res = await window.asit.quickfetch.sendWhatsApp(m[1].trim(), m[2].trim())
         setExchanges((prev) => {
@@ -155,7 +155,7 @@ export default function AssistantBar(): JSX.Element | null {
         if (res.otp) {
           navigator.clipboard.writeText(res.otp)
           const typed = await window.asit.panes.typeActive(res.otp)
-          reply = `🔑 **${res.otp}** (${res.source}) — copied to clipboard${typed.startsWith('typed') ? ' and typed into the active page' : ''}.`
+          reply = `⚿ **${res.otp}** (${res.source}) — copied to clipboard${typed.startsWith('typed') ? ' and typed into the active page' : ''}.`
         } else if (res.error) {
           reply = `Nothing found: ${res.error}`
         } else if (res.lines.length > 0) {
@@ -204,7 +204,7 @@ export default function AssistantBar(): JSX.Element | null {
   return (
     <div className="assistant-panel">
       <div className="assistant-panel-head">
-        <span className="assistant-title">⚡ Quick assistant</span>
+        <span className="assistant-title"> Quick assistant</span>
         {lastCost !== null && <span className="assistant-cost">{fmtCost(lastCost)}</span>}
         <button className="btn btn-ghost" title="Close (Esc)" onClick={() => setOpen(false)}>
           ✕
@@ -212,8 +212,7 @@ export default function AssistantBar(): JSX.Element | null {
       </div>
       <div className="assistant-scroll" ref={scrollRef} onScroll={handleScroll}>
         {exchanges.length === 0 && !busy && (
-          <p className="assistant-hint">
-            Ask anything across your workspaces — or <code>?g</code> to search, <code>?otp</code>{' '}
+          <p className="assistant-hint"> Ask anything across your workspaces — or <code>?g</code> to search, <code>?otp</code>{' '}
             for a code, <code>?keywords</code> to grep your mail.
           </p>
         )}

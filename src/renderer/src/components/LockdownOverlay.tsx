@@ -63,8 +63,7 @@ export default function LockdownOverlay({ onClose }: { onClose: () => void }): J
     <div className="lockdown-overlay">
       <div className="lockdown-box">
         <h2>Leaving your focus session?</h2>
-        <p className="lockdown-sub">
-          The point of the lock is that quitting takes longer than getting back to work. If you
+        <p className="lockdown-sub"> The point of the lock is that quitting takes longer than getting back to work. If you
           still want out, hold the button for {requiredSec} seconds — or type the phrase exactly.
         </p>
 

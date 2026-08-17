@@ -39,8 +39,7 @@ export default function BreakReview({
           </span>
         </div>
         <ReviewCards taskId={taskId} onDone={onClose} />
-        <button className="btn btn-ghost" onClick={onClose}>
-          Skip review
+        <button className="btn btn-ghost" onClick={onClose}> Skip review
         </button>
       </div>
     </div>
