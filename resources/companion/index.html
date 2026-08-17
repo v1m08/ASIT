@@ -51,6 +51,8 @@
   .grow { flex: 1; min-width: 0; }
   .dim { color: var(--dim); font-size: 0.8rem; }
   .strike { text-decoration: line-through; color: var(--dim); }
+  /* Links inside a to-do are tappable; big enough to hit with a thumb. */
+  .tlink { color: var(--accent); text-decoration: underline; word-break: break-word; }
   input[type='text'], textarea {
     width: 100%; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 10px;
@@ -107,6 +109,7 @@
   <nav id="nav" hidden>
     <button data-tab="todos"><span class="ic">☑</span>To-dos</button>
     <button data-tab="review"><span class="ic">🧠</span>Review</button>
+    <button data-tab="agents"><span class="ic">🤖</span>Agents</button>
     <button data-tab="capture"><span class="ic">✎</span>Capture</button>
     <button data-tab="ask"><span class="ic">⚡</span>Ask</button>
   </nav>
@@ -296,7 +299,7 @@
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data)
-          if (m.type === 'changed' && (tab === 'todos' || tab === 'review')) render()
+          if (m.type === 'changed' && (tab === 'todos' || tab === 'review' || tab === 'agents')) render()
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
@@ -340,6 +343,37 @@
   }
 
   // ---- To-dos
+  // To-do text with real, tappable links. Parsed from the RAW text (then
+  // escaped piece by piece) so an & inside a URL survives into the href.
+  // asit:// links point at files on the PC, so on the phone they stay plain
+  // labels — there is nothing here to open.
+  function todoHtml(raw) {
+    const MD = /\[([^\]]+)\]\((asit:\/\/[^)\s]+|https?:\/\/[^)\s]+)\)/g
+    const BARE = /(https?:\/\/[^\s<>"')\]]+)/g
+    const link = (text, href) =>
+      href.startsWith('asit:')
+        ? esc(text)
+        : `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer" class="tlink">${esc(text)}</a>`
+    const linkifyPlain = (text) => {
+      let out = ''
+      let cursor = 0
+      for (const m of text.matchAll(BARE)) {
+        out += esc(text.slice(cursor, m.index))
+        out += link(m[1], m[1])
+        cursor = m.index + m[0].length
+      }
+      return out + esc(text.slice(cursor))
+    }
+    let html = ''
+    let last = 0
+    for (const m of raw.matchAll(MD)) {
+      html += linkifyPlain(raw.slice(last, m.index))
+      html += link(m[1], m[2])
+      last = m.index + m[0].length
+    }
+    return html + linkifyPlain(raw.slice(last))
+  }
+
   async function renderTodos() {
     const state = await apiCached('state')
     prefetchReview()
@@ -362,7 +396,7 @@
       const row = document.createElement('div')
       row.className = 'card row'
       row.innerHTML = `<button class="check"></button>
-        <span class="grow">${esc(t.text.replace(/\[([^\]]+)\]\(asit:[^)]+\)/g, '$1'))}</span>
+        <span class="grow">${todoHtml(t.text)}</span>
         ${t.dueDate ? `<span class="badge ${new Date(t.dueDate) < new Date() ? 'badge-danger' : ''}">${esc(t.dueDate.slice(5))}</span>` : ''}`
       row.querySelector('.check').onclick = () => {
         row.querySelector('.grow').classList.add('strike')
@@ -467,6 +501,48 @@
   }
 
   // ---- Capture (goes into the scratchpad notes; "to-do:" lines auto-capture)
+  // ---- Agents: what the PC is working on right now, live over the socket.
+  // Runs in the background on the desktop, so this is the one view that
+  // answers "is it still going?" without walking to the computer.
+  function agentIcon(kind) {
+    return kind === 'jarvis' ? '🤖' : kind === 'chat' ? '💬' : kind === 'questions' ? '🧠'
+      : kind === 'watch' ? '👁' : '⚡'
+  }
+
+  function since(ms) {
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000))
+    if (s < 60) return s + 's'
+    const m = Math.floor(s / 60)
+    return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm'
+  }
+
+  async function renderAgents() {
+    const state = await apiCached('state')
+    const items = state.activity || []
+    const running = items.filter((i) => !i.done)
+    const finished = items.filter((i) => i.done)
+    main.innerHTML = `
+      ${offlineBanner()}
+      <h2>Agents</h2>
+      ${running.length === 0 ? '<p class="empty">Nothing running right now ✨</p>' : ''}
+      ${running.map((i) => `
+        <div class="card">
+          <div class="row">
+            <span class="grow"><b>${agentIcon(i.kind)} ${esc(i.label)}</b></span>
+            <span class="badge">${since(i.startedAt)}</span>
+          </div>
+          <div class="dim" style="margin-top:4px;font-size:13px">${esc(i.detail || 'Working…')}</div>
+        </div>`).join('')}
+      ${finished.length ? `<h2 style="margin-top:18px">Recently finished</h2>` : ''}
+      ${finished.map((i) => `
+        <div class="card">
+          <div class="row">
+            <span class="grow">✓ ${esc(i.label)}</span>
+            <span class="dim" style="font-size:12px">${i.finishedAt ? since(i.finishedAt) + ' ago' : ''}</span>
+          </div>
+        </div>`).join('')}`
+  }
+
   function renderCapture() {
     main.innerHTML = `
       <h2>Capture</h2>
@@ -539,14 +615,19 @@
   function render() {
     document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab))
     if (tab === 'todos') renderTodos().catch(errorCard)
+    else if (tab === 'agents') renderAgents().catch(errorCard)
     else if (tab === 'review') renderReview().catch(errorCard)
     else if (tab === 'capture') renderCapture()
     else renderAsk()
   }
   render()
 
+  // Elapsed times on the Agents tab must keep counting even when nothing
+  // changes on the PC (a long job emits no events while it thinks).
+  setInterval(() => { if (tab === 'agents') renderAgents().catch(() => {}) }, 5000)
+
   // Coming back to the app (or regaining network) should self-heal.
-  window.addEventListener('focus', () => { if (tab === 'todos' || tab === 'review') render() })
+  window.addEventListener('focus', () => { if (tab === 'todos' || tab === 'review' || tab === 'agents') render() })
   window.addEventListener('online', () => render())
 })()
 </script>

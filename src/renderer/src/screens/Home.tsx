@@ -595,7 +595,7 @@ export default function Home(): JSX.Element {
           <button className="quick-chats-toggle" onClick={() => setShowTodos((v) => !v)}>
             ☑ To-dos {showTodos ? '▾' : '▸'}
           </button>
-          {showTodos && <TodoList />}
+          {showTodos && <TodoList onOpenUrl={(url) => browserApi.current?.openTab(url)} />}
         </div>
 
         <div className="quick-chats">

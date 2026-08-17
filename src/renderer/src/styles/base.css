@@ -1690,6 +1690,19 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.4;
 }
 
+/* Links inside a to-do are real links now (markdown or bare URL) */
+.todo-inline-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-word;
+}
+
+.todo-inline-link:hover {
+  color: var(--text);
+}
+
 /* Finished background work stays in the header as a jump-to-workspace button
    instead of vanishing, so the bar doubles as a workspace switcher. */
 .status-activity-done {
