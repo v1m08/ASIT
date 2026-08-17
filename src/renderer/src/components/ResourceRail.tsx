@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { Resource, Task } from '@shared/types'
-import { BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './PaneGrid'
+import { BUILTIN_APP, BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './PaneGrid'
 import { useStore } from '../store/useStore'
 
 function railIcon(kind: string): string {
@@ -132,6 +132,9 @@ export default function ResourceRail({
         <div className="rail-item rail-item-mini" title="Terminal" onClick={() => onOpen(BUILTIN_TERMINAL)}>
           ▶_
         </div>
+        <div className="rail-item rail-item-mini" title="Embed an app window" onClick={() => onOpen(BUILTIN_APP)}>
+          🪟
+        </div>
         {resources.map((r) => (
           <div
             key={r.id}
@@ -167,6 +170,10 @@ export default function ResourceRail({
         <div className="rail-item" onClick={() => onOpen(BUILTIN_TERMINAL)}>
           <span className="rail-icon">▶_</span>
           <span className="rail-title">Terminal</span>
+        </div>
+        <div className="rail-item" onClick={() => onOpen(BUILTIN_APP)}>
+          <span className="rail-icon">🪟</span>
+          <span className="rail-title">App window</span>
         </div>
 
         {resources.map((r) => (

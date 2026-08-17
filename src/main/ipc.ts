@@ -19,6 +19,8 @@ import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
 import * as terminal from './services/terminal'
+import * as vault from './services/vault'
+import * as appwindows from './services/appwindows'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
 import * as whatsapp from './services/whatsapp'
@@ -73,6 +75,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     // dir handle), and its page watches (they'd keep polling a ghost).
     paneManager.closeByOwner(id)
     terminal.closeTerminalsForTask(id) // a live shell holds a handle on the cwd
+    appwindows.releaseForTask(id) // hand any embedded app window back to the desktop
     stopWatchingTask(id)
     stopWatchesForTask(id)
     const result = tasks.deleteTask(id)
@@ -192,6 +195,53 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     (_e, paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' }) =>
       paneManager.navigate(paneId, action)
   )
+  // --- native app windows (user-driven; agents have no verb for this) ---
+  ipcMain.handle(IPC.APPWIN_LIST, () => appwindows.listWindows())
+  ipcMain.handle(IPC.APPWIN_EMBED, (_e, handle: string, taskId: string) => {
+    const win = getWindow()
+    if (!win) return 'no window'
+    return appwindows.embedWindow(handle, win, taskId)
+  })
+  ipcMain.handle(
+    IPC.APPWIN_BOUNDS,
+    (_e, handle: string, bounds: { x: number; y: number; width: number; height: number }) => {
+      const win = getWindow()
+      if (win) appwindows.setWindowBounds(handle, bounds, win)
+    }
+  )
+  ipcMain.handle(IPC.APPWIN_VISIBLE, (_e, handle: string, visible: boolean) =>
+    appwindows.setWindowVisible(handle, visible)
+  )
+  ipcMain.handle(IPC.APPWIN_RELEASE, (_e, handle: string) => appwindows.releaseWindow(handle))
+
+  // --- password vault (never reachable from an agent) ---
+  ipcMain.handle(IPC.VAULT_LIST, () => vault.listEntries())
+  ipcMain.handle(
+    IPC.VAULT_SAVE,
+    (_e, input: { id?: string; origin: string; username: string; password: string; title?: string }) =>
+      vault.saveEntry(input)
+  )
+  ipcMain.handle(IPC.VAULT_DELETE, (_e, id: string) => vault.deleteEntry(id))
+  ipcMain.handle(IPC.VAULT_REVEAL, (_e, id: string) => vault.revealPassword(id))
+  ipcMain.handle(IPC.VAULT_STATUS, () => ({ encrypted: vault.encryptionAvailable() }))
+
+  // The pane preload's autofill lookup. Literal channel: pane preload is
+  // sandboxed and can't import the contract. Returns a credential only for an
+  // exact origin match, and only because the USER focused a login field.
+  ipcMain.handle('vault:for-origin', (_e, url: string) => vault.credentialsForOrigin(String(url)))
+
+  // --- browser basics (user-driven; agents have no path to any of these) ---
+  ipcMain.handle(
+    IPC.PANES_FIND,
+    (_e, paneId: string, text: string, forward: boolean, findNext: boolean) =>
+      paneManager.find(paneId, text, forward, findNext)
+  )
+  ipcMain.handle(IPC.PANES_FIND_STOP, (_e, paneId: string) => paneManager.stopFind(paneId))
+  ipcMain.handle(IPC.PANES_ZOOM, (_e, paneId: string, delta: number) =>
+    paneManager.zoom(paneId, delta)
+  )
+  ipcMain.handle(IPC.PANES_DOWNLOADS, () => paneManager.listDownloads())
+  ipcMain.handle(IPC.PANES_SHOW_DOWNLOAD, (_e, id: string) => paneManager.showDownload(id))
   ipcMain.handle(IPC.PANES_CLOSE, (_e, paneId: string) => paneManager.close(paneId))
   ipcMain.handle(IPC.PANES_CLOSE_ALL, () => paneManager.closeAll())
   ipcMain.handle(IPC.PANES_PARK, () => paneManager.parkAll())

@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState, Resource, Task, WorkspaceLayout } from '@shared/types'
 import NotesEditor from './NotesEditor'
 import TerminalPane from './TerminalPane'
+import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
 import { useOverlay } from '../hooks/useOverlay'
@@ -11,6 +12,7 @@ export const BUILTIN_NOTES = 'builtin-notes'
 export const BUILTIN_SEARCH = 'builtin-search'
 export const BUILTIN_REVIEW = 'builtin-review'
 export const BUILTIN_TERMINAL = 'builtin-terminal'
+export const BUILTIN_APP = 'builtin-app'
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   slots: [[], []],
@@ -23,7 +25,15 @@ const DEFAULT_LAYOUT: WorkspaceLayout = {
 interface TabInfo {
   id: string
   title: string
-  kind: 'url' | 'pdf' | 'note' | 'file' | 'builtin-note' | 'builtin-review' | 'builtin-terminal'
+  kind:
+    | 'url'
+    | 'pdf'
+    | 'note'
+    | 'file'
+    | 'builtin-note'
+    | 'builtin-review'
+    | 'builtin-terminal'
+    | 'builtin-app'
   viewBacked: boolean
   resource: Resource | null
 }
@@ -46,6 +56,9 @@ export function tabInfoFor(id: string, task: Task, resources: Resource[]): TabIn
   if (id === BUILTIN_TERMINAL) {
     return { id, title: 'Terminal', kind: 'builtin-terminal', viewBacked: false, resource: null }
   }
+  if (id === BUILTIN_APP) {
+    return { id, title: 'App', kind: 'builtin-app', viewBacked: false, resource: null }
+  }
   const r = resources.find((res) => res.id === id)
   if (!r) return null
   return {
@@ -66,6 +79,8 @@ function paneTargetFor(tab: TabInfo): { url?: string; filePath?: string } {
 export interface PaneGridApi {
   openResource: (id: string) => void
   openSearch: (query: string) => void
+  // Ctrl/middle-click, or "open link in new tab" from the context menu.
+  openUrl: (url: string) => void
 }
 
 export default function PaneGrid({
@@ -104,6 +119,12 @@ export default function PaneGrid({
   const dragItem = useStore((st) => st.dragItem)
   const setDragItem = useStore((st) => st.setDragItem)
   const [dropTarget, setDropTarget] = useState<0 | 1 | null>(null)
+  // Find-in-page + zoom: the browser basics panes were missing.
+  const [findFor, setFindFor] = useState<string | null>(null)
+  const [findText, setFindText] = useState('')
+  const [findResult, setFindResult] = useState<{ activeMatch: number; matches: number } | null>(null)
+  const findInputRef = useRef<HTMLInputElement>(null)
+  const [zoomLabel, setZoomLabel] = useState<number | null>(null)
   // A page painted over the slot would eat every drag event, so the views go
   // away for the duration of the drag — same rule as any overlay (invariant 2).
   useOverlay(dragItem !== null)
@@ -316,6 +337,44 @@ export default function PaneGrid({
     [onAttachLibrary, openResourceInSlot, setDragItem]
   )
 
+  useEffect(() => {
+    const offFind = window.asit.on(IPC.PANES_FIND_RESULT, (...args: unknown[]) => {
+      const r = args[0] as { paneId: string; activeMatch: number; matches: number }
+      setFindResult({ activeMatch: r.activeMatch, matches: r.matches })
+    })
+    const offApp = window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      const e = args[0] as { type: string; paneId?: string; zoom?: number; url?: string }
+      if (e.type === 'find-in-page') {
+        setFindFor(e.paneId ?? null)
+        setTimeout(() => findInputRef.current?.select(), 40)
+      } else if (e.type === 'pane-zoom' && typeof e.zoom === 'number') {
+        setZoomLabel(Math.round(100 * Math.pow(1.2, e.zoom)))
+        setTimeout(() => setZoomLabel(null), 1400)
+      }
+    })
+    return () => {
+      offFind()
+      offApp()
+    }
+  }, [])
+
+  const runFind = useCallback(
+    (text: string, findNext: boolean, forward = true): void => {
+      if (!findFor) return
+      setFindText(text)
+      if (!text) setFindResult(null)
+      void window.asit.panes.find(findFor, text, forward, findNext)
+    },
+    [findFor]
+  )
+
+  const closeFind = useCallback((): void => {
+    if (findFor) void window.asit.panes.findStop(findFor)
+    setFindFor(null)
+    setFindText('')
+    setFindResult(null)
+  }, [findFor])
+
   const openSearch = useCallback(
     (query: string): void => {
       const url = query.trim()
@@ -330,9 +389,20 @@ export default function PaneGrid({
     [openResource]
   )
 
+  const openUrl = useCallback(
+    (url: string): void => {
+      searchUrlRef.current = url
+      if (openedPanes.current.has(BUILTIN_SEARCH)) {
+        window.asit.panes.navigate(BUILTIN_SEARCH, { url })
+      }
+      openResource(BUILTIN_SEARCH)
+    },
+    [openResource]
+  )
+
   useEffect(() => {
-    onApi?.({ openResource, openSearch })
-  }, [onApi, openResource, openSearch])
+    onApi?.({ openResource, openSearch, openUrl })
+  }, [onApi, openResource, openSearch, openUrl])
 
   function selectTab(slotIndex: 0 | 1, id: string): void {
     setLayout((prev) => {
@@ -452,12 +522,21 @@ export default function PaneGrid({
                 title={tab.title}
               >
                 <span className="tab-icon">
-                  {tab.id === BUILTIN_SEARCH
+                  {navStates[tab.id]?.favicon && tab.viewBacked ? (
+                    <img
+                      className="tab-favicon"
+                      src={navStates[tab.id]!.favicon!}
+                      alt=""
+                      onError={(e) => (e.currentTarget.style.display = 'none')}
+                    />
+                  ) : tab.id === BUILTIN_SEARCH
                     ? '🔍'
                     : tab.kind === 'builtin-review'
                       ? '🧠'
                       : tab.kind === 'builtin-terminal'
                       ? '▶_'
+                      : tab.kind === 'builtin-app'
+                      ? '🪟'
                       : tab.kind === 'url'
                       ? '🌐'
                       : tab.kind === 'pdf'
@@ -540,6 +619,17 @@ export default function PaneGrid({
             <span className="pane-url" title={nav.url}>
               {nav.url}
             </span>
+            {zoomLabel !== null && <span className="pane-zoom-label">{zoomLabel}%</span>}
+            <button
+              className="nav-btn"
+              title="Find in page (Ctrl+F)"
+              onClick={() => {
+                setFindFor(activeTab.id)
+                setTimeout(() => findInputRef.current?.select(), 40)
+              }}
+            >
+              🔍
+            </button>
             {onPin && (
               <button
                 className="nav-btn"
@@ -551,13 +641,53 @@ export default function PaneGrid({
             )}
           </div>
         )}
+        {findFor && findFor === activeTab?.id && (
+          <div className="find-bar">
+            <input
+              ref={findInputRef}
+              autoFocus
+              placeholder="Find in page…"
+              value={findText}
+              onChange={(e) => runFind(e.target.value, false)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  closeFind()
+                } else if (e.key === 'Enter') {
+                  e.preventDefault()
+                  runFind(findText, true, !e.shiftKey)
+                }
+              }}
+            />
+            <span className="find-count">
+              {findText
+                ? findResult && findResult.matches > 0
+                  ? `${findResult.activeMatch}/${findResult.matches}`
+                  : findResult
+                    ? 'no matches'
+                    : '…'
+                : ''}
+            </span>
+            <button className="nav-btn" title="Previous (Shift+Enter)" onClick={() => runFind(findText, true, false)}>
+              ↑
+            </button>
+            <button className="nav-btn" title="Next (Enter)" onClick={() => runFind(findText, true, true)}>
+              ↓
+            </button>
+            <button className="nav-btn" title="Close (Esc)" onClick={closeFind}>
+              ✕
+            </button>
+          </div>
+        )}
         <div className="slot-content" ref={slotContentRefs[slotIndex]} data-focus-body>
           {activeTab?.kind === 'builtin-review' && <ReviewPane key={task.id} task={task} />}
           {activeTab?.kind === 'builtin-terminal' && <TerminalPane key={task.id} task={task} />}
+          {activeTab?.kind === 'builtin-app' && <AppWindowPane key={task.id} task={task} />}
           {activeTab &&
             !activeTab.viewBacked &&
             activeTab.kind !== 'builtin-review' &&
-            activeTab.kind !== 'builtin-terminal' && (
+            activeTab.kind !== 'builtin-terminal' &&
+            activeTab.kind !== 'builtin-app' && (
             <NotesEditor
               key={activeTab.id}
               filePath={

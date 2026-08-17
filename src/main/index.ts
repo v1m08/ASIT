@@ -234,6 +234,10 @@ app.on('window-all-closed', async () => {
   stopCompanion()
   const { shutdownTerminals } = await import('./services/terminal')
   shutdownTerminals() // orphaned shells would outlive the app (Windows)
+  // Any embedded app window must go back to the desktop, or the user is left
+  // with a window parented to a process that no longer exists.
+  const { releaseAllWindows } = await import('./services/appwindows')
+  releaseAllWindows()
   closeDb()
   app.quit()
 })
@@ -480,6 +484,74 @@ async function runSecuritySmokeTest(): Promise<void> {
     if (filtered.kept.length !== 1 || filtered.removed !== 2)
       fail(`sensitive result lines not stripped: ${JSON.stringify(filtered)}`)
     console.log('[security-smoke] protected topics are unsearchable and stripped from results')
+
+    // --- shared memory crosses workspaces, but never private ones ---
+    const memory = await import('./services/memory')
+    const factText = `smoke fact ${Date.now().toString(36)} — user takes CS 1331`
+    const taught = await actions.executeAction(task.id, { action: 'remember', value: factText })
+    if (!taught.startsWith('remembered')) fail(`remember action failed: ${taught}`)
+
+    const other = tasksSvc.createTask({ title: 'Memory Reader' })
+    tasksSvc.refreshClaudeMd(other.id)
+    const otherMd = (await import('fs')).readFileSync(join(other.folderPath, 'CLAUDE.md'), 'utf-8')
+    if (!otherMd.includes(factText)) fail('a fact taught in one workspace did not reach another')
+
+    // A private workspace has no CLAUDE.md at all (invariant 8). If one ever
+    // appears, it must still not carry shared memory.
+    tasksSvc.refreshClaudeMd(priv.id)
+    const privMdPath = join(priv.folderPath, 'CLAUDE.md')
+    const fs = await import('fs')
+    if (fs.existsSync(privMdPath) && fs.readFileSync(privMdPath, 'utf-8').includes(factText))
+      fail('shared memory leaked into a private workspace')
+
+    const privTeach = await actions.executeAction(priv.id, {
+      action: 'remember',
+      value: 'private workspaces must not teach'
+    })
+    if (!privTeach.includes('private workspaces do not contribute'))
+      fail(`a private workspace wrote to shared memory: ${privTeach}`)
+
+    memory.forgetFact(factText)
+    if (memory.listFacts().some((f) => f.text === factText)) fail('forget did not remove the fact')
+    tasksSvc.deleteTask(other.id)
+    console.log('[security-smoke] shared memory crosses workspaces but never private ones')
+
+    // --- the password vault is unreachable from every agent surface ---
+    const vault = await import('./services/vault')
+    const saved = vault.saveEntry({
+      origin: 'https://smoke-vault.example',
+      username: 'smoke-user',
+      password: 'SMOKE_SECRET_VALUE',
+      title: 'Smoke'
+    })
+    if ('error' in saved) fail(`vault save failed: ${saved.error}`)
+
+    // The listing (what any UI/IPC surface returns) never carries secrets.
+    const listed = JSON.stringify(vault.listEntries())
+    if (listed.includes('SMOKE_SECRET_VALUE')) fail('vault listing leaked the password')
+
+    // The file lives OUTSIDE every agent-readable root.
+    const { app: electronApp } = await import('electron')
+    const vaultFile = join(electronApp.getPath('userData'), 'vault.json')
+    const tasksRoot = tasksSvc.tasksRoot()
+    if (vaultFile.toLowerCase().startsWith(tasksRoot.toLowerCase()))
+      fail('vault file sits inside the AI-readable tasks tree')
+
+    // No action verb reaches it, under any name.
+    for (const verb of ['vault', 'get_password', 'read_vault', 'credentials', 'autofill']) {
+      const res = await actions.executeAction(task.id, { action: verb, target: 'smoke-vault.example' })
+      if (!/unknown action/i.test(res)) fail(`"${verb}" was not rejected as unknown: ${res}`)
+      if (res.includes('SMOKE_SECRET_VALUE')) fail(`"${verb}" returned a stored password`)
+    }
+
+    // Stored secrets are not searchable either (protected-topic wall).
+    const pwSearch = await qf.quickFetch('smoke-vault password')
+    if (!/blocked/i.test(pwSearch.error ?? '')) fail('a password search was not blocked')
+
+    if (vault.revealPassword((saved as { id: string }).id) !== 'SMOKE_SECRET_VALUE')
+      fail('vault round-trip failed — the user could not get their own password back')
+    vault.deleteEntry((saved as { id: string }).id)
+    console.log('[security-smoke] password vault is unreachable from every agent surface')
 
     guard.clearSendAuthorization()
     tasksSvc.deleteTask(task.id)

@@ -39,6 +39,29 @@ export const IPC = {
   PANES_FOCUS: 'panes:focus', // focus ring landed on a page zone
   PANES_DOM_FOCUS: 'panes:dom-focus', // renderer gained/lost the keyboard
   PANES_DID_NAVIGATE: 'panes:did-navigate', // push M→R
+  // Browser basics the panes were missing.
+  PANES_FIND: 'panes:find',
+  PANES_FIND_STOP: 'panes:find-stop',
+  PANES_FIND_RESULT: 'panes:find-result', // push M→R
+  PANES_ZOOM: 'panes:zoom',
+  PANES_DOWNLOADS: 'panes:downloads',
+  PANES_DOWNLOAD_EVENT: 'panes:download-event', // push M→R
+  PANES_SHOW_DOWNLOAD: 'panes:show-download',
+
+  // Password vault. User-driven only: no agent path exists to any of these,
+  // and the store lives outside every AI-readable folder.
+  VAULT_LIST: 'vault:list',
+  VAULT_SAVE: 'vault:save',
+  VAULT_DELETE: 'vault:delete',
+  VAULT_REVEAL: 'vault:reveal',
+  VAULT_STATUS: 'vault:status',
+
+  // Native app-window embedding (Windows only, user-driven, no agent path).
+  APPWIN_LIST: 'appwin:list',
+  APPWIN_EMBED: 'appwin:embed',
+  APPWIN_BOUNDS: 'appwin:bounds',
+  APPWIN_VISIBLE: 'appwin:visible',
+  APPWIN_RELEASE: 'appwin:release',
 
   // notes
   NOTES_READ: 'notes:read',

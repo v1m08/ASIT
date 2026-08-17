@@ -98,6 +98,114 @@ function GuardrailsSection({
   )
 }
 
+interface VaultRow {
+  id: string
+  origin: string
+  username: string
+  title: string
+  updatedAt: string
+}
+
+function VaultSection(): JSX.Element {
+  const [rows, setRows] = useState<VaultRow[]>([])
+  const [encrypted, setEncrypted] = useState(true)
+  const [site, setSite] = useState('')
+  const [user, setUser] = useState('')
+  const [pass, setPass] = useState('')
+  const [msg, setMsg] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState<Record<string, string>>({})
+
+  const refresh = async (): Promise<void> => setRows(await window.asit.vault.list())
+
+  useEffect(() => {
+    void refresh()
+    void window.asit.vault.status().then((s) => setEncrypted(s.encrypted))
+  }, [])
+
+  async function add(): Promise<void> {
+    const res = await window.asit.vault.save({ origin: site, username: user, password: pass })
+    if (res?.error) {
+      setMsg(res.error)
+      return
+    }
+    setSite('')
+    setUser('')
+    setPass('')
+    setMsg(null)
+    await refresh()
+  }
+
+  return (
+    <div className="snippets-section">
+      <div className="rail-header">Passwords — autofill inside ASIT's browser</div>
+      <p className="transfer-note">
+        Stored on this machine only, encrypted with Windows’ own account protection, and kept
+        outside every folder the AI can read. <strong>No agent can see these</strong> — there is no
+        action that reaches them, and password fields are hidden from the page snapshots agents
+        read. Focus a login box on a saved site and it fills; signing in stays your click.
+      </p>
+      {!encrypted && (
+        <p className="transfer-note" style={{ color: 'var(--danger)' }}>
+          ⚠ Windows encryption is unavailable on this system, so entries are only obfuscated.
+          Avoid storing important passwords until this is resolved.
+        </p>
+      )}
+      {rows.map((r) => (
+        <div key={r.id} className="snippet-row">
+          <code>{r.title}</code>
+          <span className="snippet-value" title={`${r.origin} · ${r.username}`}>
+            {r.username || '(no username)'}
+            {revealed[r.id] ? ` · ${revealed[r.id]}` : ''}
+          </span>
+          <button
+            className="rail-btn rail-toggle"
+            title="Reveal password"
+            onClick={async () => {
+              if (revealed[r.id]) {
+                setRevealed((p) => {
+                  const n = { ...p }
+                  delete n[r.id]
+                  return n
+                })
+                return
+              }
+              const value = await window.asit.vault.reveal(r.id)
+              if (value) setRevealed((p) => ({ ...p, [r.id]: value }))
+            }}
+          >
+            👁
+          </button>
+          <button
+            className="rail-btn rail-toggle"
+            title="Delete"
+            onClick={async () => {
+              if (!confirm(`Delete the saved password for ${r.title}?`)) return
+              await window.asit.vault.delete(r.id)
+              await refresh()
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="snippet-add">
+        <input placeholder="https://site.edu" value={site} onChange={(e) => setSite(e.target.value)} />
+        <input placeholder="username" value={user} onChange={(e) => setUser(e.target.value)} />
+        <input
+          type="password"
+          placeholder="password"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+        />
+        <button type="button" className="btn" onClick={add} disabled={!site || !pass}>
+          +
+        </button>
+      </div>
+      {msg && <p className="transfer-note" style={{ color: 'var(--danger)' }}>{msg}</p>}
+    </div>
+  )
+}
+
 function PhoneSection(): JSX.Element {
   const [status, setStatus] = useState<import('@shared/types').CompanionStatus | null>(null)
   const [qr, setQr] = useState<{ url: string | null; dataUrl: string | null } | null>(null)
@@ -467,6 +575,8 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
             }
           />
         </div>
+
+        <VaultSection />
 
         <GuardrailsSection settings={settings} setSettings={setSettings} />
 

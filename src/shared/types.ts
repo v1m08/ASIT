@@ -138,6 +138,17 @@ export interface PaneNavState {
   title: string
   canGoBack: boolean
   canGoForward: boolean
+  favicon?: string | null
+  zoom?: number
+}
+
+export interface DownloadItem {
+  id: string
+  filename: string
+  savePath: string
+  receivedBytes: number
+  totalBytes: number
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
 }
 
 export interface CreateTaskInput {

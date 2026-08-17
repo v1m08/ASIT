@@ -7,6 +7,7 @@ import { getOrCreateJarvis, tasksRoot, writeTasksIndex } from './tasks'
 import { runClaudeStream, type ClaudeStreamHandle } from './claude'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
+import { memorySection } from './memory'
 import { listSkills } from './skills'
 import { authorizeSendsFromUserMessage, clearSendAuthorization } from './guardrails'
 import { toolStatus } from './chat'
@@ -82,6 +83,7 @@ function briefing(): string {
     'DO NOT insert waits/sleeps between steps. The app already settles the page and refreshes snapshots for you before writing the result — read the result file instead of waiting. Only use {"action":"wait"} when a page genuinely needs seconds to boot, and prefer a watch for anything longer.',
     '',
     skills ? `## Saved skills (auto-flows the app can replay): ${skills}` : '',
+    memorySection(), // standing facts shared with every workspace assistant
     '## Style',
     'Be concise and decisive. Say what you did, not what you might do. If a request is ambiguous about WHICH workspace, pick the obvious one and say so.'
   ]

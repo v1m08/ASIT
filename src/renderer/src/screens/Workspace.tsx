@@ -37,8 +37,11 @@ export default function Workspace(): JSX.Element {
   // Claude-driven app actions (via .asit/actions.ndjson → main → here).
   useEffect(() => {
     return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
-      const p = args[0] as { type: string; id?: string }
-      if (p.type === 'open-resource' && p.id) {
+      const p = args[0] as { type: string; id?: string; url?: string; owner?: string }
+      if (p.type === 'open-url-tab' && p.url) {
+        // Only the workspace that owns the pane the link came from.
+        if (!p.owner || p.owner === task?.id) gridApi.current?.openUrl(p.url)
+      } else if (p.type === 'open-resource' && p.id) {
         gridApi.current?.openResource(p.id === 'builtin-notes' ? BUILTIN_NOTES : p.id)
       } else if (p.type === 'resources-changed') {
         refreshResources()
@@ -46,7 +49,7 @@ export default function Workspace(): JSX.Element {
         useStore.getState().loadTasks()
       }
     })
-  }, [refreshResources])
+  }, [refreshResources, task?.id])
 
   // Deep link (to-do or a notes link → file). Keyed on the pending id, not the
   // task: links that point INSIDE the workspace you're already in must work

@@ -13,6 +13,7 @@ import { saveSkill } from './skills'
 // Read only — `writeFromUser` is deliberately NOT imported here, and must
 // never be: actions.ts is the agent's hands.
 import { readForAgent } from './terminal'
+import { forgetFact, rememberFact } from './memory'
 
 // ---------------------------------------------------------------------------
 // App-action protocol: the Claude CLI (which only has file tools) controls the
@@ -299,6 +300,25 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
     // terminal.readForAgent, in main, on data the model can't influence.
     case 'read_terminal':
       return readForAgent(taskId, action.ref)
+
+    // Cross-workspace memory. Main owns the file, so a workspace agent still
+    // cannot write outside its own folder — it asks, and main appends.
+    case 'remember': {
+      const text = (action.value ?? action.content ?? '').trim()
+      if (!text) return 'remember: nothing to remember'
+      if (task.aiDisabled) return 'remember: private workspaces do not contribute to shared memory'
+      const added = rememberFact(text, task.title)
+      if (added) push({ type: 'toast', text: `🧠 Remembered: ${text.slice(0, 60)}` })
+      return added
+        ? `remembered (every workspace assistant will know this now): "${text.slice(0, 120)}"`
+        : 'already remembered — no change'
+    }
+
+    case 'forget': {
+      const text = (action.value ?? action.content ?? '').trim()
+      if (!text) return 'forget: nothing specified'
+      return forgetFact(text) ? `forgot: "${text.slice(0, 120)}"` : 'no matching remembered fact'
+    }
 
     case 'open': {
       const target = (action.target ?? '').toLowerCase()

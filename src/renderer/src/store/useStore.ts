@@ -9,6 +9,8 @@ export interface ActivityItem {
   label: string
   detail: string | null
   startedAt: number
+  done?: boolean
+  finishedAt?: number
 }
 
 let noticeCounter = 0

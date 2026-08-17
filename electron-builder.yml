@@ -20,7 +20,11 @@ asarUnpack:
   - node_modules/sherpa-onnx-win-x64/**
   # Terminal panes: the pty addon spawns conpty.dll/winpty-agent.exe as real
   # processes, so they cannot live inside the asar.
-  - node_modules/node-pty/**
+  - node_modules/@lydell/node-pty/**
+  - node_modules/@lydell/node-pty-win32-x64/**
+  # koffi loads its own .node from disk (window embedding) — it cannot be
+  # read out of the asar.
+  - node_modules/koffi/**
 win:
   target:
     - nsis

@@ -51,7 +51,13 @@ const api = {
     park: () => ipcRenderer.invoke(IPC.PANES_PARK),
     typeActive: (text: string) => ipcRenderer.invoke(IPC.PANES_TYPE_ACTIVE, text),
     focus: (paneId: string) => ipcRenderer.invoke(IPC.PANES_FOCUS, paneId),
-    domFocus: (focused: boolean) => ipcRenderer.send(IPC.PANES_DOM_FOCUS, focused)
+    domFocus: (focused: boolean) => ipcRenderer.send(IPC.PANES_DOM_FOCUS, focused),
+    find: (paneId: string, text: string, forward = true, findNext = false) =>
+      ipcRenderer.invoke(IPC.PANES_FIND, paneId, text, forward, findNext),
+    findStop: (paneId: string) => ipcRenderer.invoke(IPC.PANES_FIND_STOP, paneId),
+    zoom: (paneId: string, delta: number) => ipcRenderer.invoke(IPC.PANES_ZOOM, paneId, delta),
+    downloads: () => ipcRenderer.invoke(IPC.PANES_DOWNLOADS),
+    showDownload: (id: string) => ipcRenderer.invoke(IPC.PANES_SHOW_DOWNLOAD, id)
   },
   todos: {
     list: (includeDone?: boolean) => ipcRenderer.invoke(IPC.TODOS_LIST, includeDone),
@@ -69,6 +75,23 @@ const api = {
     close: (id: string) => ipcRenderer.invoke(IPC.TERMINAL_CLOSE, id),
     replay: (id: string) => ipcRenderer.invoke(IPC.TERMINAL_REPLAY, id),
     shells: () => ipcRenderer.invoke(IPC.TERMINAL_SHELLS)
+  },
+  appwin: {
+    list: () => ipcRenderer.invoke(IPC.APPWIN_LIST),
+    embed: (handle: string, taskId: string) => ipcRenderer.invoke(IPC.APPWIN_EMBED, handle, taskId),
+    bounds: (handle: string, b: { x: number; y: number; width: number; height: number }) =>
+      ipcRenderer.invoke(IPC.APPWIN_BOUNDS, handle, b),
+    visible: (handle: string, visible: boolean) =>
+      ipcRenderer.invoke(IPC.APPWIN_VISIBLE, handle, visible),
+    release: (handle: string) => ipcRenderer.invoke(IPC.APPWIN_RELEASE, handle)
+  },
+  vault: {
+    list: () => ipcRenderer.invoke(IPC.VAULT_LIST),
+    save: (input: { id?: string; origin: string; username: string; password: string; title?: string }) =>
+      ipcRenderer.invoke(IPC.VAULT_SAVE, input),
+    delete: (id: string) => ipcRenderer.invoke(IPC.VAULT_DELETE, id),
+    reveal: (id: string) => ipcRenderer.invoke(IPC.VAULT_REVEAL, id),
+    status: () => ipcRenderer.invoke(IPC.VAULT_STATUS)
   },
   terms: {
     list: (taskId: string) => ipcRenderer.invoke(IPC.TERMS_LIST, taskId),

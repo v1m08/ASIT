@@ -13,7 +13,14 @@ export interface ActivityItem {
   label: string
   detail: string | null // live status ("Running: python train.py…") for hover
   startedAt: number
+  // Finished work is KEPT (dimmed) rather than vanishing, so the header
+  // doubles as a workspace monitor: click a finished item to jump to the
+  // workspace it ran in.
+  done?: boolean
+  finishedAt?: number
 }
+
+const KEEP_FINISHED = 6
 
 let getWindow: (() => BrowserWindow | null) | null = null
 const items = new Map<string, ActivityItem>()
@@ -31,7 +38,12 @@ function push(): void {
 }
 
 export function listActivity(): ActivityItem[] {
-  return [...items.values()].sort((a, b) => a.startedAt - b.startedAt)
+  const all = [...items.values()]
+  const running = all.filter((i) => !i.done).sort((a, b) => a.startedAt - b.startedAt)
+  const finished = all
+    .filter((i) => i.done)
+    .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
+  return [...running, ...finished]
 }
 
 export function reportActivity(
@@ -49,11 +61,36 @@ export function reportActivity(
     taskId: info.taskId ?? existing?.taskId ?? null,
     label: info.label.slice(0, 80),
     detail: info.detail?.slice(0, 160) ?? existing?.detail ?? null,
-    startedAt: existing?.startedAt ?? Date.now()
+    // Re-running the same id revives the entry as live work.
+    startedAt: existing?.done ? Date.now() : (existing?.startedAt ?? Date.now()),
+    done: false,
+    finishedAt: undefined
   })
   push()
 }
 
+/**
+ * Work finished. The entry stays as a dimmed, clickable record of where it
+ * ran — it used to just disappear, which made background work impossible to
+ * follow once it ended.
+ */
 export function clearActivity(id: string): void {
+  const item = items.get(id)
+  if (!item) return
+  if (item.taskId) {
+    items.set(id, { ...item, done: true, finishedAt: Date.now(), detail: item.detail })
+    // Keep only the most recent few finished entries.
+    const finished = [...items.values()]
+      .filter((i) => i.done)
+      .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
+    for (const old of finished.slice(KEEP_FINISHED)) items.delete(old.id)
+  } else {
+    items.delete(id) // nothing to jump to
+  }
+  push()
+}
+
+/** User dismissed a finished entry. */
+export function dismissActivity(id: string): void {
   if (items.delete(id)) push()
 }

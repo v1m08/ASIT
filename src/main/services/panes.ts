@@ -1,9 +1,22 @@
-import { BrowserWindow, globalShortcut, WebContentsView } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  globalShortcut,
+  Menu,
+  session,
+  shell,
+  WebContentsView,
+  type ContextMenuParams,
+  type WebContents
+} from 'electron'
 import { pathToFileURL } from 'url'
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import { isMailHost, mailSendBlocked, sendRefusalReason } from './guardrails'
+import type { DownloadItem } from '@shared/types'
+import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -33,6 +46,51 @@ interface Pane {
   // workspace agent must never be able to read or drive another workspace's
   // tabs — least of all the user's personal scratchpad browser.
   owner: string
+}
+
+/**
+ * A readable failure page, in the app's own colours, with a retry button —
+ * instead of the blank pane a failed load used to leave behind.
+ */
+function errorPageUrl(failedUrl: string, reason: string): string {
+  const safe = (s: string): string =>
+    s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`).slice(0, 300)
+  const html = `<!doctype html><meta charset="utf-8"><title>Can't load page</title>
+<style>
+  :root { color-scheme: dark }
+  body { margin:0; height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#12141a; color:#c8d0e0;
+         font:14px/1.5 -apple-system,Segoe UI,system-ui,sans-serif }
+  .card { max-width:460px; padding:28px; text-align:center }
+  h1 { font-size:1.05rem; margin:0 0 10px; color:#e6ecff }
+  code { display:block; margin:12px 0; padding:8px 10px; background:#191c24;
+         border-radius:6px; color:#7aa2f7; font-size:.78rem; word-break:break-all }
+  p { color:#8b93a7; font-size:.82rem; margin:6px 0 }
+  button { margin-top:16px; padding:7px 18px; border-radius:7px; cursor:pointer;
+           border:1px solid #3d59a1; background:#1d2233; color:#c8d0e0; font-size:.82rem }
+  button:hover { background:#252c42 }
+</style>
+<div class="card">
+  <h1>This page didn't load</h1>
+  <code>${safe(failedUrl)}</code>
+  <p>${safe(reason)}</p>
+  <p>Check your connection, or open it in your browser if the site blocks embedding.</p>
+  <button onclick="location.replace(${JSON.stringify(failedUrl)})">Try again</button>
+</div>`
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+}
+
+/** Never silently overwrite an existing download: file.pdf -> file (1).pdf */
+function uniquePath(target: string): string {
+  if (!existsSync(target)) return target
+  const dot = target.lastIndexOf('.')
+  const stem = dot > 0 ? target.slice(0, dot) : target
+  const ext = dot > 0 ? target.slice(dot) : ''
+  for (let i = 1; i < 500; i++) {
+    const candidate = `${stem} (${i})${ext}`
+    if (!existsSync(candidate)) return candidate
+  }
+  return target
 }
 
 // Panes are PARKED (hidden, alive) when navigating away, not destroyed — so
@@ -74,6 +132,7 @@ class PaneManager {
 
   attach(win: BrowserWindow): void {
     this.win = win
+    this.wireDownloads()
     win.on('closed', () => {
       this.win = null
       this.panes.clear()
@@ -87,6 +146,10 @@ class PaneManager {
   }
 
   private focusedPaneId: string | null = null
+  private favicons = new Map<string, string | null>()
+  private downloads = new Map<string, DownloadItem>()
+  private downloadsWired = false
+  private zoomLevels = new Map<string, number>()
   private navKeysHeld = false
   // The renderer reports whether IT holds the keyboard. When it doesn't, an
   // embedded page does — and that page (or one of its subframes) would
@@ -111,6 +174,7 @@ class PaneManager {
     this.navKeysHeld = want
     if (!want) {
       for (const { accel } of NAV_ACCELERATORS) globalShortcut.unregister(accel)
+      for (const { accel } of this.paneAccelerators()) globalShortcut.unregister(accel)
       return
     }
     for (const { accel, event } of NAV_ACCELERATORS) {
@@ -120,6 +184,38 @@ class PaneManager {
         // A key another app already owns — the rest still register.
       }
     }
+    // Browser keys, acted on directly against whichever pane has focus.
+    for (const { accel, run } of this.paneAccelerators()) {
+      try {
+        globalShortcut.register(accel, run)
+      } catch {
+        // ignore — same reason as above
+      }
+    }
+  }
+
+  /** Ctrl+F and the zoom keys, aimed at the focused pane. */
+  private paneAccelerators(): { accel: string; run: () => void }[] {
+    const focused = (): string | null => this.focusedPaneId
+    const zoomBy = (delta: number) => () => {
+      const id = focused()
+      if (!id) return
+      const level = this.zoom(id, delta)
+      this.sendAppEvent({ type: 'pane-zoom', paneId: id, zoom: level })
+    }
+    return [
+      {
+        accel: 'CommandOrControl+F',
+        run: () => {
+          const id = focused()
+          if (id) this.sendAppEvent({ type: 'find-in-page', paneId: id })
+        }
+      },
+      { accel: 'CommandOrControl+=', run: zoomBy(0.5) },
+      { accel: 'CommandOrControl+Plus', run: zoomBy(0.5) },
+      { accel: 'CommandOrControl+-', run: zoomBy(-0.5) },
+      { accel: 'CommandOrControl+0', run: zoomBy(0) }
+    ]
   }
 
   releaseNavKeys(): void {
@@ -166,9 +262,52 @@ class PaneManager {
     // persistent session so completed logins land back in the pane. Anything
     // that isn't http(s) — file:, custom protocol handlers — is denied: a
     // page must not be able to pop local content or trigger scheme handlers.
-    view.webContents.setWindowOpenHandler(({ url }) =>
-      /^https?:\/\//i.test(url) ? { action: 'allow' } : { action: 'deny' }
-    )
+    //
+    // Ctrl+click and middle-click ask for a TAB, not a window: honour that by
+    // opening a real pane in the workspace instead of a floating window.
+    view.webContents.setWindowOpenHandler(({ url, disposition }) => {
+      if (!/^https?:\/\//i.test(url)) return { action: 'deny' }
+      if (disposition === 'foreground-tab' || disposition === 'background-tab') {
+        this.sendAppEvent({ type: 'open-url-tab', url, owner: this.panes.get(paneId)?.owner })
+        return { action: 'deny' }
+      }
+      return { action: 'allow' }
+    })
+
+    // Right-click. Panes had no context menu at all — no copy, no paste, no
+    // "open link in new tab", which is most of what makes an embedded page
+    // feel broken next to a real browser.
+    view.webContents.on('context-menu', (_e, params) => {
+      this.showContextMenu(paneId, view.webContents, params)
+    })
+
+    // A failed load used to leave a blank pane with no explanation. Show what
+    // failed and offer a retry instead (same rule as the app's own loads).
+    view.webContents.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
+      if (!isMainFrame || code === -3) return // -3 = aborted (normal during nav)
+      view.webContents.loadURL(errorPageUrl(failedUrl, desc || String(code)))
+    })
+
+    view.webContents.on('page-favicon-updated', (_e, icons) => {
+      this.favicons.set(paneId, icons[0] ?? null)
+      pushNavState()
+    })
+
+    view.webContents.on('found-in-page', (_e, result) => {
+      if (!this.win || this.win.isDestroyed()) return
+      this.win.webContents.send(IPC.PANES_FIND_RESULT, {
+        paneId,
+        activeMatch: result.activeMatchOrdinal,
+        matches: result.matches
+      })
+    })
+
+    // Pages that ask for the camera/mic/notifications used to hang on a
+    // promise that never settled. Deny by default, allow the ones a study
+    // workspace legitimately needs.
+    view.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(permission === 'clipboard-read' || permission === 'clipboard-sanitized-write')
+    })
 
     // Focus tracking drives the OS-level key grab above, and tells the
     // renderer which zone the ring is sitting on when the user CLICKS into a
@@ -211,6 +350,13 @@ class PaneManager {
       } else if (/^[1-9]$/.test(k)) {
         event.preventDefault()
         this.sendAppEvent({ type: 'focus-zone', index: Number(k) - 1 })
+      } else if (k === 'f') {
+        event.preventDefault()
+        this.sendAppEvent({ type: 'find-in-page', paneId })
+      } else if (k === '=' || k === '+' || k === '-' || k === '0') {
+        event.preventDefault()
+        const level = this.zoom(paneId, k === '0' ? 0 : k === '-' ? -0.5 : 0.5)
+        this.sendAppEvent({ type: 'pane-zoom', paneId, zoom: level })
       }
     })
 
@@ -222,7 +368,9 @@ class PaneManager {
         url: wc.getURL(),
         title: wc.getTitle(),
         canGoBack: wc.navigationHistory.canGoBack(),
-        canGoForward: wc.navigationHistory.canGoForward()
+        canGoForward: wc.navigationHistory.canGoForward(),
+        favicon: this.favicons.get(paneId) ?? null,
+        zoom: this.zoomLevels.get(paneId) ?? 0
       })
     }
     view.webContents.on('did-navigate', pushNavState)
@@ -319,6 +467,9 @@ class PaneManager {
     for (const pane of this.panes.values()) {
       pane.view.setVisible(pane.desiredVisible && !this.allHidden)
     }
+    // Embedded native windows paint above EVERYTHING (including the panes), so
+    // an overlay has to banish them too or it opens underneath the app.
+    setAllAppWindowsVisible(!this.allHidden)
   }
 
   navigate(paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' }): void {
@@ -332,9 +483,161 @@ class PaneManager {
     else if (action.nav === 'reload') wc.reload()
   }
 
+  // --- browser basics (user-driven only; none of this is agent-reachable) ---
+
+  /**
+   * Downloads. Clicking a download link in a pane previously did nothing at
+   * all — Electron cancels a download with no `will-download` handler. Files
+   * land in the OS Downloads folder, with progress and a "show in folder".
+   */
+  private wireDownloads(): void {
+    if (this.downloadsWired) return
+    this.downloadsWired = true
+    const ses = session.fromPartition(BROWSE_PARTITION)
+    ses.on('will-download', (_e, item) => {
+      const id = `dl-${Date.now().toString(36)}-${Math.round(Math.random() * 1e6).toString(36)}`
+      const savePath = join(app.getPath('downloads'), item.getFilename())
+      item.setSavePath(uniquePath(savePath))
+
+      const emit = (state: DownloadItem['state']): void => {
+        const entry: DownloadItem = {
+          id,
+          filename: item.getFilename(),
+          savePath: item.getSavePath(),
+          receivedBytes: item.getReceivedBytes(),
+          totalBytes: item.getTotalBytes(),
+          state
+        }
+        this.downloads.set(id, entry)
+        if (this.win && !this.win.isDestroyed())
+          this.win.webContents.send(IPC.PANES_DOWNLOAD_EVENT, entry)
+      }
+
+      emit('progressing')
+      item.on('updated', (_ev, state) =>
+        emit(state === 'interrupted' ? 'interrupted' : 'progressing')
+      )
+      item.once('done', (_ev, state) =>
+        emit(state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted')
+      )
+    })
+  }
+
+  listDownloads(): DownloadItem[] {
+    return [...this.downloads.values()].slice(-20).reverse()
+  }
+
+  showDownload(id: string): void {
+    const d = this.downloads.get(id)
+    if (d?.savePath) shell.showItemInFolder(d.savePath)
+  }
+
+  /** Ctrl+F. Empty text stops the search and clears highlights. */
+  find(paneId: string, text: string, forward = true, findNext = false): void {
+    const wc = this.panes.get(paneId)?.view.webContents
+    if (!wc) return
+    if (!text) {
+      wc.stopFindInPage('clearSelection')
+      return
+    }
+    wc.findInPage(text, { forward, findNext })
+  }
+
+  stopFind(paneId: string): void {
+    this.panes.get(paneId)?.view.webContents.stopFindInPage('clearSelection')
+  }
+
+  /** Ctrl+= / Ctrl+- / Ctrl+0. `delta` of 0 resets. */
+  zoom(paneId: string, delta: number): number {
+    const wc = this.panes.get(paneId)?.view.webContents
+    if (!wc) return 0
+    const next = delta === 0 ? 0 : Math.max(-3, Math.min(5, wc.getZoomLevel() + delta))
+    wc.setZoomLevel(next)
+    this.zoomLevels.set(paneId, next)
+    return next
+  }
+
+  private showContextMenu(paneId: string, wc: WebContents, params: ContextMenuParams): void {
+    const owner = this.panes.get(paneId)?.owner
+    const items: Electron.MenuItemConstructorOptions[] = []
+    const add = (item: Electron.MenuItemConstructorOptions): number => items.push(item)
+
+    if (params.linkURL && /^https?:/i.test(params.linkURL)) {
+      add({
+        label: 'Open link in new tab',
+        click: () => this.sendAppEvent({ type: 'open-url-tab', url: params.linkURL, owner })
+      })
+      add({
+        label: 'Open link in browser',
+        click: () => void shell.openExternal(params.linkURL)
+      })
+      add({ label: 'Copy link address', click: () => clipboard.writeText(params.linkURL) })
+      add({ type: 'separator' })
+    }
+
+    if (params.mediaType === 'image' && /^https?:/i.test(params.srcURL)) {
+      add({ label: 'Copy image', click: () => wc.copyImageAt(params.x, params.y) })
+      add({ label: 'Copy image address', click: () => clipboard.writeText(params.srcURL) })
+      add({ label: 'Save image…', click: () => wc.downloadURL(params.srcURL) })
+      add({ type: 'separator' })
+    }
+
+    // Clipboard. These were the biggest omission: without a context menu the
+    // only way to copy out of a page was a keyboard shortcut.
+    if (params.isEditable || params.selectionText) {
+      add({ role: 'cut', enabled: params.isEditable && !!params.selectionText })
+      add({ role: 'copy', enabled: !!params.selectionText })
+      add({ role: 'paste', enabled: params.isEditable })
+      add({ role: 'selectAll' })
+      add({ type: 'separator' })
+    }
+
+    if (params.selectionText && !params.isEditable) {
+      const q = params.selectionText.trim().slice(0, 100)
+      add({
+        label: `Search Google for “${q.length > 30 ? q.slice(0, 30) + '…' : q}”`,
+        click: () =>
+          this.sendAppEvent({
+            type: 'open-url-tab',
+            url: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+            owner
+          })
+      })
+      add({ type: 'separator' })
+    }
+
+    add({
+      label: 'Back',
+      enabled: wc.navigationHistory.canGoBack(),
+      click: () => wc.navigationHistory.goBack()
+    })
+    add({
+      label: 'Forward',
+      enabled: wc.navigationHistory.canGoForward(),
+      click: () => wc.navigationHistory.goForward()
+    })
+    add({ label: 'Reload', click: () => wc.reload() })
+    add({ type: 'separator' })
+    add({ label: 'Find in page…', click: () => this.sendAppEvent({ type: 'find-in-page', paneId }) })
+    add({ label: 'Copy page address', click: () => clipboard.writeText(wc.getURL()) })
+    add({
+      label: 'Open page in browser',
+      click: () => {
+        const u = wc.getURL()
+        if (/^https?:/i.test(u)) void shell.openExternal(u)
+      }
+    })
+    add({ type: 'separator' })
+    add({ label: 'Inspect element', click: () => wc.inspectElement(params.x, params.y) })
+
+    Menu.buildFromTemplate(items).popup({ window: this.win ?? undefined })
+  }
+
   close(paneId: string): void {
     const pane = this.panes.get(paneId)
     if (!pane) return
+    this.favicons.delete(paneId)
+    this.zoomLevels.delete(paneId)
     if (this.focusedPaneId === paneId) this.releaseNavKeys()
     if (this.win && !this.win.isDestroyed()) {
       this.win.contentView.removeChildView(pane.view)
@@ -423,7 +726,18 @@ class PaneManager {
           tag: role ? el.tagName.toLowerCase() + '[' + role + ']' : el.tagName.toLowerCase(),
           type: el.getAttribute('type') || (el.isContentEditable ? 'contenteditable' : null),
           label: String(label).replace(/\\s+/g, ' ').trim().slice(0, 120),
-          value: typeof el.value === 'string' ? el.value.slice(0, 300) : (el.isContentEditable ? (el.innerText || '').slice(0, 300) : null),
+          value: (function () {
+            // NEVER hand a secret to the model. Password inputs (and anything
+            // marked as a one-time code) report only whether they are filled —
+            // the agent still learns the form state, never the value. Autofill
+            // puts real credentials in these fields, so this is load-bearing.
+            var t = (el.getAttribute('type') || '').toLowerCase();
+            var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+            if (t === 'password' || ac.indexOf('one-time-code') !== -1 || ac.indexOf('current-password') !== -1 || ac.indexOf('new-password') !== -1) {
+              return el.value ? '[hidden credential — filled]' : '';
+            }
+            return typeof el.value === 'string' ? el.value.slice(0, 300) : (el.isContentEditable ? (el.innerText || '').slice(0, 300) : null);
+          })(),
           options: el.tagName === 'SELECT' ? Array.from(el.options).slice(0, 40).map(o => o.value || o.text) : undefined,
           href: el.tagName === 'A' ? (el.getAttribute('href') || '').slice(0, 200) : undefined
         }
@@ -537,7 +851,15 @@ class PaneManager {
           for (const el of section.result.elements) {
             const bits = [`[${el.ref}] ${el.tag}${el.type ? `(${el.type})` : ''}`]
             if (el.label) bits.push(`"${el.label}"`)
-            if (el.value) bits.push(`— current value: "${el.value}"`)
+            // The capture script already replaced password/OTP values with a
+            // placeholder — belt and braces in case `type` says otherwise.
+            if (el.value) {
+              bits.push(
+                (el.type ?? '').toLowerCase() === 'password'
+                  ? '— current value: [hidden credential]'
+                  : `— current value: "${el.value}"`
+              )
+            }
             if (el.options) bits.push(`— options: ${el.options.join(' | ').slice(0, 300)}`)
             if (el.href) bits.push(`— href: ${el.href}`)
             lines.push(`- ${bits.join(' ')}`)

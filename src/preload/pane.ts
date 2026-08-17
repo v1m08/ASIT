@@ -113,10 +113,75 @@ window.addEventListener(
   'focusin',
   (e: Event) => {
     const el = e.target as HTMLElement | null
-    if (el instanceof HTMLInputElement && looksLikeOtpField(el)) void tryOtpAutofill(el)
+    if (!(el instanceof HTMLInputElement)) return
+    if (looksLikeOtpField(el)) void tryOtpAutofill(el)
+    if ((el.type || '').toLowerCase() === 'password') void tryPasswordAutofill(el)
   },
   true
 )
+
+// ---------------------------------------------------------------------------
+// Password autofill
+//
+// Driven entirely by the USER focusing a login field. The vault lives in
+// userData — outside every agent cwd — and nothing here is reachable from an
+// agent: this preload runs in an isolated world the page cannot see, and no
+// action verb exists that could trigger it. We never auto-submit: the user
+// always presses the button themselves.
+// ---------------------------------------------------------------------------
+
+const filledLogins = new WeakSet<HTMLInputElement>()
+let lastVaultLookup = 0
+
+function usernameFieldFor(pw: HTMLInputElement): HTMLInputElement | null {
+  const scope: ParentNode = pw.form ?? document
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLInputElement>('input')
+  ).filter((el) => {
+    const t = (el.type || '').toLowerCase()
+    return t === 'text' || t === 'email' || t === 'tel' || t === ''
+  })
+  if (candidates.length === 0) return null
+  // The field just above the password is the username on essentially every
+  // login form; fall back to an autocomplete/name hint.
+  const before = candidates.filter(
+    (el) => el.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING
+  )
+  return (
+    before[before.length - 1] ??
+    candidates.find((el) =>
+      /user|email|login|account/i.test(`${el.name} ${el.id} ${el.autocomplete}`)
+    ) ??
+    null
+  )
+}
+
+async function tryPasswordAutofill(pw: HTMLInputElement): Promise<void> {
+  if (filledLogins.has(pw) || pw.value) return
+  if (Date.now() - lastVaultLookup < 800) return
+  lastVaultLookup = Date.now()
+  try {
+    const cred = (await ipcRenderer.invoke('vault:for-origin', location.href)) as {
+      username: string
+      password: string
+    } | null
+    if (!cred || !cred.password || pw.value || filledLogins.has(pw)) return
+    filledLogins.add(pw)
+
+    const user = usernameFieldFor(pw)
+    if (user && !user.value && cred.username) {
+      setNativeValue(user, cred.username)
+      user.dispatchEvent(new Event('input', { bubbles: true }))
+      user.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    setNativeValue(pw, cred.password)
+    pw.dispatchEvent(new Event('input', { bubbles: true }))
+    pw.dispatchEvent(new Event('change', { bubbles: true }))
+    // Deliberately NO form.submit() — signing in stays the user's action.
+  } catch {
+    // no credential saved for this site — the user just types it
+  }
+}
 
 // Declutter Google SEARCH pages inside narrow panes: hide the left filter
 // rail so results get the full width. Scoped to google.*/search only —

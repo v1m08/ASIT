@@ -62,6 +62,11 @@ declare global {
         typeActive: (text: string) => Promise<string>
         focus: (paneId: string) => Promise<void>
         domFocus: (focused: boolean) => void
+        find: (paneId: string, text: string, forward?: boolean, findNext?: boolean) => Promise<void>
+        findStop: (paneId: string) => Promise<void>
+        zoom: (paneId: string, delta: number) => Promise<number>
+        downloads: () => Promise<import('@shared/types').DownloadItem[]>
+        showDownload: (id: string) => Promise<void>
       }
       todos: {
         list: (includeDone?: boolean) => Promise<
@@ -93,6 +98,31 @@ declare global {
         close: (id: string) => Promise<void>
         replay: (id: string) => Promise<string>
         shells: () => Promise<string[]>
+      }
+      appwin: {
+        list: () => Promise<{ handle: string; title: string }[]>
+        embed: (handle: string, taskId: string) => Promise<string | null>
+        bounds: (
+          handle: string,
+          b: { x: number; y: number; width: number; height: number }
+        ) => Promise<void>
+        visible: (handle: string, visible: boolean) => Promise<void>
+        release: (handle: string) => Promise<void>
+      }
+      vault: {
+        list: () => Promise<
+          { id: string; origin: string; username: string; title: string; updatedAt: string }[]
+        >
+        save: (input: {
+          id?: string
+          origin: string
+          username: string
+          password: string
+          title?: string
+        }) => Promise<{ id?: string; error?: string }>
+        delete: (id: string) => Promise<void>
+        reveal: (id: string) => Promise<string | null>
+        status: () => Promise<{ encrypted: boolean }>
       }
       terms: {
         list: (taskId: string) => Promise<{ term: string; definition: string }[]>
