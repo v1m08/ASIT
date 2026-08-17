@@ -19,7 +19,13 @@ import { readNote, writeNote } from './resources'
 import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
-import { cancelJarvis, jarvisBusy, jarvisLive, startJarvisTurn } from './jarvis'
+import {
+  cancelJarvis,
+  jarvisBusy,
+  jarvisLive,
+  queuedPrompts,
+  startJarvisTurn
+} from './jarvis'
 import { assistantHistory } from './assistant'
 import { parseSendCommand, sendWhatsApp } from './whatsapp'
 
@@ -479,6 +485,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     return sendJson(res, 200, {
       live: jarvisLive(),
       busy: jarvisBusy(),
+      queued: queuedPrompts(),
       history: assistantHistory(25)
     })
   }

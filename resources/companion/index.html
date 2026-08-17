@@ -53,6 +53,8 @@
   .strike { text-decoration: line-through; color: var(--dim); }
   /* Links inside a to-do are tappable; big enough to hit with a thumb. */
   .tlink { color: var(--accent); text-decoration: underline; word-break: break-word; }
+  .agent-open { cursor: pointer; }
+  .agent-open:active { background: var(--hover); }
   input[type='text'], textarea {
     width: 100%; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 10px;
@@ -552,12 +554,13 @@
       <h2>Agents</h2>
       ${running.length === 0 ? '<p class="empty">Nothing running right now ✨</p>' : ''}
       ${running.map((i) => `
-        <div class="card">
+        <div class="card agent-open" data-open="1">
           <div class="row">
             <span class="grow"><b>${agentIcon(i.kind)} ${esc(i.label)}</b></span>
             <span class="badge">${since(i.startedAt)}</span>
           </div>
           <div class="dim" style="margin-top:4px;font-size:13px">${esc(i.detail || 'Working…')}</div>
+          <div class="dim" style="margin-top:6px;color:var(--accent)">Tap to open the conversation ›</div>
         </div>`).join('')}
       ${finished.length ? `<h2 style="margin-top:18px">Recently finished</h2>` : ''}
       ${finished.map((i) => `
@@ -567,6 +570,11 @@
             <span class="dim" style="font-size:12px">${i.finishedAt ? since(i.finishedAt) + ' ago' : ''}</span>
           </div>
         </div>`).join('')}`
+    // Tapping a running agent takes you to its conversation, where you can
+    // read what it's doing and add a follow-up.
+    for (const el of main.querySelectorAll('[data-open]')) {
+      el.onclick = () => { askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode); tab = 'ask'; render() }
+    }
   }
 
   function renderCapture() {
@@ -621,6 +629,7 @@
       turns.push({ q: h.prompt, a: h.reply, busy: false, status: null })
     }
     if (live) turns.push({ q: live.prompt, a: live.reply, busy: live.running, status: live.status, error: live.error })
+    for (const q of (data.queued || [])) turns.push({ q, a: '', busy: false, status: null, pending: true })
     for (const x of askLog) turns.push(x) // quick-mode replies live only here
 
     main.innerHTML = `
@@ -634,7 +643,7 @@
         <div class="card">
           <div class="chat-q">${esc(x.q)}</div>
           ${x.status && x.busy ? `<div class="dim" style="margin:4px 0">${esc(x.status)}</div>` : ''}
-          <div class="chat-a">${esc(x.a || '')}${x.busy ? ' <span class="spin"></span>' : ''}</div>
+          <div class="chat-a">${x.pending ? '<span class="dim">queued — will run when the current step finishes</span>' : esc(x.a || '')}${x.busy ? ' <span class="spin"></span>' : ''}</div>
           ${x.error ? `<div class="dim" style="color:var(--danger)">${esc(x.error)}</div>` : ''}
         </div>`).join('')}</div>
       <div class="card row">
@@ -659,6 +668,7 @@
         try {
           const r = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt: v, mode: 'jarvis' }) })
           if (!r.started) toast(r.reason || 'Busy')
+          else if (r.queued) toast('Queued — runs after the current step')
         } catch (err) { toast('Failed: ' + err.message) }
         render() // live state takes over from here
         return

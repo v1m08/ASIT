@@ -5,7 +5,7 @@
 // localStorage are unreachable because the page itself never renders.
 //
 // Bump CACHE whenever the shell changes so old copies are evicted.
-const CACHE = 'asit-shell-v3'
+const CACHE = 'asit-shell-v4'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-180.png', '/icon-512.png']
 
 self.addEventListener('install', (e) => {

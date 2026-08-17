@@ -58,9 +58,26 @@ export interface JarvisLive {
 }
 let live: JarvisLive | null = null
 let liveNotifyAt = 0
+// Follow-ups typed while a turn is still running. Refusing them (the old
+// behaviour) meant you could watch the agent work but never talk to it —
+// exactly when you most want to add "actually, do X too".
+const queued: string[] = []
+
+export function queuedPrompts(): string[] {
+  return [...queued]
+}
 
 export function jarvisLive(): JarvisLive | null {
   return live
+}
+
+/** Run the next queued follow-up once the current turn has finished. */
+function drainQueue(): void {
+  if (running || queued.length === 0) return
+  const next = queued.shift()!
+  publishLive(true)
+  // Next tick: let the finishing turn's own bookkeeping settle first.
+  setTimeout(() => startJarvisTurn(next), 60)
 }
 
 /** Throttled: deltas arrive per token and each one would be a socket write. */
@@ -198,11 +215,13 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
         if (isError) {
           if (live) { live.running = false; live.error = text || 'Jarvis returned an error.' }
           publishLive(true)
+          drainQueue()
           cb.onError(text || 'Jarvis returned an error.')
           return
         }
         if (live) { live.reply = text || live.reply; live.status = null; live.running = false }
         publishLive(true)
+        drainQueue()
         appendWorklog(prompt, text)
         logExchange(prompt, text) // shows up in the assistant's history panel
         cb.onDone(text, usage.costUsd)
@@ -211,6 +230,7 @@ export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
         running = null
         if (live) { live.running = false; live.error = message }
         publishLive(true)
+        drainQueue()
         clearActivity('jarvis')
         cb.onError(message)
       }
@@ -253,8 +273,17 @@ export function askJarvisText(prompt: string): Promise<string> {
  * request open for the whole turn breaks now that turns can legitimately run
  * far longer than any proxy timeout.
  */
-export function startJarvisTurn(prompt: string): { started: boolean; reason?: string } {
-  if (running) return { started: false, reason: 'Jarvis is mid-task — stop it first.' }
+export function startJarvisTurn(prompt: string): {
+  started: boolean
+  queued?: boolean
+  reason?: string
+} {
+  if (running) {
+    if (queued.length >= 5) return { started: false, reason: 'Too many follow-ups queued.' }
+    queued.push(prompt)
+    publishLive(true)
+    return { started: true, queued: true }
+  }
   askJarvis(prompt, {
     onDelta: () => undefined,
     onStatus: () => undefined,
@@ -267,6 +296,7 @@ export function startJarvisTurn(prompt: string): { started: boolean; reason?: st
 export function cancelJarvis(): void {
   running?.cancel()
   running = null
+  queued.length = 0 // "stop" means stop, including anything lined up
   if (live) { live.running = false; live.error = 'Stopped.' }
   publishLive(true)
   clearActivity('jarvis')
