@@ -123,6 +123,25 @@
   }
   const token = () => localStorage.getItem('asit-token') || ''
 
+  // Register the offline shell FIRST — this used to live after the pairing
+  // gate's early return, so a fresh home-screen install cached nothing and
+  // the app simply would not open with the PC off.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => { reg.update().catch(() => {}) })
+      .catch((err) => { console.warn('offline shell unavailable:', err && err.message) })
+    // Confirm it ONCE, so you find out the app works offline here rather than
+    // the first time your PC is off. `toast` is a hoisted declaration.
+    navigator.serviceWorker.ready
+      .then(() => {
+        if (localStorage.getItem('asit-offline-ready')) return
+        localStorage.setItem('asit-offline-ready', '1')
+        setTimeout(() => toast('Offline ready — opens without your PC'), 1500)
+      })
+      .catch(() => {})
+  }
+
   // Unpaired (e.g. a fresh home-screen install — iOS gives it storage separate
   // from Safari's): request a pairing code and wait for approval on the PC.
   if (!token()) {
@@ -303,7 +322,7 @@
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
-        $('#conn').textContent = 'reconnecting…'
+        $('#conn').textContent = navigator.onLine ? 'PC offline' : 'no network'
         $('#conn').className = 'conn off'
         setTimeout(connectWs, 4000)
       }
@@ -327,7 +346,6 @@
     } catch (err) { toast('Push setup failed: ' + err.message) }
   }
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js')
 
   // ---- tabs
   let tab = 'todos'
@@ -518,6 +536,14 @@
 
   async function renderAgents() {
     const state = await apiCached('state')
+    if (offlineSince) {
+      main.innerHTML = `${offlineBanner()}
+        <h2>Agents</h2>
+        <p class="empty">Agent activity is live-only — it can't be shown while your PC is
+        unreachable, and what was running before may have finished.<br><br>
+        Your to-dos, review cards and capture still work offline.</p>`
+      return
+    }
     const items = state.activity || []
     const running = items.filter((i) => !i.done)
     const finished = items.filter((i) => i.done)
@@ -570,6 +596,13 @@
   const askLog = []
   let askMode = localStorage.getItem('asit-askmode') || 'quick'
   function renderAsk() {
+    if (offlineSince) {
+      main.innerHTML = `${offlineBanner()}
+        <h2>Ask</h2>
+        <p class="empty">Asking needs your PC — that's where the assistant runs.<br><br>
+        Use <b>Capture</b> to jot it down now; it syncs the moment your PC is back.</p>`
+      return
+    }
     main.innerHTML = `
       <h2>Ask</h2>
       <div class="row" style="margin-bottom:10px">

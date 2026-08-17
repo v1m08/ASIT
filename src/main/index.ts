@@ -1020,6 +1020,38 @@ async function runCompanionSmokeTest(): Promise<void> {
     if (blocked.status !== 404) fail('static handler served a non-whitelisted path')
     console.log('[companion-smoke] shell serves; non-whitelisted paths refused')
 
+    // OFFLINE SHELL: every file the service worker precaches must be served,
+    // with a JS content-type on sw.js — browsers refuse to register a worker
+    // served as anything else, and a single missing file here is the
+    // difference between "the phone app opens with the PC off" and a browser
+    // error page.
+    for (const [file, expectType] of [
+      ['/index.html', 'text/html'],
+      ['/sw.js', 'javascript'],
+      ['/manifest.webmanifest', 'manifest'],
+      ['/icon-180.png', 'image/png'],
+      ['/icon-512.png', 'image/png']
+    ] as const) {
+      const r = await fetch(base + file)
+      if (r.status !== 200) fail(`offline shell file ${file} not served (${r.status})`)
+      const ctype = r.headers.get('content-type') ?? ''
+      if (!ctype.includes(expectType))
+        fail(`${file} served as "${ctype}" — expected ${expectType}`)
+    }
+    // The worker must actually register a fetch handler, or nothing is cached.
+    const swSrc = await (await fetch(base + '/sw.js')).text()
+    if (!/addEventListener\(\s*['"]fetch['"]/.test(swSrc)) fail('sw.js has no fetch handler')
+    if (!/addEventListener\(\s*['"]install['"]/.test(swSrc)) fail('sw.js has no install handler')
+    // And the app must register it BEFORE the pairing gate's early return,
+    // otherwise a fresh home-screen install caches nothing.
+    const shellSrc = await (await fetch(base + '/')).text()
+    const regAt = shellSrc.indexOf("register('/sw.js')")
+    const gateAt = shellSrc.indexOf('if (!token())')
+    if (regAt < 0) fail('shell never registers the service worker')
+    if (gateAt >= 0 && regAt > gateAt)
+      fail('service worker is registered after the pairing gate — a fresh install would cache nothing')
+    console.log('[companion-smoke] offline shell complete + registered before the pairing gate')
+
     companionSvc.stopCompanion()
     console.log('[companion-smoke] ALL PASS')
     app.exit(0)
