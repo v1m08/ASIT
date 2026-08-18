@@ -20,6 +20,7 @@ import type { DownloadItem } from '@shared/types'
 import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 import { applyDeclutter } from './declutter'
+import { recordVisit } from './history'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -371,6 +372,14 @@ class PaneManager {
     })
     view.webContents.on('did-navigate', pushNavState)
     view.webContents.on('did-navigate', () => void applyDeclutter(view.webContents))
+    // History is keyed to the OWNING workspace so private ones can opt out.
+    // page-title-updated rather than did-navigate alone: at navigation time
+    // the title is still the previous page's, and a history list of wrong
+    // titles is worse than none.
+    view.webContents.on('page-title-updated', () => {
+      const pane = this.panes.get(paneId)
+      recordVisit(view.webContents.getURL(), view.webContents.getTitle(), pane?.owner ?? null)
+    })
     view.webContents.on('did-navigate-in-page', pushNavState)
     view.webContents.on('page-title-updated', pushNavState)
 

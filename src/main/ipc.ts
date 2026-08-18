@@ -14,6 +14,7 @@ import * as usage from './services/usage'
 import * as transfer from './services/transfer'
 import * as assistant from './services/assistant'
 import * as library from './services/library'
+import * as history from './services/history'
 import * as skills from './services/skills'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
@@ -185,6 +186,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return added
   })
   ipcMain.handle(IPC.LIBRARY_ADD_PATHS, (_e, paths: string[]) => library.addPathsToLibrary(paths))
+
+  // --- browsing history (user-facing only; no agent verb reaches this) ---
+  ipcMain.handle(IPC.HISTORY_SEARCH, (_e, q: string, limit?: number) =>
+    history.searchHistory(q, limit)
+  )
+  ipcMain.handle(IPC.HISTORY_RECENT, (_e, limit?: number) => history.recentHistory(limit))
+  ipcMain.handle(IPC.HISTORY_REMOVE, (_e, id: string) => history.removeHistory(id))
+  ipcMain.handle(IPC.HISTORY_CLEAR, () => history.clearHistory())
 
   ipcMain.handle(IPC.RESOURCES_RENAME, (_e, id: string, taskId: string, title: string) => {
     resources.renameResource(id, title)

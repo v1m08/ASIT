@@ -60,6 +60,16 @@ export interface ChatSession {
   lastMessageAt: string | null
 }
 
+/** A page the user visited in an embedded pane. Private workspaces excluded. */
+export interface HistoryEntry {
+  id: string
+  url: string
+  title: string
+  taskId: string | null
+  visitCount: number
+  lastVisitedAt: string
+}
+
 export interface ChatMessage {
   id: string
   chatSessionId: string

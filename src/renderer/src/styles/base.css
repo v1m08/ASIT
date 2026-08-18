@@ -3549,3 +3549,77 @@ code {
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* ---- Address bar (workspace toolbar + scratch browser) ----
+   The suggestion list must sit ABOVE the toolbar in stacking order but is
+   still app DOM, so it only shows where the page isn't: the toolbar strip.
+   That is fine — it drops down over the pane's top edge, and the pane is
+   hidden while the overlay is open in the surfaces that need it. */
+.address-box {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.address-box .browser-address {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Inside a workspace the toolbar is dense, so the field is flatter than the
+   scratch browser's pill. */
+.pane-address .browser-address {
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+}
+
+.pane-address .browser-address:focus {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+
+.address-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.address-suggestion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.address-suggestion-on {
+  background: var(--bg-hover);
+}
+
+.address-suggestion-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.address-suggestion-url {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+}

@@ -1647,6 +1647,34 @@ async function runSmokeTest(): Promise<void> {
       throw new Error('drop onto the library did not add the file')
     console.log('[smoke] dropped files copy into the task folder and the library')
 
+    // Browsing history: what the address bar completes against. The private
+    // exclusion is the load-bearing part — a workspace the user marked private
+    // must not have its URLs indexed into a global searchable list.
+    const hist = await import('./services/history')
+    hist.clearHistory()
+    hist.recordVisit('https://gradescope.com/courses/1', 'Gradescope', task.id)
+    hist.recordVisit('https://gradescope.com/courses/1', 'Gradescope', task.id) // same page again
+    hist.recordVisit('https://piazza.com/class', 'Piazza', task.id)
+    hist.recordVisit('http://127.0.0.1:9999/local', 'Local', task.id)
+    const histPriv = tasks.createTask({ title: 'History Private' })
+    tasks.setTaskPrivacy(histPriv.id, true)
+    hist.recordVisit('https://secret.example.com/x', 'Secret', histPriv.id)
+
+    const all = hist.recentHistory()
+    if (all.some((h) => h.url.includes('secret.example.com')))
+      throw new Error('a private workspace leaked into browsing history')
+    if (all.some((h) => h.url.includes('127.0.0.1')))
+      throw new Error('localhost noise was recorded')
+    const grade = all.find((h) => h.url.includes('gradescope'))
+    if (!grade || grade.visitCount !== 2)
+      throw new Error(`revisits should merge and count up, got ${grade?.visitCount}`)
+    const hits = hist.searchHistory('grade')
+    if (hits[0]?.url !== 'https://gradescope.com/courses/1')
+      throw new Error('history search did not rank the obvious match first')
+    if (hist.searchHistory('piaz').length !== 1) throw new Error('title/url search missed')
+    tasks.deleteTask(histPriv.id)
+    console.log('[smoke] history records, ranks, and never sees private workspaces')
+
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')
 

@@ -164,6 +164,12 @@ const api = {
       }
     }
   },
+  history: {
+    search: (q: string, limit?: number) => ipcRenderer.invoke(IPC.HISTORY_SEARCH, q, limit),
+    recent: (limit?: number) => ipcRenderer.invoke(IPC.HISTORY_RECENT, limit),
+    remove: (id: string) => ipcRenderer.invoke(IPC.HISTORY_REMOVE, id),
+    clear: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR)
+  },
   library: {
     list: () => ipcRenderer.invoke(IPC.LIBRARY_LIST),
     add: () => ipcRenderer.invoke(IPC.LIBRARY_ADD),

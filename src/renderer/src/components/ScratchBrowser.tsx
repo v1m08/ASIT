@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
+import AddressBar, { hostOf, toNavUrl } from './AddressBar'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState } from '@shared/types'
 
@@ -21,25 +22,6 @@ export interface ScratchBrowserApi {
 const HOME_URL = 'https://www.google.com'
 const STORE_KEY = 'asit-scratch-tabs'
 
-function looksLikeUrl(v: string): boolean {
-  return !/\s/.test(v) && (v.includes('.') || v.startsWith('http') || v.startsWith('file:'))
-}
-
-function toNavUrl(v: string): string {
-  const t = v.trim()
-  if (/^(https?|file):/i.test(t)) return t
-  if (looksLikeUrl(t)) return `https://${t}`
-  return `https://www.google.com/search?q=${encodeURIComponent(t)}`
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
-
 let tabCounter = 0
 
 export default function ScratchBrowser({
@@ -55,7 +37,6 @@ export default function ScratchBrowser({
 }): JSX.Element {
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [address, setAddress] = useState<string | null>(null) // null = show active URL
   const [navStates, setNavStates] = useState<Record<string, PaneNavState>>({})
   const contentRef = useRef<HTMLDivElement>(null)
   const tabsRef = useRef<BrowserTab[]>([])
@@ -72,7 +53,6 @@ export default function ScratchBrowser({
       window.asit.panes.open(id, { url: navUrl }, ownerId)
       setTabs((prev) => [...prev, { id, url: navUrl, title: hostOf(navUrl) }])
       setActiveId(id)
-      setAddress(null)
     },
     [ownerId]
   )
@@ -207,7 +187,6 @@ export default function ScratchBrowser({
     const at = list.findIndex((t) => t.id === activeRef.current)
     const next = list[(at + dir + list.length) % list.length]
     setActiveId(next.id)
-    setAddress(null)
   }
 
   function closeTab(id: string): void {
@@ -229,7 +208,6 @@ export default function ScratchBrowser({
     } else {
       openTab(url)
     }
-    setAddress(null)
   }
 
   const active = tabs.find((t) => t.id === activeId) ?? null
@@ -248,7 +226,6 @@ export default function ScratchBrowser({
             className={`browser-tab ${tab.id === activeId ? 'browser-tab-active' : ''}`}
             onClick={() => {
               setActiveId(tab.id)
-              setAddress(null)
             }}
             title={tab.url}
           >
@@ -290,18 +267,7 @@ export default function ScratchBrowser({
         >
           ⟳
         </button>
-        <input
-          className="browser-address"
-          placeholder="Search or enter address"
-          value={address ?? active?.url ?? ''}
-          onChange={(e) => setAddress(e.target.value)}
-          onFocus={(e) => e.target.select()}
-          onBlur={() => setAddress(null)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (address ?? '').trim()) navigate(address!)
-            if (e.key === 'Escape') setAddress(null)
-          }}
-        />
+        <AddressBar url={active?.url ?? ''} onNavigate={navigate} />
         <button
           className="nav-btn"
           title="Pin this page to the session (kept when you save it as a task)"

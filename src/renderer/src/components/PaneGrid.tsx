@@ -7,6 +7,7 @@ import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
 import { useFileDrop } from '../hooks/useFileDrop'
+import AddressBar from './AddressBar'
 import { useOverlay } from '../hooks/useOverlay'
 
 export const BUILTIN_NOTES = 'builtin-notes'
@@ -765,9 +766,11 @@ export default function PaneGrid({
             >
               ⟳
             </button>
-            <span className="pane-url" title={nav.url}>
-              {nav.url}
-            </span>
+            <AddressBar
+              className="pane-address"
+              url={nav.url}
+              onNavigate={(target) => window.asit.panes.navigate(activeTab.id, { url: target })}
+            />
             {zoomLabel !== null && <span className="pane-zoom-label">{zoomLabel}%</span>}
             <button
               className="nav-btn"

@@ -2,6 +2,7 @@ import type {
   ChatMessage,
   ChatSession,
   CreateTaskInput,
+  HistoryEntry,
   Question,
   Resource,
   Settings,
@@ -150,6 +151,12 @@ declare global {
       }
       files: {
         pathFor: (file: File) => string
+      }
+      history: {
+        search: (q: string, limit?: number) => Promise<HistoryEntry[]>
+        recent: (limit?: number) => Promise<HistoryEntry[]>
+        remove: (id: string) => Promise<void>
+        clear: () => Promise<void>
       }
       library: {
         list: () => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[]>

@@ -210,6 +210,20 @@ const migrations: string[] = [
   // record of what the agent actually did to get them.
   `
   ALTER TABLE chat_messages ADD COLUMN steps TEXT;   -- JSON array of status lines
+  `,
+  // 13: browsing history for the embedded panes. Without it the address bar
+  // has nothing to complete against and there is no way back to a page you
+  // closed. Private workspaces are never recorded (see services/history.ts).
+  `
+  CREATE TABLE history (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL DEFAULT '',
+    task_id TEXT,
+    visit_count INTEGER NOT NULL DEFAULT 1,
+    last_visited_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_history_recent ON history(last_visited_at DESC);
   `
 ]
 
