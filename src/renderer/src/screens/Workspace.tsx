@@ -134,6 +134,7 @@ export default function Workspace(): JSX.Element {
             if (r) await refreshResources()
             return r
           }}
+          onResourcesChanged={refreshResources}
         />
         {chatOpen && !task.aiDisabled && (
           <>

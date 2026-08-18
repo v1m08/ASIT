@@ -3516,3 +3516,36 @@ code {
   padding: 1px 6px;
   font-size: 0.85em;
 }
+
+/* ---- File drop targets (drag a PDF out of Explorer) ----
+   The page area is deliberately NOT a target: those pixels belong to the
+   embedded page, and stealing its drops would break dragging an attachment
+   into Gmail. Chrome the app owns — the rail, the tab strip, the library —
+   is where files land. */
+.drop-target-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.drop-hint {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border-radius: 6px;
+  background: var(--accent-dim);
+  color: var(--text);
+  font-size: 0.76rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.tab-drop-hint {
+  padding: 0 8px;
+  color: var(--accent);
+  font-size: 0.74rem;
+  white-space: nowrap;
+  pointer-events: none;
+}

@@ -55,18 +55,26 @@ export function addUrlResource(taskId: string, title: string, url: string): Reso
   })
 }
 
-export function addPdfResource(taskId: string, sourcePath: string, taskFolder: string): Resource {
-  const pdfDir = join(taskFolder, 'pdfs')
-  mkdirSync(pdfDir, { recursive: true })
+/**
+ * Copy a file into the task folder and pin it.
+ *
+ * PDFs land in `pdfs/` (where text extraction looks), everything else in
+ * `files/`. Both are inside the task folder, which is the AI's cwd — that is
+ * the whole point of copying rather than linking (invariant 1).
+ */
+export function addLocalFile(taskId: string, sourcePath: string, taskFolder: string): Resource {
+  const isPdf = /\.pdf$/i.test(sourcePath)
+  const dir = join(taskFolder, isPdf ? 'pdfs' : 'files')
+  mkdirSync(dir, { recursive: true })
 
-  let name = basename(sourcePath)
-  let dest = join(pdfDir, name)
+  const name = basename(sourcePath)
+  let dest = join(dir, name)
   let counter = 1
   while (existsSync(dest)) {
     const dot = name.lastIndexOf('.')
     const stem = dot > 0 ? name.slice(0, dot) : name
     const ext = dot > 0 ? name.slice(dot) : ''
-    dest = join(pdfDir, `${stem}-${counter}${ext}`)
+    dest = join(dir, `${stem}-${counter}${ext}`)
     counter++
   }
   copyFileSync(sourcePath, dest)
@@ -74,13 +82,18 @@ export function addPdfResource(taskId: string, sourcePath: string, taskFolder: s
   return insertResource({
     id: newId(),
     taskId,
-    kind: 'pdf',
-    title: basename(dest).replace(/\.pdf$/i, ''),
+    kind: isPdf ? 'pdf' : 'file',
+    title: basename(dest).replace(/\.[^.]+$/, ''),
     url: null,
     filePath: dest,
     position: nextPosition(taskId),
     createdAt: nowIso()
   })
+}
+
+/** Kept for the "+ PDF" picker; drag-and-drop and the picker must agree. */
+export function addPdfResource(taskId: string, sourcePath: string, taskFolder: string): Resource {
+  return addLocalFile(taskId, sourcePath, taskFolder)
 }
 
 export function addNoteResource(taskId: string, taskFolder: string, title: string): Resource {

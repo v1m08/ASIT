@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { CreateTaskInput, Settings, UpdateTaskInput } from '@shared/types'
 
@@ -29,6 +29,8 @@ const api = {
     addNote: (taskId: string, title: string) =>
       ipcRenderer.invoke(IPC.RESOURCES_ADD_NOTE, taskId, title),
     addPdf: (taskId: string) => ipcRenderer.invoke(IPC.RESOURCES_ADD_PDF, taskId),
+    addFiles: (taskId: string, paths: string[]) =>
+      ipcRenderer.invoke(IPC.RESOURCES_ADD_FILES, taskId, paths),
     openExternal: (target: { url?: string; filePath?: string }) =>
       ipcRenderer.invoke(IPC.RESOURCES_OPEN_EXTERNAL, target),
     rename: (id: string, taskId: string, title: string) =>
@@ -150,9 +152,22 @@ const api = {
     run: (taskId: string, name: string) => ipcRenderer.invoke(IPC.SKILLS_RUN, taskId, name),
     delete: (name: string) => ipcRenderer.invoke(IPC.SKILLS_DELETE, name)
   },
+  // Drag-and-drop from Explorer. Electron 32 removed File.path, so the ONLY
+  // way to learn where a dropped file lives is webUtils in the preload —
+  // the renderer holds a File object it cannot resolve on its own.
+  files: {
+    pathFor: (file: File): string => {
+      try {
+        return webUtils.getPathForFile(file)
+      } catch {
+        return ''
+      }
+    }
+  },
   library: {
     list: () => ipcRenderer.invoke(IPC.LIBRARY_LIST),
     add: () => ipcRenderer.invoke(IPC.LIBRARY_ADD),
+    addPaths: (paths: string[]) => ipcRenderer.invoke(IPC.LIBRARY_ADD_PATHS, paths),
     remove: (name: string) => ipcRenderer.invoke(IPC.LIBRARY_REMOVE, name),
     attach: (taskId: string, name: string) => ipcRenderer.invoke(IPC.LIBRARY_ATTACH, taskId, name)
   },

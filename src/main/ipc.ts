@@ -160,6 +160,32 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     tasks.refreshClaudeMd(taskId)
     return added
   })
+  // Files dropped onto the app from Explorer. Same copy-in + text-extraction
+  // path as the picker, so a dropped PDF is immediately readable by the agent.
+  ipcMain.handle(IPC.RESOURCES_ADD_FILES, (_e, taskId: string, paths: string[]) => {
+    const task = tasks.getTask(taskId)
+    if (!task) return []
+    const added = paths
+      .slice(0, 50)
+      .map((p) => {
+        try {
+          return resources.addLocalFile(taskId, p, task.folderPath)
+        } catch (err) {
+          console.error('dropped file failed:', p, err)
+          return null
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+    void Promise.all(
+      added
+        .filter((r) => r.kind === 'pdf')
+        .map((r) => resources.ensurePdfText(r.filePath!).catch(() => null))
+    ).then(() => tasks.refreshClaudeMd(taskId))
+    tasks.refreshClaudeMd(taskId)
+    return added
+  })
+  ipcMain.handle(IPC.LIBRARY_ADD_PATHS, (_e, paths: string[]) => library.addPathsToLibrary(paths))
+
   ipcMain.handle(IPC.RESOURCES_RENAME, (_e, id: string, taskId: string, title: string) => {
     resources.renameResource(id, title)
     tasks.refreshClaudeMd(taskId)

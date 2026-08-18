@@ -36,6 +36,7 @@ declare global {
         addUrl: (taskId: string, title: string, url: string) => Promise<Resource>
         addNote: (taskId: string, title: string) => Promise<Resource>
         addPdf: (taskId: string) => Promise<Resource[] | null>
+        addFiles: (taskId: string, paths: string[]) => Promise<Resource[]>
         openExternal: (target: { url?: string; filePath?: string }) => Promise<void>
         rename: (id: string, taskId: string, title: string) => Promise<void>
         remove: (id: string, taskId: string) => Promise<void>
@@ -147,9 +148,15 @@ declare global {
         run: (taskId: string, name: string) => Promise<{ ran: boolean; log: string[] }>
         delete: (name: string) => Promise<void>
       }
+      files: {
+        pathFor: (file: File) => string
+      }
       library: {
         list: () => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[]>
         add: () => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[] | null>
+        addPaths: (
+          paths: string[]
+        ) => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[]>
         remove: (name: string) => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[]>
         attach: (taskId: string, name: string) => Promise<Resource | null>
       }

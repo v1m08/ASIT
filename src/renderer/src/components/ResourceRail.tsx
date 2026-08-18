@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
+import { useFileDrop } from '../hooks/useFileDrop'
 import type { Resource, Task } from '@shared/types'
 import { BUILTIN_APP, BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './PaneGrid'
 import { useStore } from '../store/useStore'
@@ -112,6 +113,22 @@ export default function ResourceRail({
     }
   }
 
+  // Drop files from Explorer straight onto the rail: they are copied into the
+  // task folder and pinned, exactly as the "+ PDF" picker does.
+  const addDroppedToTask = useCallback(
+    async (paths: string[]): Promise<void> => {
+      await window.asit.resources.addFiles(task.id, paths)
+      await onResourcesChanged()
+    },
+    [task.id, onResourcesChanged]
+  )
+  const railDrop = useFileDrop((paths) => void addDroppedToTask(paths))
+
+  const addDroppedToLibrary = useCallback(async (paths: string[]): Promise<void> => {
+    setLibraryFiles(await window.asit.library.addPaths(paths))
+  }, [])
+  const libraryDrop = useFileDrop((paths) => void addDroppedToLibrary(paths))
+
   async function handleRemove(r: Resource): Promise<void> {
     if (!confirm(`Remove "${r.title}" from this task? Files stay in the task folder.`)) return
     await window.asit.resources.remove(r.id, task.id)
@@ -151,7 +168,13 @@ export default function ResourceRail({
   }
 
   return (
-    <aside className="resource-rail">
+    <aside
+      className={`resource-rail ${railDrop.over ? 'drop-target-over' : ''}`}
+      {...railDrop.handlers}
+    >
+      {railDrop.over && (
+        <div className="drop-hint">Drop to add to {task.title}</div>
+      )}
       <div className="rail-section">
         <div className="rail-header"> Resources
           <button className="rail-btn rail-toggle" title="Collapse" onClick={toggleCollapsed}>
@@ -316,7 +339,10 @@ export default function ResourceRail({
           </>
         )}
         {showLibrary && (
-          <div className="library-popover">
+          <div
+            className={`library-popover ${libraryDrop.over ? 'drop-target-over' : ''}`}
+            {...libraryDrop.handlers}
+          >
             <div className="library-head">
               <span>File library</span>
               <button className="rail-btn rail-toggle" onClick={() => setShowLibrary(false)}>
@@ -324,8 +350,8 @@ export default function ResourceRail({
               </button>
             </div>
             {libraryFiles.length === 0 && (
-              <p className="library-empty"> Your library is empty. Add files you reuse across tasks — resume, transcript,
-                formula sheets…
+              <p className="library-empty"> Your library is empty. Drop files here, or add ones you reuse across tasks —
+                resume, transcript, formula sheets…
               </p>
             )}
             {libraryFiles.map((f) => (

@@ -1621,6 +1621,32 @@ async function runSmokeTest(): Promise<void> {
     if (!missTarget.startsWith('unpin: no pin')) throw new Error('unpin invented a match')
     console.log('[smoke] agent can unpin / rename / reorder the resource rail')
 
+    // Drag-and-drop from Explorer lands here. The renderer resolves the paths
+    // (webUtils, since Electron 32 removed File.path) and main copies them in.
+    const fsMod = await import('fs')
+    const { tmpdir } = await import('os')
+    const dropDir = join(tmpdir(), 'asit-drop-smoke')
+    fsMod.mkdirSync(dropDir, { recursive: true })
+    fsMod.writeFileSync(join(dropDir, 'dropped.pdf'), '%PDF-1.4 ')
+    fsMod.writeFileSync(join(dropDir, 'notes.txt'), 'hello')
+    const droppedPdf = resources.addLocalFile(task.id, join(dropDir, 'dropped.pdf'), task.folderPath)
+    const droppedTxt = resources.addLocalFile(task.id, join(dropDir, 'notes.txt'), task.folderPath)
+    if (droppedPdf.kind !== 'pdf' || !droppedPdf.filePath?.includes('pdfs'))
+      throw new Error('dropped PDF did not land in pdfs/')
+    if (droppedTxt.kind !== 'file' || !droppedTxt.filePath?.includes('files'))
+      throw new Error('dropped non-PDF did not land in files/')
+    if (!existsSync(droppedPdf.filePath!) || !existsSync(droppedTxt.filePath!))
+      throw new Error('dropped file was not copied into the task folder')
+    // Dropping the same name twice must not overwrite the first.
+    const again = resources.addLocalFile(task.id, join(dropDir, 'dropped.pdf'), task.folderPath)
+    if (again.filePath === droppedPdf.filePath)
+      throw new Error('a second drop of the same filename overwrote the first')
+    const lib = await import('./services/library')
+    const libFiles = lib.addPathsToLibrary([join(dropDir, 'notes.txt')])
+    if (!libFiles.some((f) => f.name === 'notes.txt'))
+      throw new Error('drop onto the library did not add the file')
+    console.log('[smoke] dropped files copy into the task folder and the library')
+
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')
 

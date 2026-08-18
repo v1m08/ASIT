@@ -8,6 +8,7 @@ import AssistantBar from './components/AssistantBar'
 import JarvisPanel from './components/JarvisPanel'
 import StatusListener from './components/StatusListener'
 import { useFocusRing } from './hooks/useFocusRing'
+import { useFileDropGuard } from './hooks/useFileDrop'
 
 export default function App(): JSX.Element {
   const view = useStore((s) => s.view)
@@ -17,6 +18,9 @@ export default function App(): JSX.Element {
 
   // Tab / Shift+Tab move between real zones; Ctrl+1…9 jump; Ctrl+K assistant.
   useFocusRing()
+  // A file dropped anywhere that isn't a real target would otherwise navigate
+  // the window to it, replacing the entire app with a PDF viewer.
+  useFileDropGuard()
 
   // ONE owner for the right-column reservation. When both panels toggled the
   // body class themselves, switching Jarvis→assistant ran the effects in tree

@@ -223,6 +223,8 @@ export const IPC = {
   SKILLS_DELETE: 'skills:delete',
 
   // global file library
+  RESOURCES_ADD_FILES: 'resources:add-files', // OS drag-and-drop
+  LIBRARY_ADD_PATHS: 'library:add-paths',
   LIBRARY_LIST: 'library:list',
   LIBRARY_ADD: 'library:add',
   LIBRARY_REMOVE: 'library:remove',

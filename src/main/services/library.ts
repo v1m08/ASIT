@@ -47,6 +47,21 @@ export async function addToLibrary(win: BrowserWindow | null): Promise<LibraryFi
   return listLibrary()
 }
 
+/** Files dropped straight onto the library from the OS. */
+export function addPathsToLibrary(paths: string[]): LibraryFile[] {
+  const root = libraryRoot()
+  mkdirSync(root, { recursive: true })
+  for (const p of paths.slice(0, 50)) {
+    try {
+      if (!existsSync(p) || statSync(p).isDirectory()) continue
+      copyFileSync(p, join(root, basename(p)))
+    } catch (err) {
+      console.error('library drop failed for', p, err)
+    }
+  }
+  return listLibrary()
+}
+
 export function removeFromLibrary(name: string): LibraryFile[] {
   const target = join(libraryRoot(), basename(name)) // basename() blocks path escapes
   if (existsSync(target)) {

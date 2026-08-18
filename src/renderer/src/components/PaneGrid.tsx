@@ -6,6 +6,7 @@ import TerminalPane from './TerminalPane'
 import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
+import { useFileDrop } from '../hooks/useFileDrop'
 import { useOverlay } from '../hooks/useOverlay'
 
 export const BUILTIN_NOTES = 'builtin-notes'
@@ -88,7 +89,8 @@ export default function PaneGrid({
   resources,
   onApi,
   onPin,
-  onAttachLibrary
+  onAttachLibrary,
+  onResourcesChanged
 }: {
   task: Task
   resources: Resource[]
@@ -96,6 +98,8 @@ export default function PaneGrid({
   onPin?: (title: string, url: string) => void
   // Dropping a global library file attaches a copy to this workspace first.
   onAttachLibrary?: (name: string) => Promise<Resource | null>
+  // Files dropped from Explorer become resources, so the rail must reload.
+  onResourcesChanged?: () => Promise<void>
 }): JSX.Element {
   const [layout, setLayout] = useState<WorkspaceLayout>(() => {
     if (task.layoutJson) {
@@ -189,6 +193,34 @@ export default function PaneGrid({
     },
     [navStates]
   )
+
+  /**
+   * Files dropped on a tab strip: copied into the task folder, pinned, and
+   * opened right there. Deliberately NOT on the page area — those pixels
+   * belong to the embedded page, and stealing its drops would break dragging
+   * an attachment into Gmail, which is a thing a browser has to get right.
+   */
+  const dropFilesIntoSlot = useCallback(
+    async (slotIndex: number, paths: string[]): Promise<void> => {
+      const added = await window.asit.resources.addFiles(task.id, paths)
+      if (!added || added.length === 0) return
+      await onResourcesChanged?.()
+      setLayout((prev) => {
+        const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
+        for (const r of added) if (!slots[slotIndex].includes(r.id)) slots[slotIndex].push(r.id)
+        const active: [string, string] = [...prev.active] as [string, string]
+        active[slotIndex] = added[added.length - 1].id
+        return { ...prev, slots, active }
+      })
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [task.id, onResourcesChanged]
+  )
+
+  // One hook per slot: renderSlot is a plain function, so the hooks have to
+  // live at the top level and be picked by index inside it.
+  const slot0Drop = useFileDrop((paths) => void dropFilesIntoSlot(0, paths))
+  const slot1Drop = useFileDrop((paths) => void dropFilesIntoSlot(1, paths))
 
   // Open view-backed panes that appear in the layout.
   useEffect(() => {
@@ -598,6 +630,7 @@ export default function PaneGrid({
     const activeTab = tabs.find((t) => t.id === activeId) ?? null
     const nav = activeTab && activeTab.kind === 'url' ? navStates[activeTab.id] : null
     const isCollapsed = validLayout.collapsed?.[slotIndex] ?? false
+    const slotFileDrop = slotIndex === 0 ? slot0Drop : slot1Drop
 
     if (isCollapsed) {
       return (
@@ -625,7 +658,11 @@ export default function PaneGrid({
         data-focus-pane={activeTab?.viewBacked ? activeTab.id : undefined}
       >
         {tabs.length > 0 && (
-          <div className="tab-strip">
+          <div
+            className={`tab-strip ${slotFileDrop.over ? 'drop-target-over' : ''}`}
+            {...slotFileDrop.handlers}
+          >
+            {slotFileDrop.over && <span className="tab-drop-hint">Drop to open here</span>}
             {tabs.map((tab) => (
               <div
                 key={tab.id}
