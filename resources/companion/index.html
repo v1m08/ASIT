@@ -111,6 +111,7 @@
   <nav id="nav" hidden>
     <button data-tab="todos"><span class="ic">☑</span>To-dos</button>
     <button data-tab="review"><span class="ic">🧠</span>Review</button>
+    <button data-tab="spaces"><span class="ic">▦</span>Spaces</button>
     <button data-tab="agents"><span class="ic">🤖</span>Agents</button>
     <button data-tab="capture"><span class="ic">✎</span>Capture</button>
     <button data-tab="ask"><span class="ic">⚡</span>Ask</button>
@@ -320,7 +321,7 @@
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data)
-          if (m.type === 'changed' && (tab === 'todos' || tab === 'review' || tab === 'agents' || tab === 'ask')) render()
+          if (m.type === 'changed' && (tab === 'todos' || tab === 'review' || tab === 'agents' || tab === 'ask' || tab === 'spaces')) render()
         } catch { /* ignore */ }
       }
       ws.onclose = () => {
@@ -577,6 +578,106 @@
     }
   }
 
+  // ---- Workspaces: a remote control for the real app on the PC.
+  // Everything needs the laptop awake — that is the deal, and the empty
+  // state says so rather than pretending otherwise.
+  let openSpaceId = null
+
+  async function renderSpaces() {
+    if (offlineSince) {
+      main.innerHTML = `${offlineBanner()}
+        <h2>Spaces</h2>
+        <p class="empty">Workspaces live on your PC — wake it and this fills in.</p>`
+      return
+    }
+    if (openSpaceId) return renderSpaceDetail(openSpaceId)
+
+    const { workspaces } = await apiCached('workspaces')
+    main.innerHTML = `
+      <h2>Spaces</h2>
+      ${workspaces.length === 0 ? '<p class="empty">No workspaces yet.</p>' : ''}
+      ${workspaces.map((w) => `
+        <div class="card agent-open" data-id="${esc(w.id)}">
+          <div class="row">
+            <span class="grow"><b>${esc(w.title)}</b></span>
+            ${w.due ? `<span class="badge">${w.due} due</span>` : ''}
+            ${w.aiDisabled ? '<span class="badge">private</span>' : ''}
+          </div>
+          <div class="dim" style="margin-top:4px;font-size:13px">
+            ${w.resources} item${w.resources === 1 ? '' : 's'}${w.dueDate ? ' · due ' + esc(w.dueDate.slice(5)) : ''}
+          </div>
+        </div>`).join('')}`
+    for (const el of main.querySelectorAll('[data-id]')) {
+      el.onclick = () => { openSpaceId = el.dataset.id; render() }
+    }
+  }
+
+  async function renderSpaceDetail(id) {
+    const d = await api('workspaces/' + id)
+    main.innerHTML = `
+      <div class="row" style="margin:10px 0">
+        <button class="btn btn-sm btn-ghost" id="sp-back">‹ Spaces</button>
+        <span class="grow"></span>
+        <button class="btn btn-sm" id="sp-open">Open on PC</button>
+      </div>
+      <h2>${esc(d.task.title)}</h2>
+      ${d.resources.length === 0 ? '<p class="dim" style="margin:0 2px 10px">No resources.</p>' : ''}
+      ${d.resources.map((r) => `
+        <div class="card agent-open" data-res="${esc(r.id)}">
+          <div class="row"><span class="grow">${esc(r.title)}</span>
+          <span class="dim" style="font-size:12px">${esc(r.kind)}</span></div>
+        </div>`).join('')}
+      <h2>Notes</h2>
+      <div class="card"><div class="chat-a" style="max-height:38vh;overflow:auto">${esc(d.notes || '(empty)')}</div></div>
+      <div class="card row">
+        <input type="text" id="sp-note" placeholder="Append a line… ( to-do: … becomes a to-do )" class="grow" />
+        <button class="btn btn-sm" id="sp-add">＋</button>
+      </div>
+      <div class="card row">
+        <input type="text" id="sp-ask" placeholder="Ask the agent about this workspace…" class="grow" />
+        <button class="btn btn-sm" id="sp-go">➤</button>
+      </div>`
+
+    $('#sp-back').onclick = () => { openSpaceId = null; render() }
+    $('#sp-open').onclick = async () => {
+      try { await api('workspaces/' + id + '/open', { method: 'POST', body: '{}' }); toast('Opened on your PC') }
+      catch (err) { toast('Failed: ' + err.message) }
+    }
+    for (const el of main.querySelectorAll('[data-res]')) {
+      el.onclick = async () => {
+        try {
+          await api('workspaces/' + id + '/open', { method: 'POST', body: JSON.stringify({ resourceId: el.dataset.res }) })
+          toast('Opened on your PC')
+        } catch (err) { toast('Failed: ' + err.message) }
+      }
+    }
+    const addNote = async () => {
+      const v = $('#sp-note').value.trim()
+      if (!v) return
+      $('#sp-note').value = ''
+      try { await api('workspaces/' + id + '/note', { method: 'POST', body: JSON.stringify({ text: v }) }); toast('Added'); render() }
+      catch (err) { toast('Failed: ' + err.message) }
+    }
+    $('#sp-add').onclick = addNote
+    $('#sp-note').onkeydown = (e) => { if (e.key === 'Enter') addNote() }
+
+    // Route the question through the agent, scoped to this workspace by name.
+    const ask = async () => {
+      const v = $('#sp-ask').value.trim()
+      if (!v) return
+      $('#sp-ask').value = ''
+      const prompt = `In the "${d.task.title}" workspace: ${v}`
+      try {
+        const r = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt, mode: 'jarvis' }) })
+        toast(r.queued ? 'Queued for the agent' : 'Sent to the agent')
+        askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode)
+        openSpaceId = null; tab = 'ask'; render()
+      } catch (err) { toast('Failed: ' + err.message) }
+    }
+    $('#sp-go').onclick = ask
+    $('#sp-ask').onkeydown = (e) => { if (e.key === 'Enter') ask() }
+  }
+
   function renderCapture() {
     main.innerHTML = `
       <h2>Capture</h2>
@@ -690,6 +791,7 @@
   function render() {
     document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab))
     if (tab === 'todos') renderTodos().catch(errorCard)
+    else if (tab === 'spaces') renderSpaces().catch(errorCard)
     else if (tab === 'agents') renderAgents().catch(errorCard)
     else if (tab === 'review') renderReview().catch(errorCard)
     else if (tab === 'capture') renderCapture()

@@ -14,8 +14,8 @@ import { getSettings, setSettings } from './settings'
 import { listTodos, addTodo, setTodoDone, deleteTodo } from './todos'
 import { dueQuestions, answerQuestion } from './questions'
 import { listActivity } from './activity'
-import { getOrCreateScratch, tasksRoot, writeTasksIndex } from './tasks'
-import { readNote, writeNote } from './resources'
+import { getOrCreateScratch, getTask, listTasks, tasksRoot, writeTasksIndex } from './tasks'
+import { listResources, readNote, writeNote } from './resources'
 import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
@@ -477,6 +477,83 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     }
     const reply = await phoneAssistant(prompt.slice(0, 2000))
     return sendJson(res, 200, { reply })
+  }
+
+  // --- workspaces: drive the desktop from your pocket -----------------------
+  // Everything here needs the PC awake by design; the phone is a remote
+  // control for the real app, not a second copy of it.
+  if (path === 'workspaces' && method === 'GET') {
+    const due = dueQuestions(400)
+    const dueByTask: Record<string, number> = {}
+    for (const q of due) dueByTask[q.taskId] = (dueByTask[q.taskId] ?? 0) + 1
+    return sendJson(res, 200, {
+      workspaces: listTasks().map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        dueDate: t.dueDate,
+        aiDisabled: t.aiDisabled,
+        due: dueByTask[t.id] ?? 0,
+        resources: listResources(t.id).length
+      }))
+    })
+  }
+
+  if (path.startsWith('workspaces/') && method === 'GET') {
+    const id = path.slice('workspaces/'.length)
+    const task = getTask(id)
+    if (!task || task.status === 'archived') return sendJson(res, 404, { error: 'no such workspace' })
+    let notes = ''
+    try {
+      notes = readNote(join(task.folderPath, 'notes.md')).slice(0, 20000)
+    } catch {
+      // a workspace may not have notes yet
+    }
+    return sendJson(res, 200, {
+      task: { id: task.id, title: task.title, aiDisabled: task.aiDisabled, folderPath: task.folderPath },
+      resources: listResources(id).map((r) => ({ id: r.id, title: r.title, kind: r.kind })),
+      notes
+    })
+  }
+
+  if (path.startsWith('workspaces/') && method === 'POST') {
+    const rest = path.slice('workspaces/'.length)
+    const [id, verb] = rest.split('/')
+    const task = getTask(id)
+    if (!task || task.status === 'archived') return sendJson(res, 404, { error: 'no such workspace' })
+    const win = getWindow?.()
+    const b = await readBody(req)
+
+    if (verb === 'open') {
+      // Tell the DESKTOP to switch to this workspace (optionally to a resource).
+      if (!win || win.isDestroyed()) return sendJson(res, 503, { error: 'PC window not available' })
+      win.webContents.send(IPC.APP_EVENT, {
+        type: 'open-workspace',
+        taskId: id,
+        resourceId: typeof b.resourceId === 'string' ? b.resourceId : undefined
+      })
+      win.show()
+      return sendJson(res, 200, { ok: true })
+    }
+
+    if (verb === 'note') {
+      const text = String(b.text ?? '').trim()
+      if (!text) return sendJson(res, 400, { error: 'empty' })
+      const file = join(task.folderPath, 'notes.md')
+      let existing = ''
+      try {
+        existing = readNote(file)
+      } catch {
+        // new notes file
+      }
+      const sep = !existing || existing.endsWith('\n') ? '' : '\n'
+      writeNote(file, `${existing}${sep}${text}\n`)
+      bus.emit('changed', 'todos') // "to-do:" lines are captured on write
+      return sendJson(res, 200, { ok: true })
+    }
+
+    return sendJson(res, 404, { error: 'unknown action' })
   }
 
   // The agent conversation: what it's doing right now plus past exchanges,

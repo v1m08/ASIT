@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { IPC } from '@shared/ipc-contract'
 import { useStore } from './store/useStore'
 import Home from './screens/Home'
 import Workspace from './screens/Workspace'
@@ -27,6 +28,18 @@ export default function App(): JSX.Element {
     document.body.classList.toggle('assistant-open', assistantOpen || jarvisOpen)
     return () => document.body.classList.remove('assistant-open')
   }, [assistantOpen, jarvisOpen])
+
+  // The phone can drive the desktop: "open this workspace" arrives as an app
+  // event and switches the real app, optionally straight to a resource.
+  useEffect(() => {
+    return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      const p = args[0] as { type: string; taskId?: string; resourceId?: string }
+      if (p.type !== 'open-workspace' || !p.taskId) return
+      const store = useStore.getState()
+      if (p.resourceId) void store.openTaskAndResource(p.taskId, p.resourceId)
+      else void store.openTask(p.taskId)
+    })
+  }, [])
 
   useEffect(() => {
     loadTasks()
