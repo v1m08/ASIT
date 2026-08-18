@@ -164,7 +164,19 @@ function focusSelector(selector: string, preferWithin?: string): void {
   if (el instanceof HTMLInputElement) el.select()
 }
 
+// The dispatcher lives inside installFocusRing (it closes over the ring's
+// state), but the command palette has to invoke the same actions. Exposing
+// THE instance beats a second copy of the switch — two dispatchers drifting
+// apart is the exact bug the shared shortcut table was built to end.
+let dispatch: ((id: string) => void) | null = null
+
+/** Run a shortcut by id from outside the key handler (the command palette). */
+export function runShortcut(id: string): void {
+  dispatch?.(id)
+}
+
 export function installFocusRing(): () => void {
+  dispatch = runShortcutInternal
   const onKey = (e: KeyboardEvent): void => {
     const target = e.target instanceof HTMLElement ? e.target : null
     // Modals and small inline forms (new workspace, add to-do, save session)
@@ -194,7 +206,7 @@ export function installFocusRing(): () => void {
     const hit = matchShortcut(e)
     if (hit) {
       e.preventDefault()
-      runShortcut(hit.id)
+      runShortcutInternal(hit.id)
     }
   }
 
@@ -202,7 +214,7 @@ export function installFocusRing(): () => void {
   // page swallowed it — ends up in this one function, so the two paths can
   // never diverge again. Tab operations go to whichever screen registered
   // itself as the tab surface rather than to a hardcoded component.
-  function runShortcut(id: string): void {
+  function runShortcutInternal(id: string): void {
     const store = useStore.getState()
     const tabs = store.tabSurface
     switch (id) {
@@ -249,6 +261,8 @@ export function installFocusRing(): () => void {
         return store.setSettingsOpen(true)
       case 'open-history':
         return store.setHistoryOpen(true)
+      case 'open-palette':
+        return store.setPaletteOpen(true)
       case 'toggle-chat':
         return store.toggleChat()
       case 'go-home':
@@ -283,7 +297,7 @@ export function installFocusRing(): () => void {
       mark(document.querySelector<HTMLElement>(`[data-focus-pane="${CSS.escape(p.paneId)}"]`))
     } else if (p.type === 'cycle-focus') cycle(!!p.back)
     else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
-    else runShortcut(p.type)
+    else runShortcutInternal(p.type)
   })
 
   // Clicking an embedded page blurs the whole renderer — that is main's cue to

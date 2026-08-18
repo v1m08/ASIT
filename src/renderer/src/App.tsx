@@ -10,6 +10,7 @@ import StatusListener from './components/StatusListener'
 import { useFocusRing } from './hooks/useFocusRing'
 import { useFileDropGuard } from './hooks/useFileDrop'
 import HistoryModal from './components/HistoryModal'
+import CommandPalette from './components/CommandPalette'
 
 export default function App(): JSX.Element {
   const view = useStore((s) => s.view)
@@ -67,6 +68,7 @@ export default function App(): JSX.Element {
       <StatusListener />
       {/* Mounted at the top so Ctrl+H reaches it from Home and a workspace. */}
       <HistoryModal />
+      <CommandPalette />
       {showWelcome && <AccountsModal welcome onClose={closeWelcome} />}
     </>
   )

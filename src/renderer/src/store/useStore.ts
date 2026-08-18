@@ -87,6 +87,8 @@ interface AsitState {
   setSettingsOpen: (open: boolean) => void
   historyOpen: boolean
   setHistoryOpen: (open: boolean) => void
+  paletteOpen: boolean
+  setPaletteOpen: (open: boolean) => void
   // Whichever browsing surface is on screen registers itself here, so
   // things like the history list can open a URL without knowing which.
   urlOpener: ((url: string) => void) | null
@@ -158,6 +160,8 @@ export const useStore = create<AsitState>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   historyOpen: false,
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
+  paletteOpen: false,
+  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   urlOpener: null,
   setUrlOpener: (urlOpener) => set({ urlOpener }),
   openUrlInWorkspace: (url) => {

@@ -99,6 +99,7 @@ UI has focus or an embedded page has swallowed the keystroke.
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+L` | Address bar (type a URL, or anything else to search) |
 | `Ctrl+H` | History |
+| `Ctrl+Shift+P` | **Command palette** — one box for every workspace, pin, page and command |
 | `Ctrl+R` or `F5` | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `Ctrl+F` | Find in page |
