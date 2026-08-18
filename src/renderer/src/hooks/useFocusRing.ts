@@ -251,8 +251,6 @@ export function installFocusRing(): () => void {
         // grabs the left one, so Ctrl+L in the right pane retyped the left
         // pane's URL. Prefer the bar inside whichever zone is focused.
         return focusSelector('.browser-address', '[data-focus-active]')
-      case 'focus-chat':
-        return focusSelector('.chat-input-box textarea')
       case 'voice-toggle':
         return store.bumpVoice()
       case 'dictate-toggle':
@@ -263,10 +261,53 @@ export function installFocusRing(): () => void {
         return store.setSettingsOpen(true)
       case 'open-history':
         return store.setHistoryOpen(true)
+      case 'open-shortcuts':
+        return store.setShortcutsOpen(true)
+      case 'pin-page':
+        return tabs?.pinPage?.()
+      case 'copy-address':
+        return tabs?.copyAddress?.()
+      case 'add-file':
+        return tabs?.addFile?.()
+      case 'toggle-split':
+        return tabs?.toggleSplit?.()
+      case 'toggle-direction':
+        return tabs?.toggleDirection?.()
+      case 'focus-todo': {
+        // The field only exists once the list is in "adding" mode, so press
+        // its button first when it isn't showing.
+        const existing = document.querySelector<HTMLElement>('.todo-add input')
+        if (existing) return focusSelector('.todo-add input')
+        document.querySelector<HTMLElement>('.todo-add-btn')?.click()
+        setTimeout(() => focusSelector('.todo-add input'), 30)
+        return
+      }
+      case 'toggle-focus': {
+        // Same key starts and ends it, so there is one thing to remember.
+        // Ending while locked down is REFUSED by main (the 30s hold or the
+        // escape phrase are the only ways out) — this key cannot bypass that.
+        const task = store.activeTask
+        void window.asit.session.state().then(async (st) => {
+          if (st && st.phase !== 'idle') {
+            const result = await window.asit.session.end()
+            if (!result.ok) store.pushNotice('Hold to quit, or type the escape phrase.', 'info')
+            return
+          }
+          if (task) await window.asit.session.start(task.id, 'stopwatch')
+          else store.pushNotice('Open a workspace first.', 'info')
+        })
+        return
+      }
       case 'open-palette':
         return store.setPaletteOpen(true)
-      case 'toggle-chat':
-        return store.toggleChat()
+      case 'toggle-chat': {
+        const opening = !store.chatOpen
+        store.toggleChat()
+        // Land the cursor in the box — a key that opens a panel you then
+        // have to click into has saved you nothing.
+        if (opening) setTimeout(() => focusSelector('.chat-input-box textarea'), 40)
+        return
+      }
       case 'go-home':
         if (store.view === 'workspace') void window.asit.panes.park().then(() => store.goHome())
         return

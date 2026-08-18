@@ -1734,7 +1734,11 @@ async function runSmokeTest(): Promise<void> {
     const clashes = conflictingAccelerators()
     if (clashes.length > 0)
       throw new Error(`two actions share these accelerators: ${clashes.join(', ')}`)
-    console.log('[smoke] no keyboard shortcut is claimed by two actions')
+    const { ungroupedShortcuts } = await import('@shared/shortcuts')
+    const missing = ungroupedShortcuts()
+    if (missing.length > 0)
+      throw new Error(`these shortcuts would not appear on the cheat sheet: ${missing.join(', ')}`)
+    console.log('[smoke] no shortcut is double-booked, and every one is listed on the sheet')
 
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')

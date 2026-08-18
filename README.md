@@ -57,6 +57,7 @@ It is a real browser, not a viewer with a URL label.
 | **⚡ Quick assistant** (`Ctrl+K`) | Fast, read-only, cross-workspace lookups. Also the home of the `?`/`>` commands below. |
 | **🤖 Jarvis** (`Ctrl+J`) | The universal agent — works *across* all workspaces and takes action: *"add the syllabus link to CS 1331", "what's due anywhere this week?", "generate 10 questions from the bio slides."* |
 | **🎙 Voice** (`Ctrl+Space`) | **Talk** to Jarvis. Speech recognition is 100% local (one-time ~130MB model download); pause to send, replies spoken back. |
+| **⌨ Dictation** (`Ctrl+Shift+Space`) | Speak into **whatever field has focus** — notes, chat, the address bar, or a form in an embedded page. Keeps listening, so a paragraph is one activation; a pause is just a phrase break. Spoken punctuation ("period", "new paragraph", "question mark") and sentence casing are applied as you go. Same local models, nothing uploaded. |
 | **⚡ Skills** | The agent saves successful procedures as `./name`. Deterministic ones replay instantly with zero tokens. |
 | **👁 Watches** | *"When the Continue button appears, click it"* — the agent resumes work when a page changes, even while you're away. |
 | **⏰ Schedules** | *"every weekday at 8, tell me what's due"*, *"in 30 minutes check the build"*. Runs the prompt as a normal turn, so it inherits every guardrail — including that an unattended run **cannot send messages**. Missed runs roll forward; a week offline does not dump seven briefings on you. |
@@ -88,8 +89,11 @@ It is a real browser, not a viewer with a URL label.
 
 ## Keyboard
 
-Every key comes from one shared table, so it behaves the same whether ASIT's own
-UI has focus or an embedded page has swallowed the keystroke.
+**`Ctrl+/` shows all of them, searchable.** Every key comes from one shared
+table, so it behaves the same whether ASIT's own UI has focus or an embedded
+page has swallowed the keystroke — and the cheat sheet, the command palette
+and the keys themselves are all generated from that table, so none of them can
+list something that doesn't work or miss something that does.
 
 **Browsing**
 
@@ -99,7 +103,8 @@ UI has focus or an embedded page has swallowed the keystroke.
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Ctrl+L` | Address bar (type a URL, or anything else to search) |
 | `Ctrl+H` | History |
-| `Ctrl+Shift+P` | **Command palette** — one box for every workspace, pin, page and command |
+| `Ctrl+Shift+P` or `Ctrl+P` | **Command palette** — one box for every workspace, pin, page and command |
+| `Ctrl+/` | **All keyboard shortcuts**, searchable |
 | `Ctrl+R` or `F5` | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `Ctrl+F` | Find in page |
@@ -113,12 +118,25 @@ UI has focus or an embedded page has swallowed the keystroke.
 | `Ctrl+1…9` | Jump straight to a zone |
 | `Ctrl+K` / `Ctrl+J` | Toggle the ⚡ quick assistant / 🤖 Jarvis |
 | `Ctrl+Space` | Talk to Jarvis (pause to send) |
-| `Ctrl+B` | Show / hide the chat panel |
+| `Ctrl+Shift+Space` | **Dictate** into whatever field has focus |
+| `Ctrl+B` | Show / hide the chat panel (and put the cursor in it) |
 | `Ctrl+Shift+E` | Show / hide notes |
 | `Ctrl+E` | Notes: toggle live-preview ↔ raw markdown |
 | `Alt+Home` | Back to the workspace list |
 | `Ctrl+,` | Settings |
 | 30-sec hold / escape phrase | The two ways out of a focus session |
+
+**Doing things without the mouse**
+
+| Keys | What |
+|---|---|
+| `Ctrl+D` | Pin the current page to this workspace |
+| `Ctrl+Shift+C` | Copy the page address |
+| `Ctrl+O` | Add a PDF or file |
+| `Ctrl+\` | Split / unsplit the pane area |
+| `Ctrl+Shift+\` | Switch the split between side-by-side and stacked |
+| `Ctrl+Shift+D` | Add a to-do |
+| `Ctrl+Shift+F` | Start / end a focus session |
 
 ---
 

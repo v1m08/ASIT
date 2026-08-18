@@ -62,6 +62,16 @@ export const SHORTCUTS: ShortcutDef[] = [
     shift: true,
     label: 'Command palette'
   },
+  // Ctrl+P is the muscle memory almost everyone already has for "find
+  // anything". Two accelerators for one id is fine; two ids on one is not.
+  { id: 'open-palette', accel: 'CommandOrControl+P', key: 'p', ctrl: true, label: '' },
+  {
+    id: 'open-shortcuts',
+    accel: 'CommandOrControl+/',
+    key: '/',
+    ctrl: true,
+    label: 'Keyboard shortcuts'
+  },
   { id: 'zoom-in', accel: 'CommandOrControl+=', key: '=', ctrl: true, label: 'Zoom in' },
   { id: 'zoom-in', accel: 'CommandOrControl+Plus', key: '+', ctrl: true, label: '' },
   { id: 'zoom-out', accel: 'CommandOrControl+-', key: '-', ctrl: true, label: 'Zoom out' },
@@ -69,6 +79,16 @@ export const SHORTCUTS: ShortcutDef[] = [
 
   // --- app panels
   { id: 'focus-jarvis', accel: 'CommandOrControl+J', key: 'j', ctrl: true, label: 'Assistant' },
+  // Bound late: this had a dispatcher case and three README mentions but
+  // no entry here, so the key genuinely did nothing. The cheat sheet is
+  // what surfaced it — a list you can read is also a list you can audit.
+  {
+    id: 'focus-assistant',
+    accel: 'CommandOrControl+K',
+    key: 'k',
+    ctrl: true,
+    label: 'Quick assistant'
+  },
   { id: 'focus-address', accel: 'CommandOrControl+L', key: 'l', ctrl: true, label: 'Address bar' },
   { id: 'toggle-chat', accel: 'CommandOrControl+B', key: 'b', ctrl: true, label: 'Show / hide chat' },
   {
@@ -92,13 +112,56 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: ''
   },
   { id: 'open-settings', accel: 'CommandOrControl+,', key: ',', ctrl: true, label: 'Settings' },
+
+  // --- doing things that used to need the mouse
+  // Ctrl+D is "bookmark this" everywhere; here the bookmark is a pin on the
+  // workspace, which is the same idea with a folder behind it.
+  { id: 'pin-page', accel: 'CommandOrControl+D', key: 'd', ctrl: true, label: 'Pin this page' },
   {
-    id: 'dictate-toggle',
-    accel: 'CommandOrControl+Shift+Space',
-    key: ' ',
+    id: 'copy-address',
+    accel: 'CommandOrControl+Shift+C',
+    key: 'c',
     ctrl: true,
     shift: true,
-    label: 'Dictate into the focused field'
+    label: 'Copy page address'
+  },
+  {
+    id: 'add-file',
+    accel: 'CommandOrControl+O',
+    key: 'o',
+    ctrl: true,
+    label: 'Add a PDF or file'
+  },
+  {
+    id: 'toggle-split',
+    accel: 'CommandOrControl+\\',
+    key: '\\',
+    ctrl: true,
+    label: 'Split / unsplit'
+  },
+  {
+    id: 'toggle-direction',
+    accel: 'CommandOrControl+Shift+\\',
+    key: '\\',
+    ctrl: true,
+    shift: true,
+    label: 'Split sideways / stacked'
+  },
+  {
+    id: 'toggle-focus',
+    accel: 'CommandOrControl+Shift+F',
+    key: 'f',
+    ctrl: true,
+    shift: true,
+    label: 'Start / end a focus session'
+  },
+  {
+    id: 'focus-todo',
+    accel: 'CommandOrControl+Shift+D',
+    key: 'd',
+    ctrl: true,
+    shift: true,
+    label: 'Add a to-do'
   },
   {
     id: 'dictate-toggle',
@@ -130,13 +193,79 @@ export const ZONE_ACCELERATORS = Array.from({ length: 9 }, (_, i) => ({
  * intentional (Ctrl+R and F5 both reload); two DIFFERENT ids on one key means
  * one of them silently does nothing. Asserted by the smoke test.
  */
+/**
+ * How the cheat sheet is laid out — by what you are DOING, not by which
+ * modifier a key happens to use.
+ *
+ * It lives here rather than in the modal so `ungroupedShortcuts()` can prove
+ * every labelled action is listed. A shortcut missing from the sheet is a
+ * shortcut nobody will find, which is the same as not having it.
+ */
+export const SHORTCUT_GROUPS: { title: string; ids: string[] }[] = [
+  {
+    title: 'Find anything',
+    ids: ['open-palette', 'open-history', 'focus-address', 'find', 'open-shortcuts']
+  },
+  {
+    title: 'Tabs & pages',
+    ids: [
+      'new-tab',
+      'close-tab',
+      'reopen-tab',
+      'next-tab',
+      'prev-tab',
+      'reload',
+      'back',
+      'forward',
+      'zoom-in',
+      'zoom-out',
+      'zoom-reset'
+    ]
+  },
+  {
+    title: 'This workspace',
+    ids: [
+      'pin-page',
+      'copy-address',
+      'add-file',
+      'toggle-split',
+      'toggle-direction',
+      'toggle-chat',
+      'toggle-notes',
+      'focus-todo',
+      'toggle-focus'
+    ]
+  },
+  {
+    title: 'Assistant & voice',
+    ids: ['focus-jarvis', 'focus-assistant', 'voice-toggle', 'dictate-toggle']
+  },
+  { title: 'Getting around', ids: ['focus-zone', 'go-home', 'open-settings'] }
+]
+
+/** Labelled actions the cheat sheet would not show. Asserted by the smoke. */
+export function ungroupedShortcuts(): string[] {
+  const grouped = new Set(SHORTCUT_GROUPS.flatMap((g) => g.ids))
+  const labelled = new Set(SHORTCUTS.filter((s) => s.label).map((s) => s.id))
+  return [...labelled].filter((id) => !grouped.has(id))
+}
+
 export function conflictingAccelerators(): string[] {
   const byAccel = new Map<string, Set<string>>()
+  const seenPairs = new Set<string>()
+  const bad: string[] = []
   for (const s of SHORTCUTS) {
+    // An exact repeat of the same (id, accel) is a merge accident. Harmless
+    // to press, but it registers the accelerator twice and shows up twice in
+    // every list built from this table — and it is how a real conflict hides.
+    const pair = `${s.id}\u0000${s.accel}`
+    if (seenPairs.has(pair)) bad.push(`${s.accel} (duplicated entry)`)
+    seenPairs.add(pair)
     if (!byAccel.has(s.accel)) byAccel.set(s.accel, new Set())
     byAccel.get(s.accel)!.add(s.id)
   }
-  return [...byAccel.entries()].filter(([, ids]) => ids.size > 1).map(([accel]) => accel)
+  for (const [accel, ids] of byAccel) if (ids.size > 1) bad.push(accel)
+  return bad
 }
 
 export function matchShortcut(e: {

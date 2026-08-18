@@ -581,10 +581,50 @@ export default function PaneGrid({
           setFindFor(id)
           setTimeout(() => findInputRef.current?.select(), 40)
         }
-      }
+      },
+      // Everything below used to need a mouse.
+      pinPage: () => {
+        const id = activePaneId()
+        const nav = id ? navStates[id] : null
+        if (nav?.url) void onPin?.(nav.title || nav.url, nav.url)
+      },
+      copyAddress: () => {
+        const id = activePaneId()
+        const url = id ? navStates[id]?.url : null
+        if (url) void navigator.clipboard.writeText(url)
+      },
+      addFile: () => {
+        void window.asit.resources.addPdf(task.id).then(() => onResourcesChanged?.())
+      },
+      // One key both splits and unsplits: with one slot in use it moves the
+      // active tab across, and with two it collapses back to one.
+      toggleSplit: () => {
+        setLayout((prev) => {
+          const [a, b] = prev.slots
+          if (b.length > 0) {
+            // Fold the right side back into the left, keeping every tab.
+            return {
+              ...prev,
+              slots: [[...a, ...b.filter((id) => !a.includes(id))], []],
+              active: [prev.active[0] ?? prev.active[1], null],
+              collapsed: [false, false]
+            }
+          }
+          const moving = prev.active[0]
+          if (!moving || a.length < 2) return prev // nothing to split with
+          return {
+            ...prev,
+            slots: [a.filter((id) => id !== moving), [moving]],
+            active: [a.find((id) => id !== moving) ?? null, moving],
+            collapsed: [false, false]
+          }
+        })
+      },
+      toggleDirection
     })
     return () => setTabSurface(null)
-  }, [setTabSurface, validLayout, task, resources])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setTabSurface, validLayout, task, resources, navStates, onPin, onResourcesChanged])
 
   function selectTab(slotIndex: 0 | 1, id: string): void {
     setLayout((prev) => {

@@ -3795,3 +3795,82 @@ code {
   color: var(--text-dim);
   font-size: 0.72rem;
 }
+
+/* ---- Keyboard cheat sheet (Ctrl+/) ---- */
+.shortcuts-modal {
+  width: min(880px, 94vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shortcuts-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  columns: 2;
+  column-gap: 26px;
+}
+
+@media (max-width: 720px) {
+  .shortcuts-grid {
+    columns: 1;
+  }
+}
+
+.shortcuts-group {
+  break-inside: avoid;
+  margin-bottom: 14px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 2px;
+  font-size: 0.82rem;
+}
+
+.shortcut-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.shortcut-keys {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.shortcut-keys kbd {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--mono, ui-monospace, Consolas, monospace);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.shortcuts-hint {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.shortcuts-hint:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text);
+}

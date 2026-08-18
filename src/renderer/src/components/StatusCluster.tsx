@@ -106,6 +106,15 @@ export default function StatusCluster(): JSX.Element {
         </div>
       )}
       <Dictation />
+      {/* The only way to learn a keyboard is to be told it exists. One quiet
+          button, always in the same place. */}
+      <button
+        className="shortcuts-hint"
+        title="Keyboard shortcuts (Ctrl+/)"
+        onClick={() => useStore.getState().setShortcutsOpen(true)}
+      >
+        ⌘
+      </button>
       <SavePasswordPrompt />
       {notice && (
         <span className={`status-notice status-notice-${notice.kind}`} title={notice.text}>

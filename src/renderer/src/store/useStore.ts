@@ -28,6 +28,11 @@ export interface TabSurface {
   forward?: () => void
   zoom?: (delta: number) => void
   find?: () => void
+  pinPage?: () => void
+  copyAddress?: () => void
+  addFile?: () => void
+  toggleSplit?: () => void
+  toggleDirection?: () => void
 }
 
 interface AsitState {
@@ -93,6 +98,8 @@ interface AsitState {
   setHistoryOpen: (open: boolean) => void
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
+  shortcutsOpen: boolean
+  setShortcutsOpen: (open: boolean) => void
   // Whichever browsing surface is on screen registers itself here, so
   // things like the history list can open a URL without knowing which.
   urlOpener: ((url: string) => void) | null
@@ -170,6 +177,8 @@ export const useStore = create<AsitState>((set, get) => ({
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  shortcutsOpen: false,
+  setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   urlOpener: null,
   setUrlOpener: (urlOpener) => set({ urlOpener }),
   openUrlInWorkspace: (url) => {

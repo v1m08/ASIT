@@ -11,6 +11,7 @@ import { useFocusRing } from './hooks/useFocusRing'
 import { useFileDropGuard } from './hooks/useFileDrop'
 import HistoryModal from './components/HistoryModal'
 import CommandPalette from './components/CommandPalette'
+import ShortcutsModal from './components/ShortcutsModal'
 
 export default function App(): JSX.Element {
   const view = useStore((s) => s.view)
@@ -69,6 +70,7 @@ export default function App(): JSX.Element {
       {/* Mounted at the top so Ctrl+H reaches it from Home and a workspace. */}
       <HistoryModal />
       <CommandPalette />
+      <ShortcutsModal />
       {showWelcome && <AccountsModal welcome onClose={closeWelcome} />}
     </>
   )
