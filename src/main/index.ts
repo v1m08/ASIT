@@ -1162,6 +1162,19 @@ async function runPanesSmokeTest(): Promise<void> {
         )
         return
       }
+      // /d is a page wearing every bit of furniture the declutter sheet is
+      // meant to strip, plus real navigation it must NOT touch.
+      if (req.url?.startsWith('/d')) {
+        res.end(
+          `<title>Delta</title><body class="modal-open" style="overflow:hidden">` +
+            `<div id="onetrust-consent-sdk">We value your privacy</div>` +
+            `<div id="intercom-container">chat with us</div>` +
+            `<div class="smartbanner">Open in the app</div>` +
+            `<nav class="site-nav"><a href="/a">Real navigation</a></nav>` +
+            `<main class="keep"><button aria-label="Delta Button">Delta Button</button></main>`
+        )
+        return
+      }
       const which = req.url === '/b' ? 'Beta' : 'Alpha'
       res.end(`<title>${which}</title><button aria-label="${which} Button">${which} Button</button>`)
     })
@@ -1182,7 +1195,8 @@ async function runPanesSmokeTest(): Promise<void> {
     for (const [id, path, owner] of [
       ['pane-a', '/a', 'task-a'],
       ['pane-b', '/b', 'task-b'],
-      ['pane-c', '/c', 'task-c']
+      ['pane-c', '/c', 'task-c'],
+      ['pane-d', '/d', 'task-d']
     ] as const) {
       paneManager.open(id, { url: `http://127.0.0.1:${port}${path}` }, owner)
       paneManager.setBounds(id, { x: 0, y: 0, width: 1000, height: 700 })
@@ -1271,6 +1285,31 @@ async function runPanesSmokeTest(): Promise<void> {
     if ((await gammaWc!.executeJavaScript('window.fired')) !== 1)
       fail('covered click never reached the element')
     console.log('[panes-smoke] a covered target falls back to the element and reports it')
+
+    // --- declutter -------------------------------------------------------
+    // Injected by the pane's own dom-ready hook, so this exercises the real
+    // wiring rather than a sheet the test built for itself.
+    const deltaWc = paneManager.viewForSmoke('pane-d')?.webContents
+    if (!deltaWc) fail('pane-d missing')
+    const shown = async (sel: string): Promise<boolean | 'missing'> =>
+      (await deltaWc!.executeJavaScript(
+        `(() => { const el = document.querySelector(${JSON.stringify(sel)})
+           if (!el) return 'missing'
+           const s = getComputedStyle(el)
+           return s.display !== 'none' && s.visibility !== 'hidden' })()`
+      )) as boolean | 'missing'
+    for (const sel of ['#onetrust-consent-sdk', '#intercom-container', '.smartbanner']) {
+      if ((await shown(sel)) !== false) fail(`declutter left "${sel}" visible`)
+    }
+    // The line that matters: it hides interruptions, never the site itself.
+    if ((await shown('nav.site-nav')) !== true) fail('declutter hid site navigation')
+    if ((await shown('main.keep')) !== true) fail('declutter hid page content')
+    if (
+      (await deltaWc!.executeJavaScript(`getComputedStyle(document.body).overflow === 'hidden'`)) ===
+      true
+    )
+      fail('declutter removed the consent wall but left the page scroll-locked')
+    console.log('[panes-smoke] declutter strips interruptions and leaves the site alone')
 
     server.close()
     console.log('[panes-smoke] ALL PASS')

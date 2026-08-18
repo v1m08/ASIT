@@ -14,6 +14,9 @@ const DEFAULTS: Settings = {
   jarvisModel: 'default',
   adBlock: true, // the user asked for ads filtered by default
   blockedDomains: [],
+  declutter: true,
+  declutterExcludeHosts: [],
+  declutterCss: '',
   extensionPaths: [],
   hidePin: false,
   hideReview: false,

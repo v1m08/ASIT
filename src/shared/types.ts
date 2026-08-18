@@ -84,6 +84,11 @@ export interface Settings {
   // Browser behaviour the user controls.
   adBlock: boolean
   blockedDomains: string[]
+  // Cosmetic decluttering of embedded pages (consent walls, chat bubbles,
+  // "open in app" bars). Separate from adBlock: that one blocks requests.
+  declutter: boolean
+  declutterExcludeHosts: string[]
+  declutterCss: string
   extensionPaths: string[]
   hidePin: boolean // the 📌 "save page" button — bookmarks, if you don't want them
   hideReview: boolean

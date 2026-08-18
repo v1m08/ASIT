@@ -19,6 +19,7 @@ import { isMailHost, mailSendBlocked, sendRefusalReason } from './guardrails'
 import type { DownloadItem } from '@shared/types'
 import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
+import { applyDeclutter } from './declutter'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -353,7 +354,12 @@ class PaneManager {
         zoom: this.zoomLevels.get(paneId) ?? 0
       })
     }
+    // Strip the page's own interruption furniture as soon as its DOM is
+    // up. dom-ready rather than did-navigate: inserting before the
+    // document exists is a no-op, and consent walls appear immediately.
+    view.webContents.on('dom-ready', () => void applyDeclutter(view.webContents))
     view.webContents.on('did-navigate', pushNavState)
+    view.webContents.on('did-navigate', () => void applyDeclutter(view.webContents))
     view.webContents.on('did-navigate-in-page', pushNavState)
     view.webContents.on('page-title-updated', pushNavState)
 

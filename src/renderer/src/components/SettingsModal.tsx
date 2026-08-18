@@ -263,6 +263,35 @@ function BrowserSection({
         onChange={(blockedDomains) => setSettings({ ...settings, blockedDomains })}
       />
 
+      {toggle(
+        'declutter',
+        'Strip page clutter',
+        'Hides cookie walls, support-chat bubbles and “open in our app” bars in embedded pages, and unlocks scrolling behind them. Site navigation is never touched.'
+      )}
+      <ListField
+        label="Except on these sites"
+        hint="One host per line. Use this for sites that break without their consent banner."
+        placeholder={'example.com'}
+        value={settings.declutterExcludeHosts ?? []}
+        onChange={(declutterExcludeHosts) => setSettings({ ...settings, declutterExcludeHosts })}
+      />
+      <label className="settings-field">
+        <span>Your own CSS</span>
+        <textarea
+          rows={4}
+          spellCheck={false}
+          className="settings-css-input"
+          placeholder={'.some-site-header { display: none !important; }'}
+          value={settings.declutterCss ?? ''}
+          onChange={(e) => setSettings({ ...settings, declutterCss: e.target.value })}
+        />
+        <span className="field-hint">
+          Appended to every embedded page. This is where per-site tidying belongs — hiding an
+          app’s own header is a matter of taste, and rules like that break when the app
+          redesigns.
+        </span>
+      </label>
+
       <div className="rail-header" style={{ marginTop: 14 }}>Hide what you don’t use</div>
       {toggle('hidePin', 'Hide ⌾ save-page button', 'The closest thing to bookmarks.')}
       {toggle('hideReview', 'Hide Review tab')}

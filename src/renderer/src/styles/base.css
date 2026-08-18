@@ -601,6 +601,15 @@ select:focus {
   color: var(--text-dim);
 }
 
+/* Free-form CSS the user adds for per-site tidying. Monospace because it is
+   code, small because it is an escape hatch, not a main control. */
+.settings-css-input {
+  font-family: var(--mono, ui-monospace, 'Cascadia Code', Consolas, monospace);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
