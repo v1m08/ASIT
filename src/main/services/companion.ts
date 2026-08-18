@@ -14,8 +14,15 @@ import { getSettings, setSettings } from './settings'
 import { listTodos, addTodo, setTodoDone, deleteTodo } from './todos'
 import { dueQuestions, answerQuestion } from './questions'
 import { listActivity } from './activity'
-import { getOrCreateScratch, getTask, listTasks, tasksRoot, writeTasksIndex } from './tasks'
-import { listResources, readNote, writeNote } from './resources'
+import {
+  getOrCreateScratch,
+  getTask,
+  listTasks,
+  refreshClaudeMd,
+  tasksRoot,
+  writeTasksIndex
+} from './tasks'
+import { addUrlResource, listResources, readNote, writeNote } from './resources'
 import { runClaudeStream } from './claude'
 import { quickFetch } from './quickfetch'
 import { logUsage } from './usage'
@@ -27,6 +34,9 @@ import {
   startJarvisTurn
 } from './jarvis'
 import { assistantHistory } from './assistant'
+import { chatHistory, chatLive, listChatSessions, startWorkspaceChat } from './chat'
+import { extractFlow, listSkills } from './skills'
+import { runFlow } from './actions'
 import { parseSendCommand, sendWhatsApp } from './whatsapp'
 
 // Phone companion: a small HTTP+WebSocket server for the PWA on the user's
@@ -510,10 +520,17 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     } catch {
       // a workspace may not have notes yet
     }
+    const sessions = listChatSessions(id)
+    const messages = sessions[0] ? chatHistory(sessions[0].id).slice(-30) : []
     return sendJson(res, 200, {
       task: { id: task.id, title: task.title, aiDisabled: task.aiDisabled, folderPath: task.folderPath },
       resources: listResources(id).map((r) => ({ id: r.id, title: r.title, kind: r.kind })),
-      notes
+      notes,
+      chat: {
+        live: chatLive(id),
+        messages: messages.map((m) => ({ role: m.role, content: m.content }))
+      },
+      skills: listSkills().map((sk) => sk.name)
     })
   }
 
@@ -551,6 +568,32 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
       writeNote(file, `${existing}${sep}${text}\n`)
       bus.emit('changed', 'todos') // "to-do:" lines are captured on write
       return sendJson(res, 200, { ok: true })
+    }
+
+    if (verb === 'chat') {
+      const text = String(b.text ?? '').trim()
+      if (!text) return sendJson(res, 400, { error: 'empty' })
+      const r = await startWorkspaceChat(id, text.slice(0, 4000))
+      return sendJson(res, r.started ? 200 : 409, r)
+    }
+
+    if (verb === 'url') {
+      const url = String(b.url ?? '').trim()
+      if (!/^https?:\/\//i.test(url)) return sendJson(res, 400, { error: 'needs an http(s) url' })
+      const r = addUrlResource(id, String(b.title ?? url).slice(0, 80), url)
+      refreshClaudeMd(id)
+      return sendJson(res, 200, { ok: true, id: r.id })
+    }
+
+    if (verb === 'skill') {
+      const name = String(b.name ?? '').trim()
+      if (!name) return sendJson(res, 400, { error: 'no skill named' })
+      const skill = listSkills().find((sk) => sk.name === name)
+      if (!skill) return sendJson(res, 404, { error: `no skill "${name}"` })
+      const flow = extractFlow(skill.content)
+      if (!flow) return sendJson(res, 400, { error: 'that skill has no replayable flow' })
+      const log = await runFlow(id, flow as never)
+      return sendJson(res, 200, { ok: true, log })
     }
 
     return sendJson(res, 404, { error: 'unknown action' })

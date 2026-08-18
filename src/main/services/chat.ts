@@ -213,39 +213,81 @@ function insertMessage(chatSessionId: string, role: 'user' | 'assistant', conten
 // One in-flight turn per chat session.
 const running = new Map<string, ClaudeStreamHandle>()
 
+// Live per-workspace turn state, so the phone (or any other surface) can
+// watch and steer a workspace chat instead of only the desktop panel.
+export interface ChatLive {
+  chatSessionId: string
+  taskId: string
+  prompt: string
+  reply: string
+  status: string | null
+  running: boolean
+  error: string | null
+  startedAt: number
+}
+const liveChats = new Map<string, ChatLive>() // keyed by taskId
+
+export function chatLive(taskId: string): ChatLive | null {
+  return liveChats.get(taskId) ?? null
+}
+
+let chatNotifyAt = 0
+function publishChat(force = false): void {
+  const now = Date.now()
+  if (!force && now - chatNotifyAt < 400) return
+  chatNotifyAt = now
+  bus.emit('changed', 'chat')
+}
+
 export async function sendChat(
   chatSessionId: string,
   text: string,
-  sender: WebContents
+  sender: WebContents | null
 ): Promise<void> {
+  // One emit point: a headless caller (the phone) passes null and only the
+  // live-state mirror is updated.
+  const emit = (channel: string, payload: unknown): void => {
+    if (sender && !sender.isDestroyed()) sender.send(channel, payload)
+  }
   const db = getDb()
   const sessionRow = db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(chatSessionId) as
     | Record<string, unknown>
     | undefined
   if (!sessionRow) {
-    sender.send(IPC.CHAT_ERROR, { chatSessionId, message: 'Chat session not found.' })
+    emit(IPC.CHAT_ERROR, { chatSessionId, message: 'Chat session not found.' })
     return
   }
   const session = rowToSession(sessionRow)
   const task = getTask(session.taskId)
   if (!task) {
-    sender.send(IPC.CHAT_ERROR, { chatSessionId, message: 'Task not found.' })
+    emit(IPC.CHAT_ERROR, { chatSessionId, message: 'Task not found.' })
     return
   }
   if (task.aiDisabled) {
-    sender.send(IPC.CHAT_ERROR, {
+    emit(IPC.CHAT_ERROR, {
       chatSessionId,
       message: 'This task is private — AI is disabled for it.'
     })
     return
   }
   if (running.has(chatSessionId)) {
-    sender.send(IPC.CHAT_ERROR, { chatSessionId, message: 'A reply is already in progress.' })
+    emit(IPC.CHAT_ERROR, { chatSessionId, message: 'A reply is already in progress.' })
     return
   }
   // Claim the slot BEFORE any await — two rapid sends must not both pass the
   // guard and spawn two competing CLI processes.
   running.set(chatSessionId, { cancel: () => undefined })
+  liveChats.set(task.id, {
+    chatSessionId,
+    taskId: task.id,
+    prompt: text,
+    reply: '',
+    status: null,
+    running: true,
+    error: null,
+    startedAt: Date.now()
+  })
+  publishChat(true)
   const activityLabel = `${task.coding ? '⌨ ' : ''}${task.title}`
   reportActivity(chatSessionId, {
     kind: 'chat',
@@ -322,35 +364,59 @@ export async function sendChat(
         )
       },
       onDelta: (delta) => {
-        if (!sender.isDestroyed()) sender.send(IPC.CHAT_STREAM, { chatSessionId, delta })
+        const lv = liveChats.get(task.id)
+        if (lv && lv.chatSessionId === chatSessionId) lv.reply += delta
+        publishChat()
+        emit(IPC.CHAT_STREAM, { chatSessionId, delta })
         reportActivity(chatSessionId, { kind: 'chat', label: activityLabel, detail: 'Writing reply…' })
       },
       onToolUse: (name, input) => {
         const status = toolStatus(name, input)
         reportActivity(chatSessionId, { kind: 'chat', label: activityLabel, detail: status })
-        if (!sender.isDestroyed()) sender.send(IPC.CHAT_STATUS, { chatSessionId, status })
+        const ls = liveChats.get(task.id)
+        if (ls && ls.chatSessionId === chatSessionId) ls.status = status
+        publishChat(true)
+        emit(IPC.CHAT_STATUS, { chatSessionId, status })
       },
       onUsageTick: (outputTokens) => {
-        if (!sender.isDestroyed()) sender.send(IPC.CHAT_USAGE, { chatSessionId, outputTokens })
+        emit(IPC.CHAT_USAGE, { chatSessionId, outputTokens })
       },
       onResult: ({ text: result, isError, usage }) => {
         running.delete(chatSessionId)
         clearActivity(chatSessionId)
         logUsage(session.taskId, 'chat', usage)
         if (isError) {
-          if (!sender.isDestroyed())
-            sender.send(IPC.CHAT_ERROR, { chatSessionId, message: result || 'Claude returned an error.' })
+          const le = liveChats.get(task.id)
+          if (le && le.chatSessionId === chatSessionId) {
+            le.running = false
+            le.error = result || 'Claude returned an error.'
+          }
+          publishChat(true)
+          emit(IPC.CHAT_ERROR, { chatSessionId, message: result || 'Claude returned an error.' })
           return
         }
         insertMessage(chatSessionId, 'assistant', result)
         appendWorklog(task.folderPath, text, result)
-        if (!sender.isDestroyed()) sender.send(IPC.CHAT_DONE, { chatSessionId, text: result, usage })
+        const ld = liveChats.get(task.id)
+        if (ld && ld.chatSessionId === chatSessionId) {
+          ld.reply = result || ld.reply
+          ld.status = null
+          ld.running = false
+        }
+        publishChat(true)
+        emit(IPC.CHAT_DONE, { chatSessionId, text: result, usage })
         bus.emit('chat-done', { taskId: task.id, title: task.title })
       },
       onError: (message) => {
         running.delete(chatSessionId)
         clearActivity(chatSessionId)
-        if (!sender.isDestroyed()) sender.send(IPC.CHAT_ERROR, { chatSessionId, message })
+        const lx = liveChats.get(task.id)
+        if (lx && lx.chatSessionId === chatSessionId) {
+          lx.running = false
+          lx.error = message
+        }
+        publishChat(true)
+        emit(IPC.CHAT_ERROR, { chatSessionId, message })
       }
     }
   )
@@ -360,6 +426,25 @@ export async function sendChat(
   // immediately: Stop must always stop.
   if (running.has(chatSessionId)) running.set(chatSessionId, handle)
   else handle.cancel()
+}
+
+/**
+ * Start a turn in a workspace's own chat with no renderer attached — this is
+ * how the phone gets the workspace agent (the thing that can actually drive
+ * the app) rather than only the cross-workspace assistant.
+ */
+export async function startWorkspaceChat(
+  taskId: string,
+  text: string
+): Promise<{ started: boolean; chatSessionId?: string; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { started: false, reason: 'no such workspace' }
+  if (task.aiDisabled) return { started: false, reason: 'this workspace is private — AI is disabled' }
+  const existing = listChatSessions(taskId)
+  const session = existing[0] ?? newChatSession(taskId)
+  if (running.has(session.id)) return { started: false, reason: 'a reply is already in progress' }
+  void sendChat(session.id, text, null)
+  return { started: true, chatSessionId: session.id }
 }
 
 export function cancelChat(chatSessionId: string): void {

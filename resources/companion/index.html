@@ -113,7 +113,6 @@
     <button data-tab="review"><span class="ic">🧠</span>Review</button>
     <button data-tab="spaces"><span class="ic">▦</span>Spaces</button>
     <button data-tab="agents"><span class="ic">🤖</span>Agents</button>
-    <button data-tab="capture"><span class="ic">✎</span>Capture</button>
     <button data-tab="ask"><span class="ic">⚡</span>Ask</button>
   </nav>
 
@@ -233,7 +232,7 @@
 
   // ---- Offline layer: last-good data is cached on the phone; changes made
   // while the PC is unreachable queue up and replay on reconnect. Your PC can
-  // be OFF and you can still review due questions, tick to-dos, and capture.
+  // be OFF and you can still review due questions and tick to-dos.
   const cacheGet = (k) => { try { return JSON.parse(localStorage.getItem('asit-c-' + k) || 'null') } catch { return null } }
   const cacheSet = (k, data) => localStorage.setItem('asit-c-' + k, JSON.stringify({ at: Date.now(), data }))
   const qGet = () => { try { return JSON.parse(localStorage.getItem('asit-q') || '[]') } catch { return [] } }
@@ -521,7 +520,6 @@
     }
   }
 
-  // ---- Capture (goes into the scratchpad notes; "to-do:" lines auto-capture)
   // ---- Agents: what the PC is working on right now, live over the socket.
   // Runs in the background on the desktop, so this is the one view that
   // answers "is it still going?" without walking to the computer.
@@ -544,7 +542,7 @@
         <h2>Agents</h2>
         <p class="empty">Agent activity is live-only — it can't be shown while your PC is
         unreachable, and what was running before may have finished.<br><br>
-        Your to-dos, review cards and capture still work offline.</p>`
+        Your to-dos and review cards still work offline.</p>`
       return
     }
     const items = state.activity || []
@@ -614,6 +612,7 @@
 
   async function renderSpaceDetail(id) {
     const d = await api('workspaces/' + id)
+    const live = d.chat && d.chat.live
     main.innerHTML = `
       <div class="row" style="margin:10px 0">
         <button class="btn btn-sm btn-ghost" id="sp-back">‹ Spaces</button>
@@ -633,10 +632,29 @@
         <input type="text" id="sp-note" placeholder="Append a line… ( to-do: … becomes a to-do )" class="grow" />
         <button class="btn btn-sm" id="sp-add">＋</button>
       </div>
+      <h2>Agent</h2>
+      ${d.task.aiDisabled ? '<p class="dim" style="margin:0 2px 10px">This workspace is private — AI is disabled for it.</p>' : `
+        <div id="sp-chat">${(d.chat.messages || []).slice(-12).map((m) => `
+          <div class="card"><div class="${m.role === 'user' ? 'chat-q' : 'chat-a'}">${esc(m.content).slice(0, 4000)}</div></div>`).join('')}
+          ${live ? `<div class="card">
+            <div class="chat-q">${esc(live.prompt)}</div>
+            ${live.status && live.running ? `<div class="dim" style="margin:4px 0">${esc(live.status)}</div>` : ''}
+            <div class="chat-a">${esc(live.reply || '')}${live.running ? ' <span class="spin"></span>' : ''}</div>
+            ${live.error ? `<div class="dim" style="color:var(--danger)">${esc(live.error)}</div>` : ''}
+          </div>` : ''}
+        </div>
+        <div class="card row">
+          <input type="text" id="sp-ask" placeholder="${live && live.running ? 'Working…' : 'Tell this workspace agent what to do…'}" class="grow" />
+          <button class="btn btn-sm" id="sp-go">➤</button>
+        </div>`}
+
+      <h2>Add</h2>
       <div class="card row">
-        <input type="text" id="sp-ask" placeholder="Ask the agent about this workspace…" class="grow" />
-        <button class="btn btn-sm" id="sp-go">➤</button>
-      </div>`
+        <input type="text" id="sp-url" placeholder="Paste a link to save here…" class="grow" />
+        <button class="btn btn-sm" id="sp-addurl">＋</button>
+      </div>
+      ${(d.skills || []).length ? `<h2>Run a skill</h2>
+        <div class="card">${d.skills.map((k) => `<button class="btn btn-sm btn-ghost" data-skill="${esc(k)}" style="margin:3px">./${esc(k)}</button>`).join('')}</div>` : ''}`
 
     $('#sp-back').onclick = () => { openSpaceId = null; render() }
     $('#sp-open').onclick = async () => {
@@ -661,52 +679,49 @@
     $('#sp-add').onclick = addNote
     $('#sp-note').onkeydown = (e) => { if (e.key === 'Enter') addNote() }
 
-    // Route the question through the agent, scoped to this workspace by name.
+    // This talks to the WORKSPACE's own agent — the one with that workspace's
+    // files, tabs and context — not the cross-workspace assistant.
     const ask = async () => {
-      const v = $('#sp-ask').value.trim()
+      const el = $('#sp-ask')
+      const v = el.value.trim()
       if (!v) return
-      $('#sp-ask').value = ''
-      const prompt = `In the "${d.task.title}" workspace: ${v}`
+      el.value = ''
       try {
-        const r = await api('assistant', { method: 'POST', body: JSON.stringify({ prompt, mode: 'jarvis' }) })
-        toast(r.queued ? 'Queued for the agent' : 'Sent to the agent')
-        askMode = 'jarvis'; localStorage.setItem('asit-askmode', askMode)
-        openSpaceId = null; tab = 'ask'; render()
+        const r = await api('workspaces/' + id + '/chat', { method: 'POST', body: JSON.stringify({ text: v }) })
+        if (!r.started) toast(r.reason || 'Busy')
       } catch (err) { toast('Failed: ' + err.message) }
+      render()
     }
-    $('#sp-go').onclick = ask
-    $('#sp-ask').onkeydown = (e) => { if (e.key === 'Enter') ask() }
-  }
+    if ($('#sp-go')) {
+      $('#sp-go').onclick = ask
+      $('#sp-ask').onkeydown = (e) => { if (e.key === 'Enter') ask() }
+    }
 
-  function renderCapture() {
-    main.innerHTML = `
-      <h2>Capture</h2>
-      <div class="card">
-        <textarea id="cap" placeholder="Jot something… start a line with to-do: to make it a task"></textarea>
-        <div class="row" style="margin-top:10px">
-          <span class="grow dim">Lands in your scratchpad notes</span>
-          <button class="btn btn-sm" id="cap-send">Save</button>
-        </div>
-      </div>`
-    $('#cap-send').onclick = async () => {
-      const v = $('#cap').value.trim()
+    const addUrl = async () => {
+      const v = $('#sp-url').value.trim()
       if (!v) return
-      await mutate(
-        { t: 'capture', text: v },
-        () => api('capture', { method: 'POST', body: JSON.stringify({ text: v }) }),
-        null
-      )
-      $('#cap').value = ''
-      toast(offlineSince ? 'Saved on phone — will sync to PC ✓' : 'Saved to scratchpad ✓')
+      $('#sp-url').value = ''
+      try { await api('workspaces/' + id + '/url', { method: 'POST', body: JSON.stringify({ url: v }) }); toast('Saved'); render() }
+      catch (err) { toast('Failed: ' + err.message) }
     }
+    $('#sp-addurl').onclick = addUrl
+    $('#sp-url').onkeydown = (e) => { if (e.key === 'Enter') addUrl() }
+
+    for (const el of main.querySelectorAll('[data-skill]')) {
+      el.onclick = async () => {
+        toast('Running ./' + el.dataset.skill + '…')
+        try {
+          const r = await api('workspaces/' + id + '/skill', { method: 'POST', body: JSON.stringify({ name: el.dataset.skill }) })
+          toast(r.log && r.log.length ? r.log[r.log.length - 1].slice(0, 90) : 'Done')
+        } catch (err) { toast('Failed: ' + err.message) }
+      }
+    }
+
+    // Keep the thread pinned to the newest message while it streams.
+    const chatBox = $('#sp-chat')
+    if (chatBox) main.scrollTop = main.scrollHeight
   }
 
-  // ---- Ask: ⚡ quick lookup (read-only, fast) or 🤖 Jarvis (acts on the app)
-  const askLog = []
-  let askMode = localStorage.getItem('asit-askmode') || 'quick'
-  // ---- Ask: a real conversation with the agent, not a one-shot box.
-  // The turn runs on the PC; this view watches it live over the socket and
-  // can send follow-ups into the SAME session the desktop panel uses.
   async function renderAsk() {
     if (offlineSince) {
       main.innerHTML = `${offlineBanner()}
@@ -794,7 +809,6 @@
     else if (tab === 'spaces') renderSpaces().catch(errorCard)
     else if (tab === 'agents') renderAgents().catch(errorCard)
     else if (tab === 'review') renderReview().catch(errorCard)
-    else if (tab === 'capture') renderCapture()
     else renderAsk().catch(errorCard)
   }
   render()
