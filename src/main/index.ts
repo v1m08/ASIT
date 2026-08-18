@@ -1675,6 +1675,14 @@ async function runSmokeTest(): Promise<void> {
     tasks.deleteTask(histPriv.id)
     console.log('[smoke] history records, ranks, and never sees private workspaces')
 
+    // Both halves of the app derive their keys from one table; a key claimed
+    // by two different actions means the second silently never fires.
+    const { conflictingAccelerators } = await import('@shared/shortcuts')
+    const clashes = conflictingAccelerators()
+    if (clashes.length > 0)
+      throw new Error(`two actions share these accelerators: ${clashes.join(', ')}`)
+    console.log('[smoke] no keyboard shortcut is claimed by two actions')
+
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')
 

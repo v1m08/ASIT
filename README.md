@@ -25,7 +25,23 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 | **Live-preview notes** | Markdown that renders as you type (Obsidian-style): headings, **bold**, links, pasted images. `Ctrl+E` for raw. |
 | **Recall questions** | On any PDF's ✨ menu: *extract* existing questions or *generate* new ones (multiple-choice supported). Surfaced by spaced repetition (SM-2) on the home screen and during breaks. |
 | **🧠 Review tab** | Due questions, all questions, and **key terms** (write `Term: definition` in notes → they appear here). |
-| **Global to-dos** | A sidebar list. Writing `to-do: …` in any note auto-captures it; checking it off strikes the note line through. |
+| **Global to-dos** | A sidebar list. Writing `to-do: …` in any note auto-captures it; checking it off strikes the note line through. Links in a to-do are clickable. |
+| **▶_ Terminal** | A real shell (ConPTY) in the workspace folder. Agents can **read** its output only if you switch that on per workspace, and there is no way for them to type into it — no such verb exists. |
+| **▢ App windows** | Embed a real Windows app (Emacs, a terminal, anything) into a workspace slot. Its title bar and border are stripped so it sits flush; the original style is restored when you release it. The AI cannot read these — there is no DOM — and the UI says so. |
+| **🔑 Password vault** | Local, encrypted with Windows DPAPI, and **sealed off from the AI**: no action verb, no agent IPC, stored outside every folder an agent can reach. Autofills only when *you* focus a login field on an exact-origin match, and never auto-submits. |
+
+### 🌐 Browser
+It is a real browser, not a viewer with a URL label.
+
+| Feature | How |
+|---|---|
+| **Address bar** | `Ctrl+L` in any workspace or the scratchpad. Type a URL to go, anything else to search. Arrow through suggestions drawn from your history — ranked by how often and how recently you go there. |
+| **History** | `Ctrl+H`. Grouped by day, searchable, forget one entry or clear the lot. Private workspaces are **never recorded in the first place**. |
+| **Tabs** | Middle-click to close. Right-click for reload, duplicate, copy address, open in your default browser, move to the other side, close others, close to the right. `Ctrl+T` / `Ctrl+W` / `Ctrl+Shift+T` / `Ctrl+Tab` behave as you expect. |
+| **Drag & drop** | Drag a PDF out of Explorer onto the resource rail, a tab strip, or the file library. It is copied into the workspace folder and pinned — which also means the AI can read it immediately. Dropping onto a *page* still goes to the page, so attaching a file in Gmail works. |
+| **Ad & tracker blocking** | On by default, domain-level. Add your own domains in Settings. |
+| **Page declutter** | Cookie walls, support-chat bubbles and “open in our app” bars are hidden, and the scroll they lock is released. Site navigation is never touched. Per-site opt-out and your own CSS in Settings. |
+| **The rest** | Find in page (`Ctrl+F`), per-pane zoom, downloads with progress, right-click menus, real error pages, unpacked Chrome extensions. |
 
 ### 🎯 Focus
 | Feature | How |
@@ -37,12 +53,15 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 ### 🤖 AI that acts, not just answers
 | Feature | How |
 |---|---|
-| **Chat** (per workspace) | Reads your PDFs & notes automatically. Can also **drive the app**: open resources, fill & click page elements, generate questions — and reports back what it did. |
+| **Chat** (per workspace) | Reads your PDFs & notes automatically. Can also **drive the app**: open resources, fill & click page elements, tidy your pins, generate questions. Every reply keeps the trail of what it actually did — collapsed to a line you can open, so you can check the work months later, not just the conclusion. |
 | **⚡ Quick assistant** (`Ctrl+K`) | Fast, read-only, cross-workspace lookups. Also the home of the `?`/`>` commands below. |
 | **🤖 Jarvis** (`Ctrl+J`) | The universal agent — works *across* all workspaces and takes action: *"add the syllabus link to CS 1331", "what's due anywhere this week?", "generate 10 questions from the bio slides."* |
 | **🎙 Voice** (`Ctrl+Space`) | **Talk** to Jarvis. Speech recognition is 100% local (one-time ~130MB model download); pause to send, replies spoken back. |
 | **⚡ Skills** | The agent saves successful procedures as `./name`. Deterministic ones replay instantly with zero tokens. |
 | **👁 Watches** | *"When the Continue button appears, click it"* — the agent resumes work when a page changes, even while you're away. |
+| **⏰ Schedules** | *"every weekday at 8, tell me what's due"*, *"in 30 minutes check the build"*. Runs the prompt as a normal turn, so it inherits every guardrail — including that an unattended run **cannot send messages**. Missed runs roll forward; a week offline does not dump seven briefings on you. |
+| **🧠 Shared memory** | Teach a fact in one workspace and every agent knows it. Agents dispatch `remember` / `forget` and the app writes the file, so workspace isolation is unbroken. Private workspaces neither contribute nor receive. |
+| **📌 Workspace tidying** | The agent can unpin, rename and reorder your pins, not just add to them. Unpinning only removes the pin — the file stays in the folder. |
 
 ### 🔌 Connect
 | Feature | How |
@@ -69,15 +88,36 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 
 ## Keyboard
 
+Every key comes from one shared table, so it behaves the same whether ASIT's own
+UI has focus or an embedded page has swallowed the keystroke.
+
+**Browsing**
+
 | Keys | What |
 |---|---|
-| `Tab` / `Shift+Tab` | Move between the panes/notes/chat that matter (not every DOM element). |
-| `Ctrl+1…9` | Jump straight to a zone. |
-| `Ctrl+K` / `Ctrl+J` | Toggle the ⚡ quick assistant / 🤖 Jarvis. |
-| `Ctrl+Space` | Talk to Jarvis (pause to send). |
-| `Ctrl+L` | Focus the scratchpad address bar. |
-| `Ctrl+E` | Notes: toggle live-preview ↔ raw markdown. |
-| 30-sec hold / escape phrase | The two ways out of a focus session. |
+| `Ctrl+T` / `Ctrl+W` / `Ctrl+Shift+T` | New tab / close tab / reopen the one you just closed |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+L` | Address bar (type a URL, or anything else to search) |
+| `Ctrl+H` | History |
+| `Ctrl+R` or `F5` | Reload |
+| `Alt+←` / `Alt+→` | Back / forward |
+| `Ctrl+F` | Find in page |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | Zoom in / out / reset |
+
+**The app**
+
+| Keys | What |
+|---|---|
+| `Tab` / `Shift+Tab` | Move between the panes/notes/chat that matter (not every DOM element) |
+| `Ctrl+1…9` | Jump straight to a zone |
+| `Ctrl+K` / `Ctrl+J` | Toggle the ⚡ quick assistant / 🤖 Jarvis |
+| `Ctrl+Space` | Talk to Jarvis (pause to send) |
+| `Ctrl+B` | Show / hide the chat panel |
+| `Ctrl+Shift+E` | Show / hide notes |
+| `Ctrl+E` | Notes: toggle live-preview ↔ raw markdown |
+| `Alt+Home` | Back to the workspace list |
+| `Ctrl+,` | Settings |
+| 30-sec hold / escape phrase | The two ways out of a focus session |
 
 ---
 
@@ -86,7 +126,7 @@ That's the whole loop: **gather → focus → study → ask.** Everything below 
 Everything is on your machine, in two places **outside this repo**, shared by dev and installed builds:
 
 - **`Documents\ASIT\`** — `tasks\` (one folder per workspace = the AI's context), `private\` (no-AI workspaces), `library\`, `skills\`, `.trash\`.
-- **`%APPDATA%\asit`** — the SQLite database, your browser-profile logins.
+- **`%APPDATA%\asit`** — the SQLite database (workspaces, questions, chats, browsing history), your browser-profile logins, and the encrypted password vault.
 
 Uninstalling or reinstalling never erases this. The AI only ever sees a workspace's own folder (and, for Jarvis, all non-private workspaces) — private workspaces sit physically outside every AI path, and nothing is ever sent to a server.
 
@@ -126,7 +166,7 @@ npm run dist       # Windows installer → dist/
 **Architecture** lives in [`CLAUDE.md`](CLAUDE.md) — the load-bearing invariants (task-folder-as-context, WebContentsView z-order, pane ownership, private-task isolation, agent containment) are documented there.
 
 **Smoke tests** (after `npm run build`, run `npx electron out/main/index.js` with one env var):
-`ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad) · `ASIT_SMOKE_CHAT=1` (Claude streaming + resume) · `ASIT_SMOKE_QGEN=1` (question generation + SM-2) · `ASIT_SMOKE_AGENT=1` (agent file tools + app actions) · `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit) · `ASIT_SMOKE_PANES=1` (pane ownership) · `ASIT_SMOKE_COMPANION=1` (phone server) · `ASIT_SMOKE_JARVIS=1` (universal agent — needs a logged-in CLI) · `ASIT_SMOKE_VOICE=1` (speech round-trip) · `ASIT_SMOKE_SECURITY=1` (agent-containment invariants). Smoke runs are isolated from real user data.
+`ASIT_SMOKE=1` (data layer, privacy, to-dos, scratchpad) · `ASIT_SMOKE_CHAT=1` (Claude streaming + resume) · `ASIT_SMOKE_QGEN=1` (question generation + SM-2) · `ASIT_SMOKE_AGENT=1` (agent file tools + app actions) · `ASIT_SMOKE_TRANSFER=1` (backup round trip + leak audit) · `ASIT_SMOKE_PANES=1` (pane ownership) · `ASIT_SMOKE_COMPANION=1` (phone server) · `ASIT_SMOKE_JARVIS=1` (universal agent — needs a logged-in CLI) · `ASIT_SMOKE_VOICE=1` (speech round-trip) · `ASIT_SMOKE_SECURITY=1` (agent-containment invariants) · `ASIT_SMOKE_TERMINAL=1` (terminal containment; spawns a real pty). Smoke runs are isolated from real user data.
 
 ## License
 

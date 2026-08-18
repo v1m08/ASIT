@@ -71,7 +71,18 @@ export const SHORTCUTS: ShortcutDef[] = [
     shift: true,
     label: 'Show / hide notes'
   },
-  { id: 'go-home', accel: 'CommandOrControl+H', key: 'h', ctrl: true, label: 'Back to home' },
+  // Ctrl+H is history in every browser, so home moved off it. Two accelerators
+  // for one id is fine (see reload/F5); two ids on ONE accelerator is not —
+  // matchShortcut returns the first, and the loser silently stops working.
+  { id: 'go-home', accel: 'Alt+Home', key: 'home', alt: true, label: 'Back to home' },
+  {
+    id: 'go-home',
+    accel: 'CommandOrControl+Shift+H',
+    key: 'h',
+    ctrl: true,
+    shift: true,
+    label: ''
+  },
   { id: 'open-settings', accel: 'CommandOrControl+,', key: ',', ctrl: true, label: 'Settings' },
   {
     id: 'voice-toggle',
@@ -90,6 +101,20 @@ export const ZONE_ACCELERATORS = Array.from({ length: 9 }, (_, i) => ({
 }))
 
 /** Does this renderer keydown match a shortcut? */
+/**
+ * Accelerators claimed by more than one action. Two entries for one id is
+ * intentional (Ctrl+R and F5 both reload); two DIFFERENT ids on one key means
+ * one of them silently does nothing. Asserted by the smoke test.
+ */
+export function conflictingAccelerators(): string[] {
+  const byAccel = new Map<string, Set<string>>()
+  for (const s of SHORTCUTS) {
+    if (!byAccel.has(s.accel)) byAccel.set(s.accel, new Set())
+    byAccel.get(s.accel)!.add(s.id)
+  }
+  return [...byAccel.entries()].filter(([, ids]) => ids.size > 1).map(([accel]) => accel)
+}
+
 export function matchShortcut(e: {
   key: string
   ctrlKey: boolean
