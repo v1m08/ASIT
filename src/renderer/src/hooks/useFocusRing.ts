@@ -149,8 +149,10 @@ function toggleJarvis(): void {
   })
 }
 
-function focusSelector(selector: string): void {
-  const el = document.querySelector<HTMLElement>(selector)
+function focusSelector(selector: string, preferWithin?: string): void {
+  const scope = preferWithin ? document.querySelector<HTMLElement>(preferWithin) : null
+  const el =
+    scope?.querySelector<HTMLElement>(selector) ?? document.querySelector<HTMLElement>(selector)
   if (!el) return
   // Always record where the jump came from — Escape hands focus back there.
   // (Recording only for zoneless targets left a STALE returnZone behind for
@@ -233,7 +235,10 @@ export function installFocusRing(): () => void {
       case 'focus-assistant':
         return toggleAssistant()
       case 'focus-address':
-        return focusSelector('.browser-address')
+        // A split workspace has TWO address bars. Plain querySelector always
+        // grabs the left one, so Ctrl+L in the right pane retyped the left
+        // pane's URL. Prefer the bar inside whichever zone is focused.
+        return focusSelector('.browser-address', '[data-focus-active]')
       case 'focus-chat':
         return focusSelector('.chat-input-box textarea')
       case 'voice-toggle':

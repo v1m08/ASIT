@@ -152,6 +152,10 @@ declare global {
       files: {
         pathFor: (file: File) => string
       }
+      vaultPrompt: {
+        save: () => Promise<unknown>
+        discard: () => Promise<void>
+      }
       ui: {
         contextMenu: (
           items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]

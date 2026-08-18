@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { DownloadItem } from '@shared/types'
 import { useStore } from '../store/useStore'
+import SavePasswordPrompt from './SavePasswordPrompt'
 
 // Everything that used to float along the bottom edge — running work, job
 // progress, toasts, the quick-assistant launcher — compressed into the header
@@ -103,6 +104,7 @@ export default function StatusCluster(): JSX.Element {
           })}
         </div>
       )}
+      <SavePasswordPrompt />
       {notice && (
         <span className={`status-notice status-notice-${notice.kind}`} title={notice.text}>
           {notice.text}

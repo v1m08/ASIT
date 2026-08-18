@@ -183,6 +183,52 @@ async function tryPasswordAutofill(pw: HTMLInputElement): Promise<void> {
   }
 }
 
+// --- "save this password?" -------------------------------------------------
+// Watch for the user actually signing in, then hand the credential to MAIN
+// (never to the page, never to the renderer) so it can offer to remember it.
+// Submit is not enough on its own: most login pages are SPAs that never fire
+// a form submit, so a click or Enter on a filled password field counts too.
+
+let lastOffer = 0
+
+function offerSave(): void {
+  if (Date.now() - lastOffer < 1500) return
+  const pw = Array.from(document.querySelectorAll<HTMLInputElement>('input[type=password]')).find(
+    (el) => el.value.length > 0
+  )
+  if (!pw) return
+  // A field we just autofilled is already in the vault — nothing to ask.
+  if (filledLogins.has(pw)) return
+  lastOffer = Date.now()
+  const user = usernameFieldFor(pw)
+  ipcRenderer.send('vault:offer-save', location.href, user?.value ?? '', pw.value)
+}
+
+function watchForLogin(): void {
+  window.addEventListener('submit', () => offerSave(), true)
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Enter') setTimeout(offerSave, 0)
+    },
+    true
+  )
+  window.addEventListener(
+    'click',
+    (e) => {
+      const el = e.target as HTMLElement | null
+      if (!el) return
+      const label = (
+        el.closest('button,[role=button],input[type=submit]')?.textContent ??
+        (el as HTMLInputElement).value ??
+        ''
+      ).toLowerCase()
+      if (/sign in|log ?in|continue|submit|next/.test(label)) setTimeout(offerSave, 0)
+    },
+    true
+  )
+}
+
 // Declutter Google SEARCH pages inside narrow panes: hide the left filter
 // rail so results get the full width. Scoped to google.*/search only —
 // Gmail/Drive navs are untouched.
@@ -202,6 +248,7 @@ if (document.readyState === 'loading') {
 } else {
   injectGoogleDeclutter()
 }
+watchForLogin()
 
 function setNativeValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto =

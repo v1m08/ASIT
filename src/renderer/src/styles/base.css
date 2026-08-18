@@ -3686,3 +3686,26 @@ code {
 .history-row:hover .rail-btn {
   visibility: visible;
 }
+
+/* "Save this password?" — lives in the header band, never floating over a
+   pane, because pages paint above app DOM (invariant 2). */
+.save-password {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.save-password-text {
+  color: var(--text-dim);
+}
+
+.save-password .btn {
+  padding: 2px 10px;
+  font-size: 0.74rem;
+}

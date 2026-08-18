@@ -619,6 +619,29 @@ async function runSecuritySmokeTest(): Promise<void> {
     if (vault.revealPassword((saved as { id: string }).id) !== 'SMOKE_SECRET_VALUE')
       fail('vault round-trip failed — the user could not get their own password back')
     vault.deleteEntry((saved as { id: string }).id)
+
+    // The "save this password?" offer: the credential stops in MAIN. What the
+    // renderer is handed must carry the site and username and NOTHING else —
+    // a secret that never enters the renderer cannot be read out of it.
+    if (!vault.offerToSave('https://smoke.example.com/login', 'someone', 'OFFERED_SECRET'))
+      fail('a new login was not offered for saving')
+    const info = vault.pendingSaveInfo()
+    if (!info) fail('pending save info missing')
+    if (JSON.stringify(info).includes('OFFERED_SECRET'))
+      fail('the save prompt would hand the password to the renderer')
+    if (Object.keys(info!).sort().join(',') !== 'origin,username')
+      fail(`save prompt payload carries more than site+username: ${Object.keys(info!).join(',')}`)
+    const committed = vault.commitPendingSave() as { id: string }
+    if (vault.revealPassword(committed.id) !== 'OFFERED_SECRET')
+      fail('committing the offer did not store the password')
+    if (vault.pendingSaveInfo() !== null) fail('the offer was not cleared after committing')
+    // Declining must not leave the secret sitting in memory.
+    vault.offerToSave('https://smoke.example.com/login', 'someone', 'DECLINED_SECRET')
+    vault.discardPendingSave()
+    if (vault.pendingSaveInfo() !== null) fail('a declined offer was kept')
+    vault.deleteEntry(committed.id)
+    console.log('[security-smoke] the save-password prompt never carries the password')
+
     console.log('[security-smoke] password vault is unreachable from every agent surface')
 
     guard.clearSendAuthorization()

@@ -145,6 +145,42 @@ export function credentialsForOrigin(url: string): { username: string; password:
   return { username: entry.username, password: decrypt(entry) }
 }
 
+// --- "save this password?" -------------------------------------------------
+//
+// The credential goes preload -> MAIN and stops there. The renderer is only
+// ever told the site and username, never the password: the prompt is app UI,
+// and a secret that never enters the renderer cannot be read out of it.
+// Nothing here is agent-reachable, same as the rest of this file.
+
+let pending: { origin: string; username: string; password: string } | null = null
+
+/** Called by the pane preload when the user submits a login form. */
+export function offerToSave(url: string, username: string, password: string): boolean {
+  const origin = originOf(url)
+  if (!origin || !password) return false
+  const existing = load().find((e) => e.origin.toLowerCase() === origin.toLowerCase())
+  // Nothing to ask about if we already hold exactly this.
+  if (existing && existing.username === username && decrypt(existing) === password) return false
+  pending = { origin, username, password }
+  return true
+}
+
+/** What the renderer may know: the site and the username. Never the secret. */
+export function pendingSaveInfo(): { origin: string; username: string } | null {
+  return pending ? { origin: pending.origin, username: pending.username } : null
+}
+
+export function commitPendingSave(): VaultEntry | { error: string } | null {
+  if (!pending) return null
+  const result = saveEntry(pending)
+  pending = null
+  return result
+}
+
+export function discardPendingSave(): void {
+  pending = null
+}
+
 export function hasCredentialsFor(url: string): boolean {
   const origin = originOf(url)
   return !!origin && load().some((e) => e.origin.toLowerCase() === origin.toLowerCase())

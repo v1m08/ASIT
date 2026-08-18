@@ -164,6 +164,10 @@ const api = {
       }
     }
   },
+  vaultPrompt: {
+    save: () => ipcRenderer.invoke(IPC.VAULT_SAVE_PENDING),
+    discard: () => ipcRenderer.invoke(IPC.VAULT_DISCARD_PENDING)
+  },
   ui: {
     contextMenu: (
       items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]

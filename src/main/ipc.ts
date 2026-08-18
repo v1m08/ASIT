@@ -298,6 +298,14 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   // sandboxed and can't import the contract. Returns a credential only for an
   // exact origin match, and only because the USER focused a login field.
   ipcMain.handle('vault:for-origin', (_e, url: string) => vault.credentialsForOrigin(String(url)))
+  // From the pane preload when a login form is submitted. The password stops
+  // in main; the renderer is told only the site and username.
+  ipcMain.on('vault:offer-save', (_e, url: string, username: string, password: string) => {
+    if (!vault.offerToSave(String(url), String(username ?? ''), String(password ?? ''))) return
+    getWindow()?.webContents.send(IPC.VAULT_OFFER_SAVE, vault.pendingSaveInfo())
+  })
+  ipcMain.handle(IPC.VAULT_SAVE_PENDING, () => vault.commitPendingSave())
+  ipcMain.handle(IPC.VAULT_DISCARD_PENDING, () => vault.discardPendingSave())
 
   // --- browser basics (user-driven; agents have no path to any of these) ---
   ipcMain.handle(

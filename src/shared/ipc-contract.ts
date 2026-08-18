@@ -39,6 +39,9 @@ export const IPC = {
   PANES_FOCUS: 'panes:focus', // focus ring landed on a page zone
   PANES_DOM_FOCUS: 'panes:dom-focus', // renderer gained/lost the keyboard
   UI_CONTEXT_MENU: 'ui:context-menu',
+  VAULT_SAVE_PENDING: 'vault:save-pending',   // commit the offered login
+  VAULT_DISCARD_PENDING: 'vault:discard-pending',
+  VAULT_OFFER_SAVE: 'vault:offer-save',       // push M->R: site + username only
   HISTORY_SEARCH: 'history:search',
   HISTORY_RECENT: 'history:recent',
   HISTORY_REMOVE: 'history:remove',
