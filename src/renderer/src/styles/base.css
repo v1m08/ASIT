@@ -1822,6 +1822,11 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   display: none;
 }
 
+.status-clear-all {
+  border-style: solid;
+  color: var(--text-dim);
+}
+
 /* Dismiss-without-opening. Stays out of the way until you are on the pill,
    because the primary action is still "open that workspace". */
 .status-activity-x {

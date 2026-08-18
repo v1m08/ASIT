@@ -244,6 +244,7 @@ declare global {
           }[]
         >
         dismiss: (id: string) => Promise<void>
+        dismissFinished: () => Promise<void>
       }
       voice: {
         status: () => Promise<{ modelsReady: boolean; listening: boolean }>

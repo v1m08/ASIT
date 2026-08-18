@@ -1311,6 +1311,33 @@ async function runPanesSmokeTest(): Promise<void> {
       fail('declutter removed the consent wall but left the page scroll-locked')
     console.log('[panes-smoke] declutter strips interruptions and leaves the site alone')
 
+    // --- LRU eviction is announced ---------------------------------------
+    // The renderer keeps its own "already opened" set. A pane main throws
+    // away without saying so leaves a tab that looks open, is gone in main,
+    // and renders blank forever — every setVisible/setBounds for it is a
+    // silent no-op. That was the intermittent "a tab just doesn't load".
+    const sentChannels: string[] = []
+    const realSend = win.webContents.send.bind(win.webContents)
+    ;(win.webContents as unknown as { send: (c: string, ...a: unknown[]) => void }).send = (
+      channel: string,
+      ...rest: unknown[]
+    ) => {
+      sentChannels.push(channel)
+      realSend(channel, ...rest)
+    }
+    for (let i = 0; i < 20; i++) {
+      paneManager.open(`pane-fill-${i}`, { url: `http://127.0.0.1:${port}/a` }, 'task-fill')
+    }
+    if (!sentChannels.includes(IPC.PANES_GONE))
+      fail('panes were evicted under the cap without telling the renderer')
+    const survivors = Array.from({ length: 20 }, (_, i) => `pane-fill-${i}`).filter((id) =>
+      paneManager.viewForSmoke(id)
+    )
+    if (survivors.length === 20) fail('eviction never ran, so this proves nothing')
+    console.log(
+      `[panes-smoke] eviction is announced (${20 - survivors.length} panes retired, renderer told)`
+    )
+
     server.close()
     console.log('[panes-smoke] ALL PASS')
     app.exit(0)

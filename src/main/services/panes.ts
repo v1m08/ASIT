@@ -209,6 +209,12 @@ class PaneManager {
         .sort((a, b) => a[1].lastActive - b[1].lastActive)
       for (const [id] of parked.slice(0, this.panes.size - MAX_PANES + 1)) {
         this.close(id)
+        // TELL the renderer. It keeps its own "already opened" set, so an
+        // eviction it never hears about leaves a tab that looks open, is
+        // gone in main, and renders blank forever — every setVisible and
+        // setBounds for it is silently a no-op. This was the intermittent
+        // "sometimes a tab just doesn't load".
+        this.announceGone(id)
       }
     }
 
@@ -358,6 +364,11 @@ class PaneManager {
     // up. dom-ready rather than did-navigate: inserting before the
     // document exists is a no-op, and consent walls appear immediately.
     view.webContents.on('dom-ready', () => void applyDeclutter(view.webContents))
+    // A crashed renderer is the other way a pane dies without the UI knowing.
+    view.webContents.on('render-process-gone', () => {
+      this.close(paneId)
+      this.announceGone(paneId)
+    })
     view.webContents.on('did-navigate', pushNavState)
     view.webContents.on('did-navigate', () => void applyDeclutter(view.webContents))
     view.webContents.on('did-navigate-in-page', pushNavState)
@@ -372,6 +383,12 @@ class PaneManager {
     view.setVisible(false) // hidden until the renderer sends bounds
     this.win.contentView.addChildView(view)
     this.panes.set(paneId, { view, desiredVisible: false, lastActive: Date.now(), owner })
+  }
+
+  /** A pane went away for a reason the renderer did not ask for. */
+  private announceGone(paneId: string): void {
+    if (!this.win || this.win.isDestroyed()) return
+    this.win.webContents.send(IPC.PANES_GONE, { paneId })
   }
 
   setBounds(paneId: string, bounds: PaneBounds): void {

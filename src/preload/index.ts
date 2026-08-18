@@ -116,7 +116,8 @@ const api = {
   },
   activity: {
     list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST),
-    dismiss: (id: string) => ipcRenderer.invoke(IPC.ACTIVITY_DISMISS, id)
+    dismiss: (id: string) => ipcRenderer.invoke(IPC.ACTIVITY_DISMISS, id),
+    dismissFinished: () => ipcRenderer.invoke(IPC.ACTIVITY_DISMISS_FINISHED)
   },
   voice: {
     status: () => ipcRenderer.invoke(IPC.VOICE_STATUS),

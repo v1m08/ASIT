@@ -38,6 +38,7 @@ export const IPC = {
   PANES_TYPE_ACTIVE: 'panes:type-active',
   PANES_FOCUS: 'panes:focus', // focus ring landed on a page zone
   PANES_DOM_FOCUS: 'panes:dom-focus', // renderer gained/lost the keyboard
+  PANES_GONE: 'panes:gone', // push M→R: a pane died (evicted or crashed)
   PANES_DID_NAVIGATE: 'panes:did-navigate', // push M→R
   // Browser basics the panes were missing.
   PANES_FIND: 'panes:find',
@@ -86,6 +87,7 @@ export const IPC = {
   // background activity tracker
   ACTIVITY_LIST: 'activity:list',
   ACTIVITY_DISMISS: 'activity:dismiss',
+  ACTIVITY_DISMISS_FINISHED: 'activity:dismiss-finished',
   ACTIVITY_UPDATED: 'activity:updated', // push M→R
   CHAT_RUNNING: 'chat:running',
 

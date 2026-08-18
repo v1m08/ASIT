@@ -134,6 +134,10 @@ export default function PaneGrid({
   const gridRef = useRef<HTMLDivElement>(null)
   const slotContentRefs = [useRef<HTMLDivElement>(null), useRef<HTMLDivElement>(null)]
   const openedPanes = useRef(new Set<string>())
+  // Bumped when main reports a pane died on its own (LRU eviction, crash).
+  // The open-effect depends on this, so the tab gets re-opened rather than
+  // sitting there blank.
+  const [paneEpoch, setPaneEpoch] = useState(0)
   const searchUrlRef = useRef<string>('https://www.google.com')
 
   // Prune tabs whose resources were removed.
@@ -170,6 +174,22 @@ export default function PaneGrid({
     return { slots, active, split: layout.split, collapsed, direction: layout.direction ?? 'row' }
   }, [layout, task, resources])
 
+  /**
+   * What to call a tab. A web tab is named by the PAGE, like every browser:
+   * the resource title is only its bookmark name, so a tab opened as "Google"
+   * still said "Google" three articles later. Non-web tabs keep their given
+   * name. One function, because three call sites naming tabs three ways is
+   * how they drifted apart in the first place.
+   */
+  const tabLabel = useCallback(
+    (tab: TabInfo): string => {
+      if (tab.kind !== 'url') return tab.title
+      const live = navStates[tab.id]?.title?.trim()
+      return live && live !== 'about:blank' ? live : tab.title
+    },
+    [navStates]
+  )
+
   // Open view-backed panes that appear in the layout.
   useEffect(() => {
     for (const slot of validLayout.slots) {
@@ -183,7 +203,7 @@ export default function PaneGrid({
         }
       }
     }
-  }, [validLayout, task, resources])
+  }, [validLayout, task, resources, paneEpoch])
 
   // Close panes for tabs no longer in any slot.
   useEffect(() => {
@@ -246,6 +266,21 @@ export default function PaneGrid({
     return window.asit.on(IPC.PANES_DID_NAVIGATE, (...args: unknown[]) => {
       const state = args[0] as PaneNavState
       setNavStates((prev) => ({ ...prev, [state.paneId]: state }))
+    })
+  }, [])
+
+  // A pane main destroyed by itself. Forget it so the open-effect re-creates
+  // it; without this the tab is permanently blank.
+  useEffect(() => {
+    return window.asit.on(IPC.PANES_GONE, (...args: unknown[]) => {
+      const { paneId } = args[0] as { paneId: string }
+      if (!openedPanes.current.delete(paneId)) return
+      setNavStates((prev) => {
+        const next = { ...prev }
+        delete next[paneId]
+        return next
+      })
+      setPaneEpoch((n) => n + 1)
     })
   }, [])
 
@@ -572,7 +607,7 @@ export default function PaneGrid({
           onClick={() => toggleCollapse(slotIndex)}
         >
           <span className="slot-collapsed-label">
-            {activeTab ? activeTab.title : ''}
+            {activeTab ? tabLabel(activeTab) : ''}
             {tabs.length > 1 ? ` +${tabs.length - 1}` : ''}
           </span>
         </div>
@@ -596,7 +631,7 @@ export default function PaneGrid({
                 key={tab.id}
                 className={`tab ${tab.id === activeId ? 'tab-active' : ''}`}
                 onClick={() => selectTab(slotIndex, tab.id)}
-                title={tab.title}
+                title={tabLabel(tab)}
               >
                 <span className="tab-icon">
                   {navStates[tab.id]?.favicon && tab.viewBacked ? (
@@ -622,7 +657,7 @@ export default function PaneGrid({
                           ? '▥'
                           : '✎'}
                 </span>
-                <span className="tab-title">{tab.title}</span>
+                <span className="tab-title">{tabLabel(tab)}</span>
                 <button
                   className="tab-btn"
                   title="Move to other side"

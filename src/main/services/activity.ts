@@ -20,7 +20,12 @@ export interface ActivityItem {
   finishedAt?: number
 }
 
-const KEEP_FINISHED = 6
+// A finished entry is a NOTIFICATION with a shortcut attached, not a log. It
+// stays long enough to notice and click, then goes on its own — otherwise the
+// header silently fills with checkmarks for work you already dealt with, and
+// clearing them becomes a chore you have to remember to do.
+const KEEP_FINISHED = 3
+const FINISHED_TTL_MS = 60_000
 
 let getWindow: (() => BrowserWindow | null) | null = null
 const items = new Map<string, ActivityItem>()
@@ -37,7 +42,20 @@ function push(): void {
   bus.emit('changed', 'activity')
 }
 
+/** Drop finished entries that have outlived their welcome. */
+function sweepFinished(now = Date.now()): boolean {
+  let changed = false
+  for (const [id, item] of items) {
+    if (item.done && now - (item.finishedAt ?? 0) > FINISHED_TTL_MS) {
+      items.delete(id)
+      changed = true
+    }
+  }
+  return changed
+}
+
 export function listActivity(): ActivityItem[] {
+  sweepFinished()
   const all = [...items.values()]
   const running = all.filter((i) => !i.done).sort((a, b) => a.startedAt - b.startedAt)
   const finished = all
@@ -84,10 +102,27 @@ export function clearActivity(id: string): void {
       .filter((i) => i.done)
       .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
     for (const old of finished.slice(KEEP_FINISHED)) items.delete(old.id)
+    // Nothing else is on a clock, so the entry would sit there until something
+    // else finished. Wake up once to retire it.
+    setTimeout(() => {
+      if (sweepFinished()) push()
+    }, FINISHED_TTL_MS + 500).unref?.()
   } else {
     items.delete(id) // nothing to jump to
   }
   push()
+}
+
+/** User cleared everything finished at once. */
+export function dismissFinished(): void {
+  let changed = false
+  for (const [id, item] of items) {
+    if (item.done) {
+      items.delete(id)
+      changed = true
+    }
+  }
+  if (changed) push()
 }
 
 /** User dismissed a finished entry. */

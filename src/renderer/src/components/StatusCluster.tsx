@@ -114,6 +114,17 @@ export default function StatusCluster(): JSX.Element {
           {jobStatus.queued > 0 ? `+${jobStatus.queued} queued` : 'Questions…'}
         </span>
       )}
+      {activity.filter((a) => a.done).length > 1 && (
+        // Two or more checkmarks means they are stacking faster than you are
+        // clearing them. One button beats picking them off individually.
+        <button
+          className="status-activity status-activity-done status-clear-all"
+          title="Clear all finished"
+          onClick={() => void window.asit.activity.dismissFinished()}
+        >
+          Clear {activity.filter((a) => a.done).length} ✓
+        </button>
+      )}
       {activity.map((item) => (
         <button
           key={item.id}
