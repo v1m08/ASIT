@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { Settings } from '@shared/types'
+import { SHORTCUTS } from '@shared/shortcuts'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
 import AccountsModal from './AccountsModal'
@@ -204,25 +205,17 @@ function VaultSection(): JSX.Element {
   )
 }
 
-const SHORTCUTS: [string, string][] = [
-  ['Ctrl+T', 'New tab'],
-  ['Ctrl+W', 'Close tab'],
-  ['Ctrl+Shift+T', 'Reopen closed tab'],
-  ['Ctrl+Tab', 'Next tab'],
-  ['Ctrl+Shift+Tab', 'Previous tab'],
-  ['Ctrl+R  ·  F5', 'Reload'],
-  ['Alt+←  ·  Alt+→', 'Back / forward'],
-  ['Ctrl+F', 'Find in page'],
-  ['Ctrl+= · Ctrl+- · Ctrl+0', 'Zoom in / out / reset'],
-  ['Ctrl+L', 'Address bar'],
+// Read from the SAME table the keys are bound from — a listed shortcut that
+// isn't actually wired (or vice versa) is now impossible.
+function accelLabel(accel: string): string {
+  return accel.replace('CommandOrControl', 'Ctrl').replace(/\+/g, '+')
+}
+const SHORTCUT_ROWS: [string, string][] = [
+  ...SHORTCUTS.filter((d) => d.label).map(
+    (d) => [accelLabel(d.accel), d.label] as [string, string]
+  ),
   ['Ctrl+1…9', 'Jump to panel'],
   ['Tab / Shift+Tab', 'Move between panels'],
-  ['Ctrl+K  ·  Ctrl+J', 'Quick assistant · Jarvis'],
-  ['Ctrl+Space', 'Talk to Jarvis'],
-  ['Ctrl+B', 'Show / hide chat'],
-  ['Ctrl+Shift+E', 'Show / hide notes'],
-  ['Ctrl+H', 'Back to home'],
-  ['Ctrl+,', 'Settings'],
   ['Ctrl+E', 'Notes: live preview ↔ raw']
 ]
 
@@ -317,7 +310,7 @@ function BrowserSection({
       </button>
       {showKeys && (
         <div className="shortcut-table">
-          {SHORTCUTS.map(([keys, what]) => (
+          {SHORTCUT_ROWS.map(([keys, what]) => (
             <div key={keys} className="shortcut-row">
               <code>{keys}</code>
               <span>{what}</span>

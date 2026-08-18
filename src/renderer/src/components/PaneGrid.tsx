@@ -353,15 +353,6 @@ export default function PaneGrid({
       } else if (e.type === 'pane-zoom' && typeof e.zoom === 'number') {
         setZoomLabel(Math.round(100 * Math.pow(1.2, e.zoom)))
         setTimeout(() => setZoomLabel(null), 1400)
-      } else if (e.type === 'new-tab') {
-        openSearchRef.current?.('')
-      } else if (e.type === 'close-tab') {
-        closeActiveTabRef.current?.()
-      } else if (e.type === 'reopen-tab') {
-        const id = closedTabs.current.pop()
-        if (id) openResourceRef.current?.(id)
-      } else if (e.type === 'next-tab' || e.type === 'prev-tab') {
-        cycleTabRef.current?.(e.type === 'next-tab' ? 1 : -1)
       }
     })
     return () => {
@@ -437,6 +428,54 @@ export default function PaneGrid({
   useEffect(() => {
     onApi?.({ openResource, openSearch, openUrl })
   }, [onApi, openResource, openSearch, openUrl])
+
+  // Claim the tab surface while this workspace is on screen, so the shared
+  // shortcut dispatcher drives THESE tabs.
+  const setTabSurface = useStore((st) => st.setTabSurface)
+  useEffect(() => {
+    const activePaneId = (): string | null => {
+      const slot: 0 | 1 = validLayout.active[0] ? 0 : 1
+      const id = validLayout.active[slot]
+      return id && tabInfoFor(id, task, resources)?.viewBacked ? id : null
+    }
+    setTabSurface({
+      newTab: () => openSearchRef.current?.(''),
+      closeTab: () => closeActiveTabRef.current?.(),
+      reopenTab: () => {
+        const id = closedTabs.current.pop()
+        if (id) openResourceRef.current?.(id)
+      },
+      nextTab: () => cycleTabRef.current?.(1),
+      prevTab: () => cycleTabRef.current?.(-1),
+      reload: () => {
+        const id = activePaneId()
+        if (id) window.asit.panes.navigate(id, { nav: 'reload' })
+      },
+      back: () => {
+        const id = activePaneId()
+        if (id) window.asit.panes.navigate(id, { nav: 'back' })
+      },
+      forward: () => {
+        const id = activePaneId()
+        if (id) window.asit.panes.navigate(id, { nav: 'forward' })
+      },
+      zoom: (delta) => {
+        const id = activePaneId()
+        if (id) void window.asit.panes.zoom(id, delta).then((z) => {
+          setZoomLabel(Math.round(100 * Math.pow(1.2, z)))
+          setTimeout(() => setZoomLabel(null), 1400)
+        })
+      },
+      find: () => {
+        const id = validLayout.active[validLayout.active[0] ? 0 : 1]
+        if (id) {
+          setFindFor(id)
+          setTimeout(() => findInputRef.current?.select(), 40)
+        }
+      }
+    })
+    return () => setTabSurface(null)
+  }, [setTabSurface, validLayout, task, resources])
 
   function selectTab(slotIndex: 0 | 1, id: string): void {
     setLayout((prev) => {

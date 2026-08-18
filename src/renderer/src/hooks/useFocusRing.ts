@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
+import { matchShortcut } from '@shared/shortcuts'
 
 // Keyboard navigation ring.
 //
@@ -182,47 +183,72 @@ export function installFocusRing(): () => void {
       cycle(e.shiftKey)
       return
     }
-    if (!e.ctrlKey || e.altKey || e.metaKey) return
-    const k = e.key.toLowerCase()
-    if (k === 'k') {
+    // Ctrl+1…9 jump to a panel.
+    if (e.ctrlKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
       e.preventDefault()
-      toggleAssistant()
-    } else if (k === 'j') {
+      jumpTo(Number(e.key) - 1)
+      return
+    }
+    const hit = matchShortcut(e)
+    if (hit) {
       e.preventDefault()
-      toggleJarvis()
-    } else if (e.code === 'Space') {
-      e.preventDefault()
-      useStore.getState().bumpVoice()
-    } else if (k === 'l') {
-      e.preventDefault()
-      focusSelector('.browser-address')
-    } else if (/^[1-9]$/.test(k)) {
-      e.preventDefault()
-      jumpTo(Number(k) - 1)
-    } else if (k === 'e' && e.shiftKey) {
-      e.preventDefault()
-      appAction('toggle-notes')
-    } else if (k === ',') {
-      e.preventDefault()
-      appAction('open-settings')
-    } else if (k === 'h') {
-      e.preventDefault()
-      appAction('go-home')
-    } else if (k === 'b') {
-      e.preventDefault()
-      appAction('toggle-chat')
+      runShortcut(hit.id)
     }
   }
 
-  // App-level shortcuts. Kept here because this hook is the one place that
-  // already sees BOTH real key events and the events main replays from pages.
-  function appAction(kind: string): void {
+  // THE dispatcher. Every shortcut — typed here, or replayed by main because a
+  // page swallowed it — ends up in this one function, so the two paths can
+  // never diverge again. Tab operations go to whichever screen registered
+  // itself as the tab surface rather than to a hardcoded component.
+  function runShortcut(id: string): void {
     const store = useStore.getState()
-    if (kind === 'toggle-notes') store.toggleScratchNotes()
-    else if (kind === 'open-settings') store.setSettingsOpen(true)
-    else if (kind === 'toggle-chat') store.toggleChat()
-    else if (kind === 'go-home' && store.view === 'workspace') {
-      void window.asit.panes.park().then(() => store.goHome())
+    const tabs = store.tabSurface
+    switch (id) {
+      case 'new-tab':
+        return tabs?.newTab?.()
+      case 'close-tab':
+        return tabs?.closeTab?.()
+      case 'reopen-tab':
+        return tabs?.reopenTab?.()
+      case 'next-tab':
+        return tabs?.nextTab?.()
+      case 'prev-tab':
+        return tabs?.prevTab?.()
+      case 'reload':
+        return tabs?.reload?.()
+      case 'back':
+        return tabs?.back?.()
+      case 'forward':
+        return tabs?.forward?.()
+      case 'find':
+        return tabs?.find?.()
+      case 'zoom-in':
+        return tabs?.zoom?.(0.5)
+      case 'zoom-out':
+        return tabs?.zoom?.(-0.5)
+      case 'zoom-reset':
+        return tabs?.zoom?.(0)
+      case 'focus-jarvis':
+        return toggleJarvis()
+      case 'focus-assistant':
+        return toggleAssistant()
+      case 'focus-address':
+        return focusSelector('.browser-address')
+      case 'focus-chat':
+        return focusSelector('.chat-input-box textarea')
+      case 'voice-toggle':
+        return store.bumpVoice()
+      case 'toggle-notes':
+        return store.toggleScratchNotes()
+      case 'open-settings':
+        return store.setSettingsOpen(true)
+      case 'toggle-chat':
+        return store.toggleChat()
+      case 'go-home':
+        if (store.view === 'workspace') void window.asit.panes.park().then(() => store.goHome())
+        return
+      default:
+        return
     }
   }
 
@@ -250,15 +276,7 @@ export function installFocusRing(): () => void {
       mark(document.querySelector<HTMLElement>(`[data-focus-pane="${CSS.escape(p.paneId)}"]`))
     } else if (p.type === 'cycle-focus') cycle(!!p.back)
     else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
-    else if (p.type === 'focus-assistant') toggleAssistant()
-    else if (p.type === 'focus-jarvis') toggleJarvis()
-    else if (p.type === 'voice-toggle') useStore.getState().bumpVoice()
-    else if (p.type === 'focus-address') focusSelector('.browser-address')
-    else if (p.type === 'focus-chat') focusSelector('.chat-input-box textarea')
-    else if (p.type === 'toggle-notes') appAction('toggle-notes')
-    else if (p.type === 'open-settings') appAction('open-settings')
-    else if (p.type === 'go-home') appAction('go-home')
-    else if (p.type === 'toggle-chat') appAction('toggle-chat')
+    else runShortcut(p.type)
   })
 
   // Clicking an embedded page blurs the whole renderer — that is main's cue to

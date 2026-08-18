@@ -15,6 +15,21 @@ export interface ActivityItem {
 
 let noticeCounter = 0
 
+/** What a tab-owning screen can do. Every field optional — a surface
+ *  implements what makes sense for it. */
+export interface TabSurface {
+  newTab?: () => void
+  closeTab?: () => void
+  reopenTab?: () => void
+  nextTab?: () => void
+  prevTab?: () => void
+  reload?: () => void
+  back?: () => void
+  forward?: () => void
+  zoom?: (delta: number) => void
+  find?: () => void
+}
+
 interface AsitState {
   view: 'home' | 'workspace'
   tasks: Task[]
@@ -56,6 +71,13 @@ interface AsitState {
   // otherwise a page painted over the slot swallows the drop (invariant 2).
   dragItem: { kind: 'library' | 'resource'; value: string } | null
   setDragItem: (item: { kind: 'library' | 'resource'; value: string } | null) => void
+
+  // Whichever component currently owns TABS registers itself here — PaneGrid
+  // in a workspace, ScratchBrowser on home. Shortcuts dispatch through this
+  // instead of being hardwired to one component, which is why Ctrl+T used to
+  // do nothing anywhere except a workspace.
+  tabSurface: TabSurface | null
+  setTabSurface: (s: TabSurface | null) => void
 
   // Shortcut-driven UI toggles, kept in the store so a key pressed inside a
   // page (which reaches main first) can drive the same state as a click.
@@ -121,6 +143,8 @@ export const useStore = create<AsitState>((set, get) => ({
 
   dragItem: null,
   setDragItem: (dragItem) => set({ dragItem }),
+  tabSurface: null,
+  setTabSurface: (tabSurface) => set({ tabSurface }),
   scratchNotesOpen: false,
   toggleScratchNotes: () => set((st) => ({ scratchNotesOpen: !st.scratchNotesOpen })),
   settingsOpen: false,

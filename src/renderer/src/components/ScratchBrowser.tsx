@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useStore } from '../store/useStore'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState } from '@shared/types'
 
@@ -167,6 +168,47 @@ export default function ScratchBrowser({
   useEffect(() => {
     onApi?.({ openTab, currentTabs: () => tabsRef.current })
   }, [onApi, openTab])
+
+  // Home's tabs had NO shortcut access at all — every browser key was wired
+  // to the workspace grid. Register as the tab surface while home is on
+  // screen so Ctrl+T/W/Tab/R/zoom mean the same thing here.
+  const setTabSurface = useStore((st) => st.setTabSurface)
+  const closedRef = useRef<string[]>([])
+  useEffect(() => {
+    setTabSurface({
+      newTab: () => openTab(HOME_URL),
+      closeTab: () => {
+        const id = activeRef.current
+        if (!id) return
+        const tab = tabsRef.current.find((t) => t.id === id)
+        if (tab) closedRef.current = [...closedRef.current, tab.url].slice(-10)
+        closeTab(id)
+      },
+      reopenTab: () => {
+        const url = closedRef.current.pop()
+        if (url) openTab(url)
+      },
+      nextTab: () => cycle(1),
+      prevTab: () => cycle(-1),
+      reload: () => activeRef.current && window.asit.panes.navigate(activeRef.current, { nav: 'reload' }),
+      back: () => activeRef.current && window.asit.panes.navigate(activeRef.current, { nav: 'back' }),
+      forward: () => activeRef.current && window.asit.panes.navigate(activeRef.current, { nav: 'forward' }),
+      zoom: (delta) => {
+        if (activeRef.current) void window.asit.panes.zoom(activeRef.current, delta)
+      }
+    })
+    return () => setTabSurface(null)
+    // openTab/closeTab are stable enough for the lifetime of this screen.
+  }, [setTabSurface, openTab])
+
+  function cycle(dir: 1 | -1): void {
+    const list = tabsRef.current
+    if (list.length < 2) return
+    const at = list.findIndex((t) => t.id === activeRef.current)
+    const next = list[(at + dir + list.length) % list.length]
+    setActiveId(next.id)
+    setAddress(null)
+  }
 
   function closeTab(id: string): void {
     window.asit.panes.close(id)

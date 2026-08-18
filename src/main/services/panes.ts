@@ -16,6 +16,7 @@ import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import { isMailHost, mailSendBlocked, sendRefusalReason } from './guardrails'
 import type { DownloadItem } from '@shared/types'
+import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 
 // All embedded browser panes share one persistent partition so logins
@@ -103,21 +104,14 @@ const MAX_PANES = 14
 // cross-process subframe — Chromium's built-in PDF viewer, and any site that
 // puts its editor in an iframe — which is why Tab used to walk the PDF's own
 // controls instead of leaving the pane.
+// Derived from the SHARED table — main's job is only to forward the key's id
+// when an embedded page has swallowed it. It no longer decides what any key
+// means; the renderer's dispatcher does, for both origins.
 const NAV_ACCELERATORS: { accel: string; event: Record<string, unknown> }[] = [
   { accel: 'Tab', event: { type: 'cycle-focus', back: false } },
   { accel: 'Shift+Tab', event: { type: 'cycle-focus', back: true } },
-  { accel: 'CommandOrControl+K', event: { type: 'focus-assistant' } },
-  { accel: 'CommandOrControl+J', event: { type: 'focus-jarvis' } },
-  { accel: 'CommandOrControl+L', event: { type: 'focus-address' } },
-  { accel: 'CommandOrControl+Space', event: { type: 'voice-toggle' } },
-  { accel: 'CommandOrControl+Shift+E', event: { type: 'toggle-notes' } },
-  { accel: 'CommandOrControl+,', event: { type: 'open-settings' } },
-  { accel: 'CommandOrControl+H', event: { type: 'go-home' } },
-  { accel: 'CommandOrControl+B', event: { type: 'toggle-chat' } },
-  ...Array.from({ length: 9 }, (_, i) => ({
-    accel: `CommandOrControl+${i + 1}`,
-    event: { type: 'focus-zone', index: i }
-  }))
+  ...SHORTCUTS.map((d) => ({ accel: d.accel, event: { type: d.id } })),
+  ...ZONE_ACCELERATORS.map((z) => ({ accel: z.accel, event: { type: 'focus-zone', index: z.index } }))
 ]
 
 // WebContentsViews always paint above the renderer DOM. The renderer owns
@@ -178,7 +172,6 @@ class PaneManager {
     this.navKeysHeld = want
     if (!want) {
       for (const { accel } of NAV_ACCELERATORS) globalShortcut.unregister(accel)
-      for (const { accel } of this.paneAccelerators()) globalShortcut.unregister(accel)
       return
     }
     for (const { accel, event } of NAV_ACCELERATORS) {
@@ -188,58 +181,6 @@ class PaneManager {
         // A key another app already owns — the rest still register.
       }
     }
-    // Browser keys, acted on directly against whichever pane has focus.
-    for (const { accel, run } of this.paneAccelerators()) {
-      try {
-        globalShortcut.register(accel, run)
-      } catch {
-        // ignore — same reason as above
-      }
-    }
-  }
-
-  /** The browser keys, aimed at whichever pane has focus. */
-  private paneAccelerators(): { accel: string; run: () => void }[] {
-    const focused = (): string | null => this.focusedPaneId
-    const zoomBy = (delta: number) => () => {
-      const id = focused()
-      if (!id) return
-      const level = this.zoom(id, delta)
-      this.sendAppEvent({ type: 'pane-zoom', paneId: id, zoom: level })
-    }
-    // Navigation acts directly on the page — no renderer round trip.
-    const nav = (what: 'back' | 'forward' | 'reload') => () => {
-      const wc = this.panes.get(focused() ?? '')?.view.webContents
-      if (!wc) return
-      if (what === 'reload') wc.reload()
-      else if (what === 'back' && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack()
-      else if (what === 'forward' && wc.navigationHistory.canGoForward())
-        wc.navigationHistory.goForward()
-    }
-    // Tab operations belong to the renderer — it owns the layout.
-    const toRenderer = (type: string) => () => this.sendAppEvent({ type })
-    return [
-      {
-        accel: 'CommandOrControl+F',
-        run: () => {
-          const id = focused()
-          if (id) this.sendAppEvent({ type: 'find-in-page', paneId: id })
-        }
-      },
-      { accel: 'CommandOrControl+=', run: zoomBy(0.5) },
-      { accel: 'CommandOrControl+Plus', run: zoomBy(0.5) },
-      { accel: 'CommandOrControl+-', run: zoomBy(-0.5) },
-      { accel: 'CommandOrControl+0', run: zoomBy(0) },
-      { accel: 'CommandOrControl+R', run: nav('reload') },
-      { accel: 'F5', run: nav('reload') },
-      { accel: 'Alt+Left', run: nav('back') },
-      { accel: 'Alt+Right', run: nav('forward') },
-      { accel: 'CommandOrControl+T', run: toRenderer('new-tab') },
-      { accel: 'CommandOrControl+W', run: toRenderer('close-tab') },
-      { accel: 'CommandOrControl+Shift+T', run: toRenderer('reopen-tab') },
-      { accel: 'Control+Tab', run: toRenderer('next-tab') },
-      { accel: 'Control+Shift+Tab', run: toRenderer('prev-tab') }
-    ]
   }
 
   releaseNavKeys(): void {
