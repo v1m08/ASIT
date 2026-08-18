@@ -8,7 +8,8 @@ import {
   shell,
   WebContentsView,
   type ContextMenuParams,
-  type WebContents
+  type WebContents,
+  type WebFrameMain
 } from 'electron'
 import { pathToFileURL } from 'url'
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
@@ -681,13 +682,26 @@ class PaneManager {
         '[role="option"], [role="checkbox"], [role="radio"], [role="combobox"], ' +
         '[role="link"], [role="treeitem"], [role="switch"]'
       const seen = new Set()
-      const interactive = Array.from(document.querySelectorAll(selector)).filter(el => {
+      const all = Array.from(document.querySelectorAll(selector)).filter(el => {
         if (seen.has(el)) return false
         seen.add(el)
         const r = el.getBoundingClientRect()
         const style = getComputedStyle(el)
         return style.display !== 'none' && style.visibility !== 'hidden' && (r.width > 0 || r.height > 0)
-      }).slice(0, 350)
+      })
+      // ON-SCREEN FIRST, then the rest. A flat DOM-order cut is what broke
+      // Google Calendar: its month grid is hundreds of role="button" cells, so
+      // a plain slice(0, 350) spent the whole budget on day squares and the
+      // agent never saw the toolbar it needed. What the user can see is what
+      // the agent should get.
+      const onScreen = [], offScreen = []
+      for (const el of all) {
+        const r = el.getBoundingClientRect()
+        ;(r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth ? onScreen : offScreen).push(el)
+      }
+      const CAP = 400
+      const interactive = onScreen.slice(0, CAP).concat(offScreen.slice(0, Math.max(0, CAP - onScreen.length)))
+      const omitted = all.length - interactive.length
       const elements = interactive.map((el, i) => {
         const ref = '${prefix}e' + i
         el.setAttribute('data-asit-ref', ref)
@@ -725,7 +739,8 @@ class PaneManager {
       return {
         title: document.title,
         text: document.body ? document.body.innerText.slice(0, 20000) : '',
-        elements
+        elements,
+        omitted
       }
     })()`
   }
@@ -788,6 +803,7 @@ class PaneManager {
             options?: string[]
             href?: string
           }[]
+          omitted?: number
         }
 
         // Capture EVERY frame in the page tree — course platforms, editors,
@@ -826,6 +842,12 @@ class PaneManager {
         for (const section of sections) {
           if (section.fi > 0) {
             lines.push('', `### In embedded frame ${section.fi} (${section.url.slice(0, 120)})`, '')
+          }
+          if (section.result.omitted && section.result.omitted > 0) {
+            lines.push(
+              `_(${section.result.omitted} more off-screen element(s) not listed — scroll the page and snapshot again to reach them.)_`,
+              ''
+            )
           }
           for (const el of section.result.elements) {
             const bits = [`[${el.ref}] ${el.tag}${el.type ? `(${el.type})` : ''}`]
@@ -903,51 +925,15 @@ class PaneManager {
     }
 
     if (op === 'click') {
-      if (frameIndex === 0) {
-        // Top frame: REAL input events at the element's coordinates —
-        // synthetic el.click() doesn't fire the pointer listeners frameworks
-        // like VS Code's workbench actually use.
-        const rect = (await frame.executeJavaScript(
-          `(() => {
-            const el = document.querySelector('[data-asit-ref=${JSON.stringify(ref)}]')
-            if (!el) return null
-            el.scrollIntoView({ block: 'center', inline: 'center' })
-            const r = el.getBoundingClientRect()
-            return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-          })()`,
-          true
-        )) as { x: number; y: number } | null
-        if (!rect) return 'element not found (page may have changed — run page_snapshot)'
-        const wc = pane.view.webContents
-        wc.focus()
-        wc.sendInputEvent({ type: 'mouseMove', x: rect.x, y: rect.y })
-        wc.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-        wc.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-        return `clicked ${ref} (real input at ${Math.round(rect.x)},${Math.round(rect.y)})`
-      }
-      // Inside an iframe, coordinates don't map across the frame boundary —
-      // dispatch a full synthetic pointer sequence IN the frame instead.
-      const result = await frame
-        .executeJavaScript(
-          `(() => {
-            const el = document.querySelector('[data-asit-ref=${JSON.stringify(ref)}]')
-            if (!el) return null
-            el.scrollIntoView({ block: 'center', inline: 'center' })
-            const r = el.getBoundingClientRect()
-            const opts = { bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, button: 0 }
-            el.dispatchEvent(new PointerEvent('pointerdown', opts))
-            el.dispatchEvent(new MouseEvent('mousedown', opts))
-            el.dispatchEvent(new PointerEvent('pointerup', opts))
-            el.dispatchEvent(new MouseEvent('mouseup', opts))
-            el.click()
-            return 'clicked'
-          })()`,
-          true
-        )
-        .catch(() => null)
-      return result
-        ? `clicked ${ref} (in frame ${frameIndex})`
-        : 'element not found in frame — run page_snapshot'
+      const how = await this.clickTagged(
+        pane.view.webContents,
+        frame,
+        frameIndex,
+        `[data-asit-ref=${JSON.stringify(ref)}]`
+      )
+      return how
+        ? `clicked ${ref} (${how})`
+        : `could not click ${ref} — it is gone or off-screen (run page_snapshot)`
     }
 
     const escaped = JSON.stringify(value ?? '')
@@ -996,8 +982,98 @@ class PaneManager {
     '[role="option"], [role="checkbox"], [role="radio"], [role="combobox"], ' +
     '[role="link"], [role="treeitem"], [role="switch"]'
 
+  /**
+   * Click an element a find script has already tagged — and be honest about it.
+   *
+   * "Read a rect, send a mouse event" fails two ways, and both used to report
+   * success, which is worse than failing outright because the agent then moves
+   * on believing the page advanced:
+   *   * the page reports CSS pixels but sendInputEvent takes DIP, and those
+   *     diverge the moment page zoom isn't 100% — at 120% a click aimed at a
+   *     button 292px down lands ~58px above it, on whatever is behind;
+   *   * something can be on top of the point (sticky footer, consent banner,
+   *     an open menu). Google Forms' "Next" sits under exactly that kind of bar.
+   * So hit-test the point first and only send OS input when the element really
+   * is under it; otherwise dispatch the pointer sequence on the element. Screen
+   * coordinates don't cross frame boundaries either, so subframes always take
+   * the synthetic path.
+   *
+   * Returns how the click was delivered, or null if it could not be delivered
+   * at all — never a bare "clicked".
+   */
+  private async clickTagged(
+    wc: WebContents,
+    frame: WebFrameMain,
+    frameIndex: number,
+    selector: string
+  ): Promise<string | null> {
+    const sel = JSON.stringify(selector)
+    const probe = (await frame
+      .executeJavaScript(
+        `(() => {
+          const el = document.querySelector(${sel})
+          if (!el) return null
+          // INSTANT, not smooth: a smooth scroll animates, so the rect read
+          // next is stale and the click lands somewhere else.
+          el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
+          const r = el.getBoundingClientRect()
+          if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return null
+          const x = r.x + r.width / 2, y = r.y + r.height / 2
+          // Only the TOPMOST element matters — that is who Chromium would
+          // hand the click to. Accepting any ancestor in the stack is the
+          // trap: <body> is always in it and always contains the target, so
+          // every covered element read as reachable.
+          const top = document.elementFromPoint(x, y)
+          const reachable = !!top && (top === el || el.contains(top))
+          return { x, y, reachable }
+        })()`,
+        true
+      )
+      .catch(() => null)) as { x: number; y: number; reachable: boolean } | null
+    if (!probe) return null
+
+    if (frameIndex === 0 && probe.reachable) {
+      // Real OS input: synthetic el.click() doesn't fire the pointer listeners
+      // frameworks like VS Code's workbench actually use.
+      const zoom = wc.getZoomFactor() || 1
+      const x = Math.round(probe.x * zoom)
+      const y = Math.round(probe.y * zoom)
+      wc.focus()
+      wc.sendInputEvent({ type: 'mouseMove', x, y })
+      wc.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+      wc.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+      return `real input at ${x},${y}`
+    }
+
+    const hit = await frame
+      .executeJavaScript(
+        `(() => {
+          const el = document.querySelector(${sel})
+          if (!el) return false
+          const r = el.getBoundingClientRect()
+          const opts = { bubbles: true, cancelable: true, composed: true, view: window,
+                         clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, button: 0 }
+          if (el.focus) el.focus()
+          el.dispatchEvent(new PointerEvent('pointerdown', opts))
+          el.dispatchEvent(new MouseEvent('mousedown', opts))
+          el.dispatchEvent(new PointerEvent('pointerup', opts))
+          el.dispatchEvent(new MouseEvent('mouseup', opts))
+          el.click()
+          return true
+        })()`,
+        true
+      )
+      .catch(() => false)
+    if (!hit) return null
+    return frameIndex === 0
+      ? 'synthetic click — the point was covered by something on top'
+      : `synthetic click in frame ${frameIndex}`
+  }
+
   private labelFindScript(label: string, fillValue?: string): string {
     return `(() => {
+      // Clear last run's tag first, so a stale one can never be clicked.
+      document.querySelectorAll('[data-asit-flow-target]').forEach(e => e.removeAttribute('data-asit-flow-target'))
       const target = ${JSON.stringify(label.toLowerCase().trim())}
       const els = Array.from(document.querySelectorAll(${JSON.stringify(PaneManager.INTERACTIVE_SELECTOR)})).filter(el => {
         const r = el.getBoundingClientRect()
@@ -1153,43 +1229,18 @@ class PaneManager {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (let fi = 0; fi < frames.length; fi++) {
         try {
-          const rect = (await this.findWithRetry(() =>
-            frames[fi].executeJavaScript(
-              this.labelFindScript(label),
-              true
-            ) as Promise<{ x: number; y: number } | null>
-          )) as { x: number; y: number } | null
-          if (!rect) continue
-          if (fi === 0) {
-            const wc = view.webContents
-            wc.focus()
-            wc.sendInputEvent({ type: 'mouseMove', x: rect.x, y: rect.y })
-            wc.sendInputEvent({ type: 'mouseDown', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-            wc.sendInputEvent({ type: 'mouseUp', x: rect.x, y: rect.y, button: 'left', clickCount: 1 })
-            return `clicked "${label}"`
-          }
-          // Iframe hit: synthetic pointer sequence in-frame (coords don't
-          // cross frame boundaries). The find script tagged the element with
-          // data-asit-flow-target — VERIFY we actually dispatched on it; a
-          // silent miss here used to report "clicked" for a no-op.
-          const hit = await frames[fi].executeJavaScript(
-            `(() => {
-              const el = document.querySelector('[data-asit-flow-target]')
-              if (!el) return false
-              el.removeAttribute('data-asit-flow-target')
-              const r = el.getBoundingClientRect()
-              const opts = { bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2, button: 0 }
-              el.dispatchEvent(new PointerEvent('pointerdown', opts))
-              el.dispatchEvent(new MouseEvent('mousedown', opts))
-              el.dispatchEvent(new PointerEvent('pointerup', opts))
-              el.dispatchEvent(new MouseEvent('mouseup', opts))
-              el.click()
-              return true
-            })()`,
-            true
+          const found = await this.findWithRetry(
+            () => frames[fi].executeJavaScript(this.labelFindScript(label), true) as Promise<unknown>
           )
-          if (!hit) continue
-          return `clicked "${label}" (in frame ${fi})`
+          if (!found) continue
+          const how = await this.clickTagged(
+            view.webContents,
+            frames[fi],
+            fi,
+            '[data-asit-flow-target]'
+          )
+          if (!how) continue
+          return `clicked "${label}" (${how})`
         } catch {
           // try next frame
         }
@@ -1247,6 +1298,11 @@ class PaneManager {
     const wc = views[0].webContents
     await wc.loadURL(url).catch(() => undefined)
     return `navigated to ${url}`
+  }
+
+  /** Smoke tests only — reach a pane directly to assert on real page state. */
+  viewForSmoke(paneId: string): WebContentsView | null {
+    return this.panes.get(paneId)?.view ?? null
   }
 
   private paneForRef(owner: string, refOrPrefix: string): WebContentsView | null {

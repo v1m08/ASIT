@@ -1147,8 +1147,22 @@ async function runPanesSmokeTest(): Promise<void> {
 
   try {
     const server = createServer((req, res) => {
-      const which = req.url === '/b' ? 'Beta' : 'Alpha'
       res.setHeader('content-type', 'text/html')
+      // /c reproduces the two shapes that made agent clicks silently miss on
+      // Google Forms: a page at non-100% zoom (CSS px != DIP) and a target
+      // sitting under a full-bleed overlay.
+      if (req.url?.startsWith('/c')) {
+        const covered = req.url.includes('covered')
+        res.end(
+          `<title>Gamma</title><script>window.fired=0</script>` +
+            `<div style="height:1200px"></div>` +
+            `<div role="button" aria-label="Gamma Button" onclick="window.fired++">Gamma Button</div>` +
+            `<div style="height:1200px"></div>` +
+            (covered ? `<div style="position:fixed;inset:0;background:rgba(0,0,0,.5)"></div>` : '')
+        )
+        return
+      }
+      const which = req.url === '/b' ? 'Beta' : 'Alpha'
       res.end(`<title>${which}</title><button aria-label="${which} Button">${which} Button</button>`)
     })
     const port = await new Promise<number>((resolve) => {
@@ -1157,10 +1171,23 @@ async function runPanesSmokeTest(): Promise<void> {
       })
     })
 
-    const win = new BrowserWindow({ show: false, width: 800, height: 600 })
+    // Parked off-screen rather than hidden: a WebContentsView inside a window
+    // that was never shown gets a 0x0 viewport, so nothing lays out and every
+    // click lands at (0,0). That is exactly why the old "own-pane works"
+    // assertion passed while clicking nothing — give the panes the geometry
+    // the renderer would give them in production, or the check is theatre.
+    const win = new BrowserWindow({ show: false, width: 1000, height: 700, x: -3000, y: -3000 })
     paneManager.attach(win)
-    paneManager.open('pane-a', { url: `http://127.0.0.1:${port}/a` }, 'task-a')
-    paneManager.open('pane-b', { url: `http://127.0.0.1:${port}/b` }, 'task-b')
+    win.showInactive()
+    for (const [id, path, owner] of [
+      ['pane-a', '/a', 'task-a'],
+      ['pane-b', '/b', 'task-b'],
+      ['pane-c', '/c', 'task-c']
+    ] as const) {
+      paneManager.open(id, { url: `http://127.0.0.1:${port}${path}` }, owner)
+      paneManager.setBounds(id, { x: 0, y: 0, width: 1000, height: 700 })
+      paneManager.setVisible(id, true)
+    }
 
     const folderA = join(tmpdir(), 'asit-panes-smoke', 'a')
     const folderB = join(tmpdir(), 'asit-panes-smoke', 'b')
@@ -1199,12 +1226,51 @@ async function runPanesSmokeTest(): Promise<void> {
     // Un-indexed key/type land on the OWNER's first pane — and nowhere at all
     // for a task that has no panes (this exact path once sent Ctrl+P to an
     // unrelated personal tab).
-    const keyOwnerless = paneManager.keyToPage('task-c', undefined, 'Ctrl+P')
+    const keyOwnerless = paneManager.keyToPage('task-none', undefined, 'Ctrl+P')
     if (!keyOwnerless.startsWith('no browser pane open'))
       fail(`ownerless key was sent somewhere: "${keyOwnerless}"`)
     const keyOwned = paneManager.keyToPage('task-b', undefined, 'Escape')
     if (!keyOwned.startsWith('sent')) fail(`owner key refused: "${keyOwned}"`)
     console.log('[panes-smoke] keys go to the owner’s panes or nowhere')
+
+    // --- click targeting -------------------------------------------------
+    // A click is only real if the page's own listener ran. "clicked" used to
+    // be reported unconditionally, so a miss looked like a success and the
+    // agent moved on believing the form had advanced.
+    const gammaWc = paneManager.viewForSmoke('pane-c')?.webContents
+    if (!gammaWc) fail('pane-c missing')
+
+    // 1. Page zoom: the rect is CSS px, sendInputEvent takes DIP. At 125% an
+    //    unscaled click lands well above the button, on whatever is behind.
+    gammaWc!.setZoomLevel(1)
+    await new Promise((r) => setTimeout(r, 400))
+    const zoomClick = await paneManager.clickByLabel('task-c', 'Gamma Button')
+    const sent = zoomClick.match(/real input at (\d+),(\d+)/)
+    if (!sent) fail(`zoomed click did not use real input: "${zoomClick}"`)
+    const expected = (await gammaWc!.executeJavaScript(
+      `(() => {
+        const el = document.querySelector('[role=button]')
+        const r = el.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      })()`
+    )) as { x: number; y: number }
+    const zf = gammaWc!.getZoomFactor()
+    if (Number(sent![2]) !== Math.round(expected.y * zf))
+      fail(
+        `click y was ${sent![2]} DIP; the button centre is ${expected.y} CSS px at ${zf.toFixed(2)}x zoom = ${Math.round(expected.y * zf)} DIP`
+      )
+    console.log('[panes-smoke] click coordinates are converted CSS px -> DIP under zoom')
+
+    // 2. Covered target: OS input would hit the overlay, so it must fall back
+    //    to dispatching on the element — and SAY that it did.
+    await gammaWc!.loadURL(`http://127.0.0.1:${port}/c?covered`)
+    await new Promise((r) => setTimeout(r, 400))
+    const coveredClick = await paneManager.clickByLabel('task-c', 'Gamma Button')
+    if (!/synthetic/.test(coveredClick))
+      fail(`covered click claimed a real hit: "${coveredClick}"`)
+    if ((await gammaWc!.executeJavaScript('window.fired')) !== 1)
+      fail('covered click never reached the element')
+    console.log('[panes-smoke] a covered target falls back to the element and reports it')
 
     server.close()
     console.log('[panes-smoke] ALL PASS')
