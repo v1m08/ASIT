@@ -85,9 +85,13 @@ export function livePreview(opts: {
 }): Extension {
   const hidden = Decoration.replace({})
 
-  function build(view: EditorView): DecorationSet {
+  function build(view: EditorView): { decorations: DecorationSet; atomics: DecorationSet } {
     const { state } = view
     const ranges: { from: number; to: number; deco: Decoration }[] = []
+    // Hidden syntax marks, kept separately: these — and ONLY these — become
+    // atomic. Marking the styled text atomic too would stop you putting the
+    // cursor inside bold/among a link's label.
+    const hiddenRanges: { from: number; to: number }[] = []
     const sel = state.selection.ranges
 
     // A node is "revealed" (left as raw text) when the cursor or selection
@@ -104,7 +108,10 @@ export function livePreview(opts: {
     // Zero-length mark/replace decorations are invalid — line decorations are
     // the only empty ranges allowed.
     const hide = (from: number, to: number): void => {
-      if (to > from) push(from, to, hidden)
+      if (to > from) {
+        push(from, to, hidden)
+        hiddenRanges.push({ from, to })
+      }
     }
 
     for (const { from, to } of view.visibleRanges) {
@@ -193,26 +200,55 @@ export function livePreview(opts: {
 
     // Decoration.set sorts with the correct side-aware comparator — a manual
     // RangeSetBuilder would reject line decorations sharing a position.
-    return Decoration.set(
-      ranges.map((r) => r.deco.range(r.from, r.to)),
-      true
-    )
+    return {
+      decorations: Decoration.set(
+        ranges.map((r) => r.deco.range(r.from, r.to)),
+        true
+      ),
+      atomics: Decoration.set(
+        hiddenRanges.map((r) => hidden.range(r.from, r.to)),
+        true
+      )
+    }
   }
 
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet
+      atomics: DecorationSet
 
       constructor(view: EditorView) {
-        this.decorations = build(view)
+        const built = build(view)
+        this.decorations = built.decorations
+        this.atomics = built.atomics
       }
 
+      // Which line is currently "revealed" as raw markdown. Rebuilding on
+      // EVERY selection change reflowed the document under the cursor on each
+      // keypress — moving within one line changes nothing that is rendered,
+      // so only rebuild when the revealed line actually changes.
+      private revealedLine = -1
+
       update(update: ViewUpdate): void {
-        if (update.docChanged || update.selectionSet || update.viewportChanged)
-          this.decorations = build(update.view)
+        const line = update.state.doc.lineAt(update.state.selection.main.head).number
+        const lineChanged = line !== this.revealedLine
+        if (update.docChanged || update.viewportChanged || lineChanged) {
+          this.revealedLine = line
+          const built = build(update.view)
+          this.decorations = built.decorations
+          this.atomics = built.atomics
+        }
       }
     },
-    { decorations: (v) => v.decorations }
+    {
+      decorations: (v) => v.decorations,
+      // THE cursor fix. Without this, hidden syntax marks are still real
+      // positions: arrow keys step INTO "##" or "**" that isn't on screen, so
+      // the caret appears to stall, jump a column, or skip a line. Declaring
+      // them atomic makes the cursor step over them as one unit.
+      provide: (p) =>
+        EditorView.atomicRanges.of((view) => view.plugin(p)?.atomics ?? Decoration.none)
+    }
   )
 
   return [

@@ -2543,19 +2543,24 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   line-height: 1.3;
 }
 
+/* PADDING, never margin, on a .cm-line. CodeMirror measures each line's box
+   to work out vertical cursor motion; margins sit outside that box (and
+   collapse), so its height accounting was wrong and ArrowUp overshot — often
+   all the way to the top of the document. Padding is inside the box and
+   measures correctly, and looks identical. */
 .cm-md-h1 {
   font-size: 1.7em;
-  margin-top: 0.5em;
+  padding-top: 0.5em;
 }
 
 .cm-md-h2 {
   font-size: 1.4em;
-  margin-top: 0.45em;
+  padding-top: 0.45em;
 }
 
 .cm-md-h3 {
   font-size: 1.2em;
-  margin-top: 0.4em;
+  padding-top: 0.4em;
 }
 
 .cm-md-h4 {
