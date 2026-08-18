@@ -1532,6 +1532,29 @@ async function runSmokeTest(): Promise<void> {
     if (!claudeMd.includes('https://overleaf.com')) throw new Error('CLAUDE.md not refreshed')
     console.log('[smoke] resource added + CLAUDE.md inventory updated')
 
+    // The agent can tidy the rail, not just add to it. Unpinning is only safe
+    // to hand a model because it drops the row and leaves files alone.
+    const actions = await import('./services/actions')
+    resources.addUrlResource(task.id, 'Piazza', 'piazza.com')
+    resources.addUrlResource(task.id, 'Gradescope', 'gradescope.com')
+    await actions.executeAction(task.id, {
+      action: 'reorder_pins',
+      order: ['Gradescope', 'Overleaf']
+    })
+    let titles = resources.listResources(task.id).map((r) => r.title)
+    if (titles[0] !== 'Gradescope' || titles[1] !== 'Overleaf')
+      throw new Error(`reorder_pins did not apply: ${titles.join(', ')}`)
+    if (!titles.includes('Piazza'))
+      throw new Error('reorder_pins dropped a pin the agent did not name')
+    await actions.executeAction(task.id, { action: 'rename_pin', target: 'piazza', title: 'Q&A' })
+    await actions.executeAction(task.id, { action: 'unpin', target: 'Gradescope' })
+    titles = resources.listResources(task.id).map((r) => r.title)
+    if (titles.includes('Gradescope')) throw new Error('unpin did not remove the pin')
+    if (!titles.includes('Q&A')) throw new Error('rename_pin did not apply')
+    const missTarget = await actions.executeAction(task.id, { action: 'unpin', target: 'nope' })
+    if (!missTarget.startsWith('unpin: no pin')) throw new Error('unpin invented a match')
+    console.log('[smoke] agent can unpin / rename / reorder the resource rail')
+
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')
 

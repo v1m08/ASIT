@@ -556,6 +556,7 @@ export function writeClaudeMd(task: Task, resources: Resource[]): void {
     '',
     '- `{"action":"open","target":"notes"}` — open a pane by resource title (use "notes" for the notes editor)',
     '- `{"action":"add_url","url":"https://…","title":"Label"}` — add a website resource to this task',
+    '- `{"action":"unpin","target":"Label"}` · `{"action":"rename_pin","target":"Label","title":"Better name"}` · `{"action":"reorder_pins","order":["First","Second"]}` — TIDY the rail. Unpinning only removes the pin; the file stays in the task folder, so it is safe to reorganise without asking. Use these when the user says the workspace is cluttered, or when you have finished with something you pinned yourself.',
     '- `{"action":"search","query":"…"}` — search the WEB and get extracted answer lines back. Use this rather than telling the user you cannot browse.',
     '- `{"action":"schedule","prompt":"what to do","target":"08:00 | weekdays 7:30 | in 30m | hourly"}` — run something LATER, automatically, without the user asking again. `list_schedules` / `{"action":"unschedule","ref":"<id>"}` to manage them.',
     '- `{"action":"create_workspace","title":"…","content":"optional description"}` — make a new workspace. You can then add resources to it with "workspace":"<its name>".',

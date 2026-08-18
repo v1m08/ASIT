@@ -13,7 +13,7 @@ import {
   updateTask
 } from './tasks'
 import { recipientAllowed, sendAuthorized, sendRefusalReason } from './guardrails'
-import { addUrlResource } from './resources'
+import { addUrlResource, listResources, removeResource, renameResource, reorderResources } from './resources'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
 import { saveSkill } from './skills'
@@ -70,6 +70,7 @@ export interface AppAction {
   text?: string
   gone_label?: string
   gone_text?: string
+  order?: string[] // reorder_pins: pin titles, in the order the user should see them
 }
 
 let getWindow: (() => BrowserWindow | null) | null = null
@@ -85,6 +86,29 @@ const MUTATING_ACTIONS = new Set([
 
 export function initActions(getWin: () => BrowserWindow | null): void {
   getWindow = getWin
+}
+
+/**
+ * Resolve a pin by what a person would call it. Exact title wins, then a
+ * substring, then the filename — `open`, `unpin`, `rename_pin` and
+ * `reorder_pins` all go through this so "it opened X but couldn't unpin X"
+ * can't happen.
+ */
+function findPin(taskId: string, target?: string): { id: string; title: string } | null {
+  const q = (target ?? '').trim().toLowerCase()
+  if (!q) return null
+  const rows = getDb()
+    .prepare('SELECT id, title, file_path AS filePath FROM resources WHERE task_id = ? ORDER BY position')
+    .all(taskId) as { id: string; title: string; filePath: string | null }[]
+  const base = (r: { filePath: string | null }): string =>
+    (r.filePath ?? '').split(/[\\/]/).pop()?.toLowerCase() ?? ''
+  return (
+    rows.find((r) => r.title.toLowerCase() === q) ??
+    rows.find((r) => base(r) === q) ??
+    rows.find((r) => r.title.toLowerCase().includes(q)) ??
+    rows.find((r) => base(r).includes(q)) ??
+    null
+  )
 }
 
 function push(payload: Record<string, unknown>): void {
@@ -400,16 +424,53 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
         push({ type: 'open-resource', id: 'builtin-notes' })
         return 'opened notes'
       }
-      const db = getDb()
-      const rows = db
-        .prepare('SELECT id, title FROM resources WHERE task_id = ?')
-        .all(taskId) as { id: string; title: string }[]
-      const match =
-        rows.find((r) => r.title.toLowerCase() === target) ??
-        rows.find((r) => r.title.toLowerCase().includes(target))
+      const match = findPin(taskId, action.target)
       if (!match) return `open: no resource matching "${action.target}"`
       push({ type: 'open-resource', id: match.id })
       return `opened ${match.title}`
+    }
+
+    // Unpin / rename / reorder: the other half of add_url, so the agent can
+    // tidy a workspace instead of only ever adding to it. removeResource
+    // drops the DB row and leaves every file in the task folder untouched —
+    // that is what makes this safe to hand to a model (invariant 5).
+    case 'unpin': {
+      const match = findPin(taskId, action.target)
+      if (!match) return `unpin: no pin matching "${action.target ?? ''}"`
+      removeResource(match.id)
+      refreshClaudeMd(taskId)
+      push({ type: 'resources-changed' })
+      push({ type: 'toast', text: `Claude unpinned: ${match.title}` })
+      return `unpinned "${match.title}" (the file, if any, is still in the task folder)`
+    }
+
+    case 'rename_pin': {
+      const match = findPin(taskId, action.target)
+      if (!match) return `rename_pin: no pin matching "${action.target ?? ''}"`
+      const title = (action.title ?? '').trim()
+      if (!title) return 'rename_pin: no new title'
+      renameResource(match.id, title)
+      refreshClaudeMd(taskId)
+      push({ type: 'resources-changed' })
+      return `renamed "${match.title}" to "${title}"`
+    }
+
+    case 'reorder_pins': {
+      const wanted = (action.order ?? []).filter((t) => typeof t === 'string')
+      if (wanted.length === 0) return 'reorder_pins: no order given'
+      const all = listResources(taskId)
+      const ordered: string[] = []
+      for (const name of wanted) {
+        const hit = findPin(taskId, name)
+        if (hit && !ordered.includes(hit.id)) ordered.push(hit.id)
+      }
+      if (ordered.length === 0) return `reorder_pins: none of those match a pin here`
+      // Anything the agent didn't name keeps its relative order, after the
+      // named ones — a partial list must never drop pins off the rail.
+      for (const r of all) if (!ordered.includes(r.id)) ordered.push(r.id)
+      reorderResources(taskId, ordered)
+      push({ type: 'resources-changed' })
+      return `reordered ${ordered.length} pins`
     }
 
     case 'add_url': {
