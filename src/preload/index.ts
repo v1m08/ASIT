@@ -42,6 +42,7 @@ const api = {
   panes: {
     open: (paneId: string, target: { url?: string; filePath?: string }, ownerId: string) =>
       ipcRenderer.invoke(IPC.PANES_OPEN, paneId, target, ownerId),
+    insertText: (text: string) => ipcRenderer.invoke(IPC.PANES_INSERT_TEXT, text),
     setBounds: (paneId: string, bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke(IPC.PANES_SET_BOUNDS, paneId, bounds),
     setVisible: (paneId: string | null, visible: boolean) =>
@@ -125,6 +126,8 @@ const api = {
     status: () => ipcRenderer.invoke(IPC.VOICE_STATUS),
     download: () => ipcRenderer.invoke(IPC.VOICE_DOWNLOAD),
     start: () => ipcRenderer.invoke(IPC.VOICE_START),
+    dictateStart: () => ipcRenderer.invoke(IPC.VOICE_DICTATE_START),
+    dictateStop: () => ipcRenderer.invoke(IPC.VOICE_DICTATE_STOP),
     stop: () => ipcRenderer.invoke(IPC.VOICE_STOP),
     chunk: (buf: ArrayBuffer) => ipcRenderer.send(IPC.VOICE_CHUNK, buf),
     prewarm: () => ipcRenderer.send(IPC.VOICE_PREWARM),

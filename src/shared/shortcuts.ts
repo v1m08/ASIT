@@ -93,6 +93,22 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
   { id: 'open-settings', accel: 'CommandOrControl+,', key: ',', ctrl: true, label: 'Settings' },
   {
+    id: 'dictate-toggle',
+    accel: 'CommandOrControl+Shift+Space',
+    key: ' ',
+    ctrl: true,
+    shift: true,
+    label: 'Dictate into the focused field'
+  },
+  {
+    id: 'dictate-toggle',
+    accel: 'CommandOrControl+Shift+Space',
+    key: ' ',
+    ctrl: true,
+    shift: true,
+    label: 'Dictate into the focused field'
+  },
+  {
     id: 'voice-toggle',
     accel: 'CommandOrControl+Space',
     key: ' ',

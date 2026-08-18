@@ -210,6 +210,10 @@ export const IPC = {
   VOICE_TTS_STATUS: 'voice:tts-status',
   VOICE_TTS_DOWNLOAD: 'voice:tts-download',
   VOICE_TTS_PROGRESS: 'voice:tts-progress', // push M→R
+  VOICE_DICTATE_START: 'voice:dictate-start',
+  VOICE_DICTATE_STOP: 'voice:dictate-stop',
+  VOICE_DICTATE_TEXT: 'voice:dictate-text', // push M→R: a finished phrase
+  PANES_INSERT_TEXT: 'panes:insert-text',   // type into the focused page
 
   // phone companion
   COMPANION_STATUS: 'companion:status',

@@ -3772,3 +3772,26 @@ code {
   color: var(--text-dim);
   font-size: 0.74rem;
 }
+
+/* Dictation indicator. In the header band, not floating — a floating pill
+   over the pane area is painted over by the page (invariant 2). */
+.dictating-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dictating-hint {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}

@@ -388,6 +388,12 @@ export async function transcribeSamples(samples: Float32Array): Promise<string> 
 
 let getWindow: (() => BrowserWindow | null) | null = null
 let listening = false
+// 'command' — one utterance, answered by Jarvis and spoken back.
+// 'dictate' — keep listening and emit each finished phrase as TEXT for
+// whatever field has focus. The difference is deliberately at THIS layer:
+// mic, VAD and decoder are identical, so dictation costs nothing extra and
+// cannot drift from the thing that already worked.
+let mode: 'command' | 'dictate' = 'command'
 let pending = new Float32Array(0)
 // Epoch token: every start/stop bumps it, and in-flight utterances carry the
 // epoch they were born under. A stale utterance's transcript/reply/speech is
@@ -415,14 +421,83 @@ export async function voiceStart(): Promise<void> {
   await ensureEngine()
   stopSpeaking() // barge-in: starting to talk silences the reply
   epoch++
+  mode = 'command'
   listening = true
   pending = new Float32Array(0)
   vad!.reset()
   pushState('listening')
 }
 
+/**
+ * Dictation. Speak into whatever field has focus; each pause flushes a phrase
+ * and recording CONTINUES, so a long paragraph is one activation rather than
+ * one activation per sentence.
+ */
+export async function dictateStart(): Promise<void> {
+  await ensureEngine()
+  stopSpeaking()
+  epoch++
+  mode = 'dictate'
+  listening = true
+  pending = new Float32Array(0)
+  vad!.reset()
+  pushState('dictating')
+}
+
+export function dictateStop(): void {
+  epoch++
+  mode = 'command'
+  listening = false
+  pushState('idle')
+}
+
+export function dictating(): boolean {
+  return listening && mode === 'dictate'
+}
+
+/**
+ * Turn a raw transcript into something you would have typed.
+ *
+ * Moonshine returns bare lowercase words with no punctuation, so dictated
+ * text arrived as one long run-on. This is deliberately DETERMINISTIC rather
+ * than a model pass: a cleanup that takes a second to run defeats the point
+ * of dictation, and a model rewriting your words is not transcription.
+ */
+export function formatDictation(raw: string, atSentenceStart: boolean): string {
+  let t = raw.trim()
+  if (!t) return ''
+
+  // Spoken punctuation, the way every dictation tool handles it.
+  const spoken: [RegExp, string][] = [
+    [/\bnew paragraph\b/gi, '\n\n'],
+    [/\b(new line|newline)\b/gi, '\n'],
+    [/\bcomma\b/gi, ','],
+    [/\b(full stop|period)\b/gi, '.'],
+    [/\bquestion mark\b/gi, '?'],
+    [/\bexclamation (mark|point)\b/gi, '!'],
+    [/\bcolon\b/gi, ':'],
+    [/\bsemicolon\b/gi, ';'],
+    [/\bopen paren(thesis)?\b/gi, '('],
+    [/\bclose paren(thesis)?\b/gi, ')']
+  ]
+  for (const [re, ch] of spoken) t = t.replace(re, ch)
+
+  // The replacements leave " ," and " ." behind.
+  t = t.replace(/\s+([,.;:!?)])/g, '$1').replace(/([(])\s+/g, '$1')
+  t = t.replace(/[ \t]*\n[ \t]*/g, '\n').replace(/[ \t]{2,}/g, ' ').trim()
+  if (!t) return ''
+
+  // Capitalise after a sentence end, and at the very start of one.
+  if (atSentenceStart) t = t.charAt(0).toUpperCase() + t.slice(1)
+  t = t.replace(/([.!?]\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase())
+  t = t.replace(/(\n+)([a-z])/g, (_m, p, c) => p + c.toUpperCase())
+  t = t.replace(/\bi\b/g, 'I')
+  return t
+}
+
 export function voiceStop(): void {
   epoch++
+  mode = 'command'
   listening = false
   pushState('idle')
 }
@@ -464,11 +539,32 @@ export function acceptAudioChunk(chunk: Float32Array): void {
   }
 }
 
+// Whether the next phrase begins a sentence, so capitalisation is right
+// across the pauses that split one spoken paragraph into several phrases.
+let dictationAtStart = true
+
 async function handleUtterance(samples: Float32Array): Promise<void> {
   if (!listening) return
-  listening = false // one utterance per activation; predictable + cheap
   const myEpoch = epoch
   const live = (): boolean => epoch === myEpoch
+
+  if (mode === 'dictate') {
+    // Keep listening: a pause is a phrase break, not the end of dictation.
+    try {
+      const raw = await transcribeSamples(samples)
+      if (!live() || !raw || raw.trim().length < 2) return
+      const text = formatDictation(raw, dictationAtStart)
+      if (!text) return
+      dictationAtStart = /[.!?\n]$/.test(text)
+      const win = getWindow?.()
+      if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_DICTATE_TEXT, { text })
+    } catch (err) {
+      console.error('dictation failed:', err)
+    }
+    return
+  }
+
+  listening = false // one utterance per activation; predictable + cheap
   pushState('thinking')
   try {
     const text = await transcribeSamples(samples)

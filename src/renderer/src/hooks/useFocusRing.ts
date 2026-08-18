@@ -255,6 +255,8 @@ export function installFocusRing(): () => void {
         return focusSelector('.chat-input-box textarea')
       case 'voice-toggle':
         return store.bumpVoice()
+      case 'dictate-toggle':
+        return store.bumpDictate()
       case 'toggle-notes':
         return store.toggleScratchNotes()
       case 'open-settings':

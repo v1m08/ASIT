@@ -48,6 +48,10 @@ interface AsitState {
   // Jarvis panel reacts by toggling the mic.
   voiceTick: number
   bumpVoice: () => void
+  // Same pattern as voiceTick: the key may be pressed inside a page, so
+  // it reaches main first and returns as an app event.
+  dictateTick: number
+  bumpDictate: () => void
   // Background status shown in the header cluster (one listener, many headers).
   activity: ActivityItem[]
   setActivity: (items: ActivityItem[]) => void
@@ -121,6 +125,10 @@ export const useStore = create<AsitState>((set, get) => ({
   setJarvisOpen: (open) => set({ jarvisOpen: open, ...(open ? { assistantOpen: false } : {}) }),
   voiceTick: 0,
   bumpVoice: () => set((s) => ({ voiceTick: s.voiceTick + 1, jarvisOpen: true, assistantOpen: false })),
+  dictateTick: 0,
+  // Dictation deliberately does NOT open a panel: the point is that the
+  // words go where you are already looking.
+  bumpDictate: () => set((s) => ({ dictateTick: s.dictateTick + 1 })),
   activity: [],
   setActivity: (items) => set({ activity: items }),
   jobStatus: null,

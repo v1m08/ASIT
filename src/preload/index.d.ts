@@ -44,6 +44,7 @@ declare global {
         reorder: (taskId: string, orderedIds: string[]) => Promise<void>
       }
       panes: {
+        insertText: (text: string) => Promise<boolean>
         open: (
           paneId: string,
           target: { url?: string; filePath?: string },
@@ -274,6 +275,8 @@ declare global {
         download: () => Promise<void>
         start: () => Promise<void>
         stop: () => Promise<void>
+        dictateStart: () => Promise<void>
+        dictateStop: () => Promise<void>
         chunk: (buf: ArrayBuffer) => void
         prewarm: () => void
         audioDone: () => void

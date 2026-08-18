@@ -836,6 +836,36 @@ $sp.Dispose()`
       if (!vadText.includes(word)) fail(`VAD-path transcript missing "${word}"`)
     }
 
+    // Dictation formatting: raw transcripts are bare lowercase words with no
+    // punctuation, so this is what stands between "hello world this is a
+    // test" and something you would have typed.
+    const fmt = voiceSvc.formatDictation
+    const fmtCases: [string, boolean, string][] = [
+      ['hello world this is a test', true, 'Hello world this is a test'],
+      ['the answer is four period new line next thought', true, 'The answer is four.\nNext thought'],
+      ['first idea new paragraph second idea', true, 'First idea\n\nSecond idea'],
+      ['is this working question mark', true, 'Is this working?'],
+      ['tell her comma i said hi', true, 'Tell her, I said hi'],
+      ['i think i can', true, 'I think I can'],
+      ['   ', true, '']
+    ]
+    for (const [raw, atStart, want] of fmtCases) {
+      const got = fmt(raw, atStart)
+      if (got !== want) fail(`formatDictation("${raw}") gave ${JSON.stringify(got)}, want ${JSON.stringify(want)}`)
+    }
+    // A phrase that continues a sentence must NOT be re-capitalised.
+    if (fmt('and then we left', false) !== 'and then we left')
+      fail('a continuing phrase was capitalised as if it started a sentence')
+    console.log(`[voice-smoke] dictation formatting: ${fmtCases.length + 1} cases`)
+
+    // End to end: the same audio a mic would produce, through the dictation
+    // path, coming out as text a field could receive.
+    const dictated = fmt(await voiceSvc.transcribeViaVadPath(padded), true)
+    if (!/^[A-Z]/.test(dictated)) fail(`dictated text not sentence-cased: "${dictated}"`)
+    if (!dictated.toLowerCase().includes('biology'))
+      fail(`dictation lost the content: "${dictated}"`)
+    console.log(`[voice-smoke] dictation end-to-end: "${dictated}"`)
+
     // Kokoro TTS (natural voice): download once, then generate a clip.
     if (process.env.ASIT_SMOKE_VOICE_TTS === '1') {
       if (!voiceSvc.ttsReady()) {

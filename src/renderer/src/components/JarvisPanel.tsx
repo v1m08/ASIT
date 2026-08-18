@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
+import { openMicGate, warmMic } from '../lib/micCapture'
 import { useSnippets } from '../hooks/useSnippets'
 import { fmtCost } from '../utils/fmt'
 import Markdown from './Markdown'
@@ -58,48 +59,22 @@ export default function JarvisPanel(): JSX.Element | null {
   const [voiceState, setVoiceState] = useState<'off' | 'listening' | 'thinking' | 'speaking' | 'download'>('off')
   const [downloadPct, setDownloadPct] = useState<number | null>(null)
   const voiceTick = useStore((s) => s.voiceTick)
-  // The mic is acquired ONCE and kept warm while the panel is open; chunks only
-  // flow to main when micGateRef is true. So Ctrl+Space is instant — no
-  // getUserMedia/AudioContext build, no engine-load stall (prewarmed) — which
-  // is what stops the first words of a command from being lost.
-  const captureRef = useRef<{ ctx: AudioContext; stream: MediaStream } | null>(null)
-  const micGateRef = useRef(false)
+  // The mic itself lives in lib/micCapture — shared with dictation. Two
+  // AudioContexts on one input device fight, and the loser records silence,
+  // so there is exactly one and callers hold a gate on it.
+  const closeGateRef = useRef<(() => void) | null>(null)
   const playCtxRef = useRef<AudioContext | null>(null)
   const playNodeRef = useRef<AudioBufferSourceNode | null>(null)
   const voiceStateRef = useRef(voiceState)
   voiceStateRef.current = voiceState
 
-  const stopCapture = (): void => {
-    micGateRef.current = false
-    const c = captureRef.current
-    captureRef.current = null
-    if (c) {
-      c.stream.getTracks().forEach((t) => t.stop())
-      void c.ctx.close()
-    }
+  const closeGate = (): void => {
+    closeGateRef.current?.()
+    closeGateRef.current = null
   }
 
-  // Warm the mic (kept muted-to-main via the gate) so activation is instant.
-  const warmCapture = async (): Promise<void> => {
-    if (captureRef.current) return
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
-    })
-    if (captureRef.current) {
-      stream.getTracks().forEach((t) => t.stop()) // lost a race — discard
-      return
-    }
-    const ctx = new AudioContext({ sampleRate: 16000 })
-    const source = ctx.createMediaStreamSource(stream)
-    const proc = ctx.createScriptProcessor(2048, 1, 1)
-    proc.onaudioprocess = (e) => {
-      if (!micGateRef.current) return // warm but not listening
-      window.asit.voice.chunk(e.inputBuffer.getChannelData(0).slice().buffer)
-    }
-    source.connect(proc)
-    proc.connect(ctx.destination)
-    captureRef.current = { ctx, stream }
-  }
+  const stopCapture = (): void => closeGate()
+  const warmCapture = (): Promise<void> => warmMic()
 
   // Play a Kokoro clip streamed from main; keep the node for barge-in.
   const playAudio = (sampleRate: number, samples: Float32Array): void => {
@@ -157,7 +132,7 @@ export default function JarvisPanel(): JSX.Element | null {
     const s = voiceStateRef.current
     if (s === 'listening' || s === 'thinking' || s === 'speaking') {
       // Cancel / barge-in: abort the utterance and silence any reply.
-      micGateRef.current = false
+      closeGate()
       stopAudio()
       await window.asit.voice.stop()
       setVoiceState('off')
@@ -182,7 +157,8 @@ export default function JarvisPanel(): JSX.Element | null {
       // Mic is already warm (panel-open prewarm) — flip the gate FIRST so the
       // very first frames after Ctrl+Space are captured, then tell main.
       await warmCapture()
-      micGateRef.current = true
+      closeGate()
+      closeGateRef.current = openMicGate()
       setVoiceState('listening')
       await window.asit.voice.start() // engine prewarmed; also silences a reply
     } catch (err) {
@@ -210,7 +186,7 @@ export default function JarvisPanel(): JSX.Element | null {
       window.asit.voice.prewarm()
       void warmCapture().catch(() => undefined)
     } else {
-      micGateRef.current = false
+      closeGate()
       stopAudio()
       if (voiceStateRef.current !== 'off') void window.asit.voice.stop()
       stopCapture()
@@ -226,7 +202,7 @@ export default function JarvisPanel(): JSX.Element | null {
       else setVoiceState(p.state as 'listening' | 'thinking' | 'speaking')
       // Utterance captured (main left 'listening') → stop feeding chunks, but
       // keep the mic WARM so the next turn is instant.
-      if (p.state !== 'listening') micGateRef.current = false
+      if (p.state !== 'listening') closeGate()
       if (p.state === 'thinking' && p.detail) setStatus(p.detail)
     })
     const offTranscript = window.asit.on(IPC.VOICE_TRANSCRIPT, (...args: unknown[]) => {
@@ -364,7 +340,7 @@ export default function JarvisPanel(): JSX.Element | null {
     // Stops a running turn whether it was typed or voice-initiated, and any
     // spoken reply.
     window.asit.jarvis.cancel()
-    micGateRef.current = false
+    closeGate()
     stopAudio()
     if (voiceStateRef.current !== 'off') void window.asit.voice.stop()
     setBusy(false)

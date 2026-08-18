@@ -532,6 +532,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     })
   )
   ipcMain.handle(IPC.VOICE_START, () => voice.voiceStart())
+  ipcMain.handle(IPC.PANES_INSERT_TEXT, (_e, text: string) =>
+    paneManager.insertTextIntoFocused(String(text))
+  )
+  ipcMain.handle(IPC.VOICE_DICTATE_START, () => voice.dictateStart())
+  ipcMain.handle(IPC.VOICE_DICTATE_STOP, () => voice.dictateStop())
   ipcMain.handle(IPC.VOICE_STOP, () => voice.voiceStop())
   ipcMain.on(IPC.VOICE_PREWARM, () => {
     try {

@@ -1332,6 +1332,27 @@ class PaneManager {
     return `navigated to ${url}`
   }
 
+  /**
+   * Type text into the page that currently has focus. Dictation needs this:
+   * app DOM cannot reach inside a WebContentsView, so when the caret is in an
+   * embedded page the renderer hands the words here instead.
+   *
+   * NOT agent-reachable, and not an oversight that it isn't — this types into
+   * whatever the USER is focused on, with no owner scoping, which is exactly
+   * the thing every AI-facing pane method is careful to prevent. It is driven
+   * only by the dictation session the user started.
+   */
+  insertTextIntoFocused(text: string): boolean {
+    const paneId = this.focusedPaneId
+    if (!paneId) return false
+    const pane = this.panes.get(paneId)
+    if (!pane || pane.view.webContents.isDestroyed()) return false
+    // insertText goes through the same path as real typing, so React-based
+    // editors see it; setting .value from a script does not.
+    pane.view.webContents.insertText(String(text).slice(0, 2000))
+    return true
+  }
+
   /** Smoke tests only — reach a pane directly to assert on real page state. */
   viewForSmoke(paneId: string): WebContentsView | null {
     return this.panes.get(paneId)?.view ?? null
