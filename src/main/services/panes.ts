@@ -1002,13 +1002,40 @@ class PaneManager {
       const els = Array.from(document.querySelectorAll(${JSON.stringify(PaneManager.INTERACTIVE_SELECTOR)})).filter(el => {
         const r = el.getBoundingClientRect()
         const s = getComputedStyle(el)
-        return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0)
+        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0' &&
+               (r.width > 0 || r.height > 0) && !el.disabled && el.getAttribute('aria-hidden') !== 'true'
       })
       const labelOf = el => (
         el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') ||
-        (el.innerText || '') || el.getAttribute('name') || el.id || ''
-      ).replace(/\\s+/g, ' ').trim().toLowerCase()
-      const el = els.find(e => labelOf(e) === target) || els.find(e => labelOf(e).includes(target))
+        (el.innerText || '') || el.value || el.getAttribute('name') || el.id || ''
+      ).replace(/\s+/g, ' ').trim().toLowerCase()
+
+      // SCORE candidates instead of taking the first loose match. "first
+      // includes() wins" picked giant wrapper divs whose text happened to
+      // contain the label, so clicks landed on the wrong thing and the agent
+      // had to be re-prompted. Prefer exact names, real controls, and the
+      // SMALLEST element that matches (the button, not its container).
+      let best = null, bestScore = -1
+      for (const el of els) {
+        const name = labelOf(el)
+        if (!name) continue
+        let score = -1
+        if (name === target) score = 100
+        else if (name.startsWith(target)) score = 70
+        else if (name.includes(target)) score = 40
+        else continue
+        const tag = el.tagName.toLowerCase()
+        const role = (el.getAttribute('role') || '').toLowerCase()
+        if (tag === 'button' || tag === 'a' || role === 'button' || role === 'link') score += 12
+        if (tag === 'input' || tag === 'select' || tag === 'textarea') score += 10
+        // Tie-break toward tighter elements: a 40-char name matching a 4-char
+        // target is a worse hit than an exact-length one.
+        score -= Math.min(20, Math.floor(name.length / 12))
+        const r = el.getBoundingClientRect()
+        score -= Math.min(10, Math.floor((r.width * r.height) / 40000))
+        if (score > bestScore) { bestScore = score; best = el }
+      }
+      const el = best
       if (!el) return null
       el.setAttribute('data-asit-flow-target', '')
       ${
@@ -1028,16 +1055,37 @@ class PaneManager {
       el.dispatchEvent(new Event('change', { bubbles: true }))
       return { filled: true }`
           : `
-      el.scrollIntoView({ block: 'center', inline: 'center' })
+      // INSTANT, not smooth: a smooth scroll animates, so the rect we read
+      // next was stale and the synthetic click landed somewhere else.
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' })
       const r = el.getBoundingClientRect()
+      // Off-screen after scrolling (sticky header, virtualised list) — report
+      // so the caller can retry rather than clicking empty space.
+      if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) return null
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 }`
       }
     })()`
   }
 
-  // The acting task's browser panes, in snapshot order — page N here is the
-  // same pane as "Page N" in that task's .asit/pages/. Owner-filtering is what
-  // keeps one workspace's agent out of every other workspace's tabs.
+  /**
+   * Find a target, RETRYING briefly. Pages render asynchronously — a button
+   * that exists 300ms from now used to be reported as "not found", and the
+   * agent had to be told to snapshot and try again. Polling here is what
+   * turns "usually needs another nudge" into "just worked".
+   */
+  private async findWithRetry<T>(
+    run: () => Promise<T | null>,
+    timeoutMs = 4000
+  ): Promise<T | null> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const hit = await run()
+      if (hit) return hit
+      if (Date.now() >= deadline) return null
+      await new Promise((r) => setTimeout(r, 220))
+    }
+  }
+
   private urlViews(owner: string, pageIndex?: number): WebContentsView[] {
     const views = [...this.panes.values()]
       .filter((p) => p.owner === owner)
@@ -1105,9 +1153,11 @@ class PaneManager {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (let fi = 0; fi < frames.length; fi++) {
         try {
-          const rect = (await frames[fi].executeJavaScript(
-            this.labelFindScript(label),
-            true
+          const rect = (await this.findWithRetry(() =>
+            frames[fi].executeJavaScript(
+              this.labelFindScript(label),
+              true
+            ) as Promise<{ x: number; y: number } | null>
           )) as { x: number; y: number } | null
           if (!rect) continue
           if (fi === 0) {
@@ -1153,7 +1203,14 @@ class PaneManager {
       const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
       for (const frame of frames) {
         try {
-          const result = await frame.executeJavaScript(this.labelFindScript(label, value), true)
+          // Same retry as clicking: a field that mounts a moment later used
+          // to come back "not found" and cost the user another prompt.
+          const result = await this.findWithRetry(
+            () =>
+              frame.executeJavaScript(this.labelFindScript(label, value), true) as Promise<{
+                filled?: boolean
+              } | null>
+          )
           if (result) return `filled "${label}"`
         } catch {
           // try next frame

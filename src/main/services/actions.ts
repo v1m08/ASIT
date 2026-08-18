@@ -4,12 +4,20 @@ import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import type { UpdateTaskInput } from '@shared/types'
 import { getDb, newId, nowIso } from '../db'
-import { getTask, jarvisTaskId, refreshClaudeMd, resolveWorkspace, updateTask } from './tasks'
+import {
+  createTask,
+  getTask,
+  jarvisTaskId,
+  refreshClaudeMd,
+  resolveWorkspace,
+  updateTask
+} from './tasks'
 import { recipientAllowed, sendAuthorized, sendRefusalReason } from './guardrails'
 import { addUrlResource } from './resources'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
 import { saveSkill } from './skills'
+import { quickFetch } from './quickfetch'
 // Read only — `writeFromUser` is deliberately NOT imported here, and must
 // never be: actions.ts is the agent's hands.
 import { readForAgent } from './terminal'
@@ -318,6 +326,36 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       const text = (action.value ?? action.content ?? '').trim()
       if (!text) return 'forget: nothing specified'
       return forgetFact(text) ? `forgot: "${text.slice(0, 120)}"` : 'no matching remembered fact'
+    }
+
+    // Make a whole new workspace. Without this the agent had to tell the user
+    // to go and create one by hand, which is exactly the "I can't do that"
+    // dead end that makes it feel weak.
+    case 'create_workspace': {
+      const title = (action.title ?? action.value ?? '').trim()
+      if (!title) return 'create_workspace: needs a title'
+      const created = createTask({
+        title: title.slice(0, 80),
+        description: (action.content ?? '').slice(0, 400),
+        priority: typeof action.priority === 'number' ? action.priority : 2,
+        dueDate: action.due_date ?? null
+      })
+      push({ type: 'task-updated' })
+      push({ type: 'toast', text: `Created workspace "${created.title}"` })
+      return `created workspace "${created.title}" (id ${created.id}). Add resources to it with {"action":"add_url","workspace":"${created.title}",...}`
+    }
+
+    // Explicit web search. `fetch` reads the user's own mail; this reads the
+    // open web, agentlessly, and returns extracted lines.
+    case 'search': {
+      const q = (action.query ?? action.value ?? '').trim()
+      if (!q) return 'search: needs a query'
+      const found = await quickFetch(`g ${q}`)
+      if (found.error) return `search failed: ${found.error}`
+      const body = found.lines.slice(0, 20).join(String.fromCharCode(10))
+      return body
+        ? `search results for "${q}":` + String.fromCharCode(10) + body
+        : `search for "${q}" returned nothing useful — try navigating to a site instead`
     }
 
     case 'open': {

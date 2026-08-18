@@ -491,6 +491,22 @@ async function runSecuritySmokeTest(): Promise<void> {
       fail(`sensitive result lines not stripped: ${JSON.stringify(filtered)}`)
     console.log('[security-smoke] protected topics are unsearchable and stripped from results')
 
+    // --- capability verbs exist and work (the "I can't do that" complaint) ---
+    const made = await actions.executeAction(task.id, {
+      action: 'create_workspace',
+      title: 'Smoke Made This'
+    })
+    if (!made.startsWith('created workspace')) fail(`create_workspace failed: ${made}`)
+    const madeTask = tasksSvc.listTasks().find((t) => t.title === 'Smoke Made This')
+    if (!madeTask) fail('create_workspace reported success but no workspace exists')
+    tasksSvc.deleteTask(madeTask!.id)
+
+    // `search` must exist as a verb (the network call itself may fail offline,
+    // but "unknown action" would mean the agent genuinely cannot search).
+    const searched = await actions.executeAction(task.id, { action: 'search', query: 'x' })
+    if (/unknown action/i.test(searched)) fail('search verb missing — agent cannot browse the web')
+    console.log('[security-smoke] agent can create workspaces and search the web')
+
     // --- shared memory crosses workspaces, but never private ones ---
     const memory = await import('./services/memory')
     const factText = `smoke fact ${Date.now().toString(36)} — user takes CS 1331`
