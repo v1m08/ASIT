@@ -66,6 +66,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   createdAt: string
+  /** What the agent did to produce this reply (assistant messages only). */
+  steps?: string[]
 }
 
 export interface Settings {

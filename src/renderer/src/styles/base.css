@@ -1584,40 +1584,40 @@ body.assistant-open:has(.jarvis-panel) .home-main {
 }
 
 /* ---- Chat message copy ---- */
-.chat-msg-wrap {
+/* A turn is a column: what the agent did, then what it said. The copy button
+   floats over the corner instead of taking a column of its own, which is what
+   forced every message into a rigid two-box row. */
+.chat-turn {
+  position: relative;
   display: flex;
-  align-items: flex-end;
-  gap: 4px;
+  flex-direction: column;
+  gap: 5px;
+  align-self: stretch;
   max-width: 100%;
+  min-width: 0;
 }
 
-.chat-wrap-user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.chat-wrap-assistant {
-  align-self: flex-start;
-}
-
-.chat-msg-wrap .chat-msg {
+.chat-turn .chat-msg {
   max-width: none;
   min-width: 0;
 }
 
 .msg-copy {
-  background: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--bg-raised);
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: 2px 5px;
+  border-radius: 5px;
   visibility: hidden;
-  flex-shrink: 0;
   font-size: 0.85rem;
+  line-height: 1;
 }
 
-.chat-msg-wrap:hover .msg-copy {
+.chat-turn:hover .msg-copy {
   visibility: visible;
 }
 
@@ -1635,9 +1635,52 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 8px 10px;
+  min-width: 0;
+}
+
+/* Only the running turn gets the accent rule — a finished trail is a quiet
+   one-line footnote you can open, not a second block competing with the
+   reply. */
+.agent-steps-active {
+  padding: 6px 10px;
   border-left: 2px solid var(--accent-dim);
-  margin: 2px 0;
+}
+
+.agent-steps-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.74rem;
+  text-align: left;
+}
+
+.agent-steps-toggle:hover {
+  color: var(--text);
+}
+
+.agent-steps-caret {
+  display: inline-block;
+  width: 8px;
+  flex-shrink: 0;
+}
+
+.agent-steps-peek {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+
+.agent-steps-toggle + .agent-step {
+  padding-left: 14px;
 }
 
 .agent-step {
@@ -1667,8 +1710,13 @@ body.assistant-open:has(.jarvis-panel) .home-main {
 .agent-steps-meta {
   color: var(--text-dim);
   font-size: 0.72rem;
-  padding-left: 16px;
   font-variant-numeric: tabular-nums;
+}
+
+/* An expanded historical trail indents under its summary line. */
+.agent-steps:not(.agent-steps-active) .agent-step {
+  padding-left: 14px;
+  font-size: 0.76rem;
 }
 
 /* ---- Backup / transfer ---- */
@@ -3197,7 +3245,7 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
 }
 
 .chat-empty {
@@ -3218,25 +3266,27 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   max-width: 95%;
 }
 
+/* Your own words read as a quoted line, the way a working log does. The
+   right-aligned coloured bubble made this feel like a messaging app, which is
+   what "blocky" was: two different shapes taking turns down the panel. */
 .chat-user {
-  align-self: flex-end;
-  background: var(--accent-dim);
-  border-bottom-right-radius: 4px;
+  align-self: stretch;
+  max-width: 100%;
+  background: none;
+  border-radius: 0;
+  border-left: 2px solid var(--accent-dim);
+  padding: 1px 0 1px 10px;
+  color: var(--text-dim);
 }
 
-/* Assistant replies render flat and full-width (Claude/ChatGPT style) — no
-   cramped bubble around formatted markdown. */
+/* Assistant replies render flat and full-width — no cramped bubble around
+   formatted markdown, and no divider rule: the gap between turns is the
+   separator, so the panel reads as one continuous conversation. */
 .chat-assistant {
   align-self: stretch;
   max-width: 100%;
   background: none;
-  padding: 2px 2px 6px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-}
-
-.chat-messages > .chat-msg-wrap:last-of-type .chat-assistant,
-.chat-messages > .chat-assistant:last-child {
-  border-bottom: none;
+  padding: 0 2px;
 }
 
 .chat-error {

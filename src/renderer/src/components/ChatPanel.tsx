@@ -37,6 +37,72 @@ interface Chip {
   content?: string
 }
 
+/**
+ * What the agent did, shown as a trail rather than a spinner.
+ *
+ * ONE component for both the live turn and every finished one, because those
+ * were the same thing rendered twice and the finished version simply didn't
+ * exist — the trail was thrown away when the turn ended, so scrolling back
+ * showed answers with no record of the work behind them.
+ *
+ * `pending` undefined means this is history: collapsed to a single line so the
+ * transcript reads as a conversation, expandable when you want the detail.
+ */
+function StepTrail({
+  steps,
+  pending,
+  meta
+}: {
+  steps: string[]
+  pending?: boolean
+  meta?: string
+}): JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  const live = pending !== undefined
+  if (steps.length === 0 && !live) return null
+
+  // Live trails run long; show the tail. Expanded history shows everything.
+  const shown = live ? steps.slice(-8) : open ? steps : []
+  const earlier = live ? Math.max(0, steps.length - 8) : 0
+
+  return (
+    <div className={`agent-steps ${live ? 'agent-steps-active' : ''}`}>
+      {!live && (
+        <button
+          type="button"
+          className="agent-steps-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className="agent-steps-caret">{open ? '⌄' : '›'}</span>
+          {steps.length} step{steps.length === 1 ? '' : 's'}
+          {!open && <span className="agent-steps-peek">{steps[steps.length - 1]}</span>}
+        </button>
+      )}
+      {earlier > 0 && <div className="agent-step agent-step-done">… {earlier} earlier</div>}
+      {shown.map((line, i) => {
+        const working = live && pending && i === shown.length - 1
+        return (
+          <div
+            key={`${i}-${line}`}
+            className={`agent-step ${working ? 'agent-step-live' : 'agent-step-done'}`}
+          >
+            {working ? <span className="working-dot" /> : <span className="agent-step-check">✓</span>}
+            {line}
+          </div>
+        )
+      })}
+      {live && (steps.length === 0 || !pending) && (
+        <div className="agent-step agent-step-live">
+          <span className="working-dot" />
+          {pending ? 'Thinking…' : 'Writing reply…'}
+        </div>
+      )}
+      {meta && <div className="agent-steps-meta">{meta}</div>}
+    </div>
+  )
+}
+
 export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -488,7 +554,8 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`chat-msg-wrap chat-wrap-${m.role}`}>
+          <div key={m.id} className={`chat-turn chat-turn-${m.role}`}>
+            {m.role === 'assistant' && m.steps && <StepTrail steps={m.steps} />}
             <div className={`chat-msg chat-${m.role}`}>
               {m.role === 'assistant' ? <Markdown text={m.content} /> : m.content}
             </div>
@@ -501,39 +568,29 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
             </button>
           </div>
         ))}
-        {streaming && (
-          <div className="chat-msg chat-assistant">
-            <Markdown text={streaming} />
-          </div>
-        )}
-        {busy && (
-          <div className="agent-steps">
-            {steps.length > 8 && (
-              <div className="agent-step agent-step-done">… {steps.length - 8} earlier steps</div>
+        {(busy || streaming) && (
+          // The in-flight turn is shaped exactly like a finished one, so
+          // nothing jumps around when it lands.
+          <div className="chat-turn chat-turn-assistant">
+            {busy && (
+              <StepTrail
+                steps={steps}
+                pending={!streaming}
+                meta={
+                  [
+                    elapsedSec > 0 ? `${elapsedSec}s` : '',
+                    liveTokens > 0 ? `${fmtTokens(liveTokens)} tok` : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || undefined
+                }
+              />
             )}
-            {steps.slice(-8).map((s, i, arr) => (
-              <div
-                key={`${i}-${s}`}
-                className={`agent-step ${i === arr.length - 1 && !streaming ? 'agent-step-live' : 'agent-step-done'}`}
-              >
-                {i === arr.length - 1 && !streaming ? (
-                  <span className="working-dot" />
-                ) : (
-                  <span className="agent-step-check">✓</span>
-                )}
-                {s}
-              </div>
-            ))}
-            {(steps.length === 0 || streaming) && (
-              <div className="agent-step agent-step-live">
-                <span className="working-dot" />
-                {streaming ? 'Writing reply…' : 'Thinking…'}
+            {streaming && (
+              <div className="chat-msg chat-assistant">
+                <Markdown text={streaming} />
               </div>
             )}
-            <div className="agent-steps-meta">
-              {elapsedSec > 0 && `${elapsedSec}s`}
-              {liveTokens > 0 && ` · ${fmtTokens(liveTokens)} tok`}
-            </div>
           </div>
         )}
         {error && <div className="chat-msg chat-error">{error}</div>}

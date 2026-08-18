@@ -162,7 +162,18 @@ function rowToMessage(row: Record<string, unknown>): ChatMessage {
     chatSessionId: row.chat_session_id as string,
     role: row.role as 'user' | 'assistant',
     content: row.content as string,
-    createdAt: row.created_at as string
+    createdAt: row.created_at as string,
+    steps: parseSteps(row.steps)
+  }
+}
+
+function parseSteps(raw: unknown): string[] | undefined {
+  if (typeof raw !== 'string' || !raw) return undefined
+  try {
+    const v = JSON.parse(raw)
+    return Array.isArray(v) && v.length > 0 ? (v as string[]) : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -199,11 +210,25 @@ export function chatHistory(chatSessionId: string): ChatMessage[] {
   return rows.map(rowToMessage)
 }
 
-function insertMessage(chatSessionId: string, role: 'user' | 'assistant', content: string): void {
+function insertMessage(
+  chatSessionId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  steps?: string[]
+): void {
   const db = getDb()
   db.prepare(
-    'INSERT INTO chat_messages (id, chat_session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).run(newId(), chatSessionId, role, content, nowIso())
+    'INSERT INTO chat_messages (id, chat_session_id, role, content, created_at, steps) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(
+    newId(),
+    chatSessionId,
+    role,
+    content,
+    nowIso(),
+    // Cap it: a long agentic turn can run hundreds of tools, and this rides
+    // every history read.
+    steps && steps.length > 0 ? JSON.stringify(steps.slice(0, 80)) : null
+  )
   db.prepare('UPDATE chat_sessions SET last_message_at = ? WHERE id = ?').run(
     nowIso(),
     chatSessionId
@@ -289,6 +314,9 @@ export async function sendChat(
   })
   publishChat(true)
   const activityLabel = `${task.coding ? '⌨ ' : ''}${task.title}`
+  // The tool trail for THIS turn, saved with the reply so the transcript keeps
+  // a record of the work instead of only the conclusion.
+  const turnSteps: string[] = []
   reportActivity(chatSessionId, {
     kind: 'chat',
     taskId: task.id,
@@ -372,6 +400,7 @@ export async function sendChat(
       },
       onToolUse: (name, input) => {
         const status = toolStatus(name, input)
+        if (turnSteps[turnSteps.length - 1] !== status) turnSteps.push(status)
         reportActivity(chatSessionId, { kind: 'chat', label: activityLabel, detail: status })
         const ls = liveChats.get(task.id)
         if (ls && ls.chatSessionId === chatSessionId) ls.status = status
@@ -395,7 +424,7 @@ export async function sendChat(
           emit(IPC.CHAT_ERROR, { chatSessionId, message: result || 'Claude returned an error.' })
           return
         }
-        insertMessage(chatSessionId, 'assistant', result)
+        insertMessage(chatSessionId, 'assistant', result, turnSteps)
         appendWorklog(task.folderPath, text, result)
         const ld = liveChats.get(task.id)
         if (ld && ld.chatSessionId === chatSessionId) {

@@ -204,6 +204,12 @@ const migrations: string[] = [
     created_at TEXT NOT NULL
   );
   CREATE INDEX idx_schedules_next ON schedules(next_at) WHERE enabled = 1;
+  `,
+  // 12: keep the tool trail with the reply it produced. It used to exist only
+  // while the turn was running, so reopening a chat showed answers with no
+  // record of what the agent actually did to get them.
+  `
+  ALTER TABLE chat_messages ADD COLUMN steps TEXT;   -- JSON array of status lines
   `
 ]
 
