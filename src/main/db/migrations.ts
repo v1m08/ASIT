@@ -189,6 +189,21 @@ const migrations: string[] = [
   // path to type into a terminal at all (see services/terminal.ts).
   `
   ALTER TABLE tasks ADD COLUMN terminal_ai_read INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 11: scheduled agent runs — the app doing things WITHOUT being asked.
+  `
+  CREATE TABLE schedules (
+    id TEXT PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    task_id TEXT,              -- null = the universal agent
+    repeat TEXT NOT NULL,      -- 'once' | 'daily' | 'weekdays' | 'hourly'
+    next_at TEXT NOT NULL,     -- ISO; when it should next fire
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run_at TEXT,
+    last_result TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX idx_schedules_next ON schedules(next_at) WHERE enabled = 1;
   `
 ]
 

@@ -22,6 +22,7 @@ import { quickFetch } from './quickfetch'
 // never be: actions.ts is the agent's hands.
 import { readForAgent } from './terminal'
 import { forgetFact, rememberFact } from './memory'
+import { addSchedule, listSchedules, removeSchedule } from './scheduler'
 
 // ---------------------------------------------------------------------------
 // App-action protocol: the Claude CLI (which only has file tools) controls the
@@ -356,6 +357,40 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       return body
         ? `search results for "${q}":` + String.fromCharCode(10) + body
         : `search for "${q}" returned nothing useful — try navigating to a site instead`
+    }
+
+    // Time-based automation. This is what lets the app act on its own:
+    // "every weekday at 8, tell me what's due".
+    case 'schedule': {
+      const prompt = (action.prompt ?? action.value ?? action.content ?? '').trim()
+      const when = (action.target ?? action.query ?? '').trim()
+      if (!prompt || !when)
+        return 'schedule: needs {"prompt":"what to do","target":"08:00 | weekdays 7:30 | in 30m | hourly"}'
+      // Scoped to THIS workspace unless it is the universal agent, which
+      // schedules cross-workspace runs.
+      const owner = taskId === jarvisTaskId() ? null : taskId
+      const made = addSchedule({ prompt, when, taskId: owner })
+      if (!made.ok) return `schedule refused: ${made.reason}`
+      push({ type: 'toast', text: `Scheduled: ${prompt.slice(0, 50)}` })
+      return `scheduled "${prompt.slice(0, 80)}" — next run ${new Date(made.schedule.nextAt).toLocaleString()} (${made.schedule.repeat}). Sends stay blocked in scheduled runs unless the user asks live.`
+    }
+
+    case 'list_schedules': {
+      const all = listSchedules()
+      if (all.length === 0) return 'nothing scheduled'
+      return all
+        .map(
+          (x) =>
+            `${x.id} — "${x.prompt.slice(0, 60)}" ${x.repeat}, next ${new Date(x.nextAt).toLocaleString()}${x.enabled ? '' : ' (paused)'}`
+        )
+        .join(' | ')
+    }
+
+    case 'unschedule': {
+      const id = (action.ref ?? action.target ?? '').trim()
+      if (!id) return 'unschedule: needs the schedule id (use list_schedules)'
+      removeSchedule(id)
+      return `removed schedule ${id}`
     }
 
     case 'open': {

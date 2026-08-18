@@ -6,6 +6,7 @@ import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
+import { initScheduler, stopScheduler } from './services/scheduler'
 import { lockdown } from './services/lockdown'
 import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
@@ -188,6 +189,7 @@ app.whenReady().then(() => {
   // exists; saved extensions load in the background.
   initBrowserFilters()
   void loadExtensions()
+  initScheduler() // time-based agent runs
 
   registerIpc(() => mainWindow)
   timer.init(() => mainWindow)
@@ -237,6 +239,7 @@ app.on('window-all-closed', async () => {
   const { closeWhatsApp } = await import('./services/whatsapp')
   closeWhatsApp()
   shutdownVoice()
+  stopScheduler()
   stopCompanion()
   const { shutdownTerminals } = await import('./services/terminal')
   shutdownTerminals() // orphaned shells would outlive the app (Windows)
@@ -506,6 +509,49 @@ async function runSecuritySmokeTest(): Promise<void> {
     const searched = await actions.executeAction(task.id, { action: 'search', query: 'x' })
     if (/unknown action/i.test(searched)) fail('search verb missing — agent cannot browse the web')
     console.log('[security-smoke] agent can create workspaces and search the web')
+
+    // --- scheduling: the app acting without being asked ---
+    const sched = await import('./services/scheduler')
+    // Parsing must accept what a person actually types, and refuse nonsense
+    // rather than silently firing at the wrong time.
+    for (const [text, ok] of [
+      ['08:00', true],
+      ['weekdays 7:30', true],
+      ['in 30m', true],
+      ['hourly', true],
+      ['sometime next week', false],
+      ['99:99', false]
+    ] as const) {
+      const parsed = sched.parseWhen(text)
+      if (!!parsed !== ok) fail(`parseWhen("${text}") should ${ok ? 'parse' : 'refuse'}`)
+    }
+    const weekday = sched.parseWhen('weekdays 7:30')
+    if (weekday && [0, 6].includes(weekday.at.getDay()))
+      fail('a weekday schedule was placed on a weekend')
+
+    // A due schedule must actually fire, and roll forward rather than re-run.
+    const added = await actions.executeAction(task.id, {
+      action: 'schedule',
+      prompt: 'smoke: do nothing',
+      target: 'in 1m'
+    })
+    if (!added.startsWith('scheduled')) fail(`schedule verb failed: ${added}`)
+    const mine = sched.listSchedules().filter((x) => x.prompt.startsWith('smoke:'))
+    if (mine.length !== 1) fail(`expected 1 scheduled item, got ${mine.length}`)
+    // Force it due and tick.
+    const future = new Date(Date.now() + 120_000)
+    const fired = await sched.tick(future)
+    if (fired.length !== 1) fail(`due schedule did not fire (fired ${fired.length})`)
+    if (sched.listSchedules().some((x) => x.prompt.startsWith('smoke:')))
+      fail('a "once" schedule was not removed after firing')
+
+    // An unattended run must never be able to send. The scheduler starts a
+    // turn through the same path as a typed message, and nothing in that path
+    // grants send authority.
+    guard.clearSendAuthorization()
+    if (guard.sendAuthorized('whatsapp') || guard.sendAuthorized('email'))
+      fail('a scheduled run left send authority open')
+    console.log('[security-smoke] schedules parse, fire, roll forward, and cannot send')
 
     // --- shared memory crosses workspaces, but never private ones ---
     const memory = await import('./services/memory')
