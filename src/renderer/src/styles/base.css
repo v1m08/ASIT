@@ -1758,6 +1758,42 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   color: var(--accent);
 }
 
+/* Finished work is not working: kill the spinning ring. A dashed pill that
+   still had the live conic border read as "this is running", which is the
+   opposite of what it means. */
+.status-activity-done::before {
+  display: none;
+}
+
+/* Dismiss-without-opening. Stays out of the way until you are on the pill,
+   because the primary action is still "open that workspace". */
+.status-activity-x {
+  flex-shrink: 0;
+  margin-left: 2px;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1;
+  opacity: 0;
+  transition:
+    opacity 0.12s ease,
+    background 0.12s ease;
+}
+
+.status-activity-done:hover .status-activity-x {
+  opacity: 0.75;
+}
+
+.status-activity-x:hover {
+  opacity: 1;
+  background: var(--bg-sunken, rgba(127, 127, 127, 0.2));
+  color: var(--text);
+}
+
 /* Find in page (Ctrl+F) — lives in the toolbar band, which pages never cover */
 .find-bar {
   display: flex;

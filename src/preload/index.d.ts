@@ -239,8 +239,11 @@ declare global {
             label: string
             detail: string | null
             startedAt: number
+            done?: boolean
+            finishedAt?: number
           }[]
         >
+        dismiss: (id: string) => Promise<void>
       }
       voice: {
         status: () => Promise<{ modelsReady: boolean; listening: boolean }>

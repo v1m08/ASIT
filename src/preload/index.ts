@@ -115,7 +115,8 @@ const api = {
       ipcRenderer.invoke(IPC.NOTES_READ_IMAGE, notePath, src)
   },
   activity: {
-    list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST)
+    list: () => ipcRenderer.invoke(IPC.ACTIVITY_LIST),
+    dismiss: (id: string) => ipcRenderer.invoke(IPC.ACTIVITY_DISMISS, id)
   },
   voice: {
     status: () => ipcRenderer.invoke(IPC.VOICE_STATUS),

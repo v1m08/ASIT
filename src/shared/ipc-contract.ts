@@ -85,6 +85,7 @@ export const IPC = {
 
   // background activity tracker
   ACTIVITY_LIST: 'activity:list',
+  ACTIVITY_DISMISS: 'activity:dismiss',
   ACTIVITY_UPDATED: 'activity:updated', // push M→R
   CHAT_RUNNING: 'chat:running',
 

@@ -344,6 +344,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // --- background activity ---
   ipcMain.handle(IPC.ACTIVITY_LIST, () => activity.listActivity())
+  ipcMain.handle(IPC.ACTIVITY_DISMISS, (_e, id: string) => activity.dismissActivity(id))
   ipcMain.handle(IPC.CHAT_RUNNING, () => chat.runningSessionIds())
 
   // --- chat ---

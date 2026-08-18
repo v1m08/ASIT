@@ -122,13 +122,17 @@ export default function StatusCluster(): JSX.Element {
           // header and be painted over by the pages.
           title={
             item.done
-              ? `${item.label} — finished. Click to open that workspace.`
+              ? `${item.label} — finished. Click to open that workspace and clear this.`
               : `${item.label} — ${item.detail ?? 'Working…'}${
                   item.taskId && item.taskId !== activeTaskId ? '\nClick to open' : ''
                 }`
           }
+          // A finished entry is a NOTIFICATION, so acting on it consumes it.
+          // It used to sit in the header forever after you had already opened
+          // the workspace, turning the row into a pile of stale badges.
           onClick={() => {
             if (item.taskId && item.taskId !== activeTaskId) openTask(item.taskId)
+            if (item.done) void window.asit.activity.dismiss(item.id)
           }}
         >
           <span className="status-activity-label">
@@ -138,6 +142,23 @@ export default function StatusCluster(): JSX.Element {
           <span className="status-activity-time">
             {item.done ? 'open ↗' : elapsed(item.startedAt, now)}
           </span>
+          {item.done && (
+            // Dismiss without opening — for the ones you only wanted to know
+            // had finished.
+            <span
+              role="button"
+              tabIndex={-1}
+              aria-label={`Dismiss ${item.label}`}
+              title="Dismiss"
+              className="status-activity-x"
+              onClick={(e) => {
+                e.stopPropagation()
+                void window.asit.activity.dismiss(item.id)
+              }}
+            >
+              ×
+            </span>
+          )}
         </button>
       ))}
       {/* One assistant button. Jarvis does everything the quick bar did — the
