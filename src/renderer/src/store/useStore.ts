@@ -85,6 +85,13 @@ interface AsitState {
   toggleScratchNotes: () => void
   settingsOpen: boolean
   setSettingsOpen: (open: boolean) => void
+  historyOpen: boolean
+  setHistoryOpen: (open: boolean) => void
+  // Whichever browsing surface is on screen registers itself here, so
+  // things like the history list can open a URL without knowing which.
+  urlOpener: ((url: string) => void) | null
+  setUrlOpener: (fn: ((url: string) => void) | null) => void
+  openUrlInWorkspace: (url: string) => void
   chatOpen: boolean
   toggleChat: () => void
 
@@ -149,6 +156,17 @@ export const useStore = create<AsitState>((set, get) => ({
   toggleScratchNotes: () => set((st) => ({ scratchNotesOpen: !st.scratchNotesOpen })),
   settingsOpen: false,
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  historyOpen: false,
+  setHistoryOpen: (historyOpen) => set({ historyOpen }),
+  urlOpener: null,
+  setUrlOpener: (urlOpener) => set({ urlOpener }),
+  openUrlInWorkspace: (url) => {
+    const open = get().urlOpener
+    // No browsing surface mounted (you are on Home): hand it to the
+    // system browser rather than swallowing the click.
+    if (open) open(url)
+    else void window.asit.resources.openExternal({ url })
+  },
   chatOpen: true,
   toggleChat: () => set((st) => ({ chatOpen: !st.chatOpen })),
   loadError: null,

@@ -124,6 +124,9 @@ export default function Workspace(): JSX.Element {
           resources={resources}
           onApi={(api) => {
             gridApi.current = api
+            // Let anything else in the app (history, to-do links) open a URL
+            // here without needing a reference to this grid.
+            useStore.getState().setUrlOpener((url) => api.openUrl(url))
           }}
           onPin={async (title, url) => {
             await window.asit.resources.addUrl(task.id, title.slice(0, 60), url)

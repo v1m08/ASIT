@@ -497,6 +497,47 @@ export default function PaneGrid({
     onApi?.({ openResource, openSearch, openUrl })
   }, [onApi, openResource, openSearch, openUrl])
 
+  /**
+   * Right-click a tab. A NATIVE menu, not an HTML dropdown: WebContentsViews
+   * paint above every bit of app DOM, so a menu anchored to the tab strip
+   * would open underneath the page it belongs to (invariant 2).
+   */
+  const tabMenu = useCallback(
+    async (slotIndex: 0 | 1, tab: TabInfo): Promise<void> => {
+      const ids = validLayout.slots[slotIndex]
+      const at = ids.indexOf(tab.id)
+      const url = navStates[tab.id]?.url ?? tab.resource?.url ?? ''
+      const picked = await window.asit.ui.contextMenu([
+        { id: 'reload', label: 'Reload', enabled: tab.viewBacked },
+        { id: 'duplicate', label: 'Duplicate tab', enabled: !!url },
+        { separator: true },
+        { id: 'copy', label: 'Copy address', enabled: !!url },
+        { id: 'external', label: 'Open in your default browser', enabled: !!url },
+        { separator: true },
+        { id: 'move', label: 'Move to other side' },
+        { separator: true },
+        { id: 'close', label: 'Close tab' },
+        { id: 'others', label: 'Close other tabs', enabled: ids.length > 1 },
+        { id: 'right', label: 'Close tabs to the right', enabled: at < ids.length - 1 }
+      ])
+      if (!picked) return
+      if (picked === 'reload') window.asit.panes.navigate(tab.id, { nav: 'reload' })
+      else if (picked === 'copy') void navigator.clipboard.writeText(url)
+      else if (picked === 'external') void window.asit.resources.openExternal({ url })
+      else if (picked === 'move') moveTab(slotIndex, tab.id)
+      else if (picked === 'close') closeTab(slotIndex, tab.id)
+      else if (picked === 'duplicate') {
+        if (url) openUrl(url)
+      } else if (picked === 'others') {
+        for (const id of [...ids]) if (id !== tab.id) closeTab(slotIndex, id)
+      } else if (picked === 'right') {
+        for (const id of ids.slice(at + 1)) closeTab(slotIndex, id)
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [validLayout, navStates, openUrl]
+  )
+
   // Claim the tab surface while this workspace is on screen, so the shared
   // shortcut dispatcher drives THESE tabs.
   const setTabSurface = useStore((st) => st.setTabSurface)
@@ -669,6 +710,17 @@ export default function PaneGrid({
                 key={tab.id}
                 className={`tab ${tab.id === activeId ? 'tab-active' : ''}`}
                 onClick={() => selectTab(slotIndex, tab.id)}
+                // Middle-click closes, like every browser since 2004.
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    closeTab(slotIndex, tab.id)
+                  }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  void tabMenu(slotIndex, tab)
+                }}
                 title={tabLabel(tab)}
               >
                 <span className="tab-icon">

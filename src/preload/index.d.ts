@@ -152,6 +152,11 @@ declare global {
       files: {
         pathFor: (file: File) => string
       }
+      ui: {
+        contextMenu: (
+          items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]
+        ) => Promise<string | null>
+      }
       history: {
         search: (q: string, limit?: number) => Promise<HistoryEntry[]>
         recent: (limit?: number) => Promise<HistoryEntry[]>

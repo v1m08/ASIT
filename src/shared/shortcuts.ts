@@ -53,6 +53,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'back', accel: 'Alt+Left', key: 'arrowleft', alt: true, label: 'Back' },
   { id: 'forward', accel: 'Alt+Right', key: 'arrowright', alt: true, label: 'Forward' },
   { id: 'find', accel: 'CommandOrControl+F', key: 'f', ctrl: true, label: 'Find in page' },
+  { id: 'open-history', accel: 'CommandOrControl+H', key: 'h', ctrl: true, label: 'History' },
   { id: 'zoom-in', accel: 'CommandOrControl+=', key: '=', ctrl: true, label: 'Zoom in' },
   { id: 'zoom-in', accel: 'CommandOrControl+Plus', key: '+', ctrl: true, label: '' },
   { id: 'zoom-out', accel: 'CommandOrControl+-', key: '-', ctrl: true, label: 'Zoom out' },

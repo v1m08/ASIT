@@ -3623,3 +3623,66 @@ code {
   color: var(--text-dim);
   font-size: 0.74rem;
 }
+
+/* ---- History (Ctrl+H) ---- */
+.history-modal {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-search {
+  margin-bottom: 8px;
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.history-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.history-row:hover {
+  background: var(--bg-hover);
+}
+
+.history-time {
+  flex-shrink: 0;
+  width: 62px;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-host,
+.history-count {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+}
+
+.history-row .rail-btn {
+  visibility: hidden;
+}
+
+.history-row:hover .rail-btn {
+  visibility: visible;
+}

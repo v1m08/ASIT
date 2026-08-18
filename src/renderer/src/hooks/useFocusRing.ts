@@ -242,6 +242,8 @@ export function installFocusRing(): () => void {
         return store.toggleScratchNotes()
       case 'open-settings':
         return store.setSettingsOpen(true)
+      case 'open-history':
+        return store.setHistoryOpen(true)
       case 'toggle-chat':
         return store.toggleChat()
       case 'go-home':

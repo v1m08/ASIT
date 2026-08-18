@@ -1,4 +1,4 @@
-import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron'
 import { IPC } from '@shared/ipc-contract'
 import type { CreateTaskInput, Settings, UpdateTaskInput } from '@shared/types'
 import * as tasks from './services/tasks'
@@ -186,6 +186,33 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return added
   })
   ipcMain.handle(IPC.LIBRARY_ADD_PATHS, (_e, paths: string[]) => library.addPathsToLibrary(paths))
+
+  // A renderer-driven NATIVE context menu. App DOM cannot draw a dropdown
+  // over a pane (WebContentsViews paint above everything), so any menu
+  // anchored to chrome that sits beside a pane has to be a real OS menu.
+  ipcMain.handle(
+    IPC.UI_CONTEXT_MENU,
+    (_e, items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]) =>
+      new Promise<string | null>((resolve) => {
+        const win = getWindow()
+        if (!win) return resolve(null)
+        let picked: string | null = null
+        const menu = Menu.buildFromTemplate(
+          items.slice(0, 30).map((it) =>
+            it.separator
+              ? { type: 'separator' as const }
+              : {
+                  label: String(it.label ?? '').slice(0, 80),
+                  enabled: it.enabled !== false,
+                  click: () => {
+                    picked = it.id ?? null
+                  }
+                }
+          )
+        )
+        menu.popup({ window: win, callback: () => resolve(picked) })
+      })
+  )
 
   // --- browsing history (user-facing only; no agent verb reaches this) ---
   ipcMain.handle(IPC.HISTORY_SEARCH, (_e, q: string, limit?: number) =>

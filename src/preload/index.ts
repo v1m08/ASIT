@@ -164,6 +164,11 @@ const api = {
       }
     }
   },
+  ui: {
+    contextMenu: (
+      items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]
+    ) => ipcRenderer.invoke(IPC.UI_CONTEXT_MENU, items)
+  },
   history: {
     search: (q: string, limit?: number) => ipcRenderer.invoke(IPC.HISTORY_SEARCH, q, limit),
     recent: (limit?: number) => ipcRenderer.invoke(IPC.HISTORY_RECENT, limit),
