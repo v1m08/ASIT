@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import AddressBar, { hostOf, toNavUrl } from './AddressBar'
 import { IPC } from '@shared/ipc-contract'
@@ -97,13 +97,26 @@ export default function ScratchBrowser({
   }, [tabs, activeId])
 
   // Bounds + visibility: single visible view under the toolbar.
+  //
+  // Re-measured after every render, deduped so the IPC only fires on a real
+  // change. Same reasoning as the workspace grid: a pane is positioned from a
+  // DOM rect, so every layout change has to re-measure, and the set of things
+  // that change the layout is not knowable from a dependency list. Getting
+  // that wrong puts the page on top of the toolbar, where it silently eats
+  // every click.
+  const sentGeometry = useRef<Record<string, string>>({})
   const sync = useCallback((): void => {
     const el = contentRef.current
     for (const tab of tabsRef.current) {
       const isActive = tab.id === activeRef.current
+      const rect = isActive && el ? el.getBoundingClientRect() : null
+      const key = rect
+        ? `${isActive}:${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`
+        : `${isActive}`
+      if (sentGeometry.current[tab.id] === key) continue
+      sentGeometry.current[tab.id] = key
       window.asit.panes.setVisible(tab.id, isActive)
-      if (isActive && el) {
-        const rect = el.getBoundingClientRect()
+      if (rect) {
         window.asit.panes.setBounds(tab.id, {
           x: rect.x,
           y: rect.y,
@@ -114,9 +127,9 @@ export default function ScratchBrowser({
     }
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     sync()
-  }, [tabs, activeId, sync])
+  })
 
   useEffect(() => {
     const el = contentRef.current

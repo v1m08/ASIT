@@ -1353,6 +1353,16 @@ class PaneManager {
     return true
   }
 
+  /** Smoke tests only — where every visible pane actually sits, in DIP. */
+  boundsForSmoke(): [string, { x: number; y: number; width: number; height: number }][] {
+    return [...this.panes.entries()]
+      .filter(([, p]) => p.desiredVisible)
+      .map(([id, p]) => [id, p.view.getBounds()] as [
+        string,
+        { x: number; y: number; width: number; height: number }
+      ])
+  }
+
   /** Smoke tests only — reach a pane directly to assert on real page state. */
   viewForSmoke(paneId: string): WebContentsView | null {
     return this.panes.get(paneId)?.view ?? null

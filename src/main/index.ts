@@ -160,6 +160,10 @@ app.whenReady().then(() => {
     runTransferSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_UI === '1') {
+    runUiSmokeTest()
+    return
+  }
   if (process.env.ASIT_SMOKE_PANES === '1') {
     runPanesSmokeTest()
     return
@@ -1178,6 +1182,183 @@ async function runCompanionSmokeTest(): Promise<void> {
     app.exit(0)
   } catch (err) {
     console.error('[companion-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Real-UI check: ASIT_SMOKE_UI=1 electron out/main/index.js
+//
+// Every other smoke tests main. Nothing tested the thing the user actually
+// touches, which is why a run of "I can't click that" bugs shipped: the app
+// booted, the code typechecked, and the control was dead. This boots the REAL
+// renderer against a real (throwaway) workspace and asks the page the only
+// question that matters — is the control reachable and does it take focus.
+async function runUiSmokeTest(): Promise<void> {
+  const tasks = await import('./services/tasks')
+
+  const fail = (msg: string): never => {
+    console.error('[ui-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+
+  try {
+    // Skip first-run onboarding: its modal covers the whole window, and a
+    // test that trips over it tells you nothing about the control underneath.
+    ;(await import('./services/settings')).setSettings({ onboarded: true })
+
+    const task = tasks.createTask({ title: 'UI Smoke Workspace' })
+    const { addUrlResource } = await import('./services/resources')
+    addUrlResource(task.id, 'Example', 'https://example.com')
+
+    // The real UI needs the real backend behind it, or every control fails
+    // for a reason that has nothing to do with the control.
+    registerIpc(() => mainWindow)
+    timer.init(() => mainWindow)
+    initQuestions(() => mainWindow)
+    initActions(() => mainWindow)
+    initUsage(() => mainWindow)
+    initActivity(() => mainWindow)
+    initTodos(() => mainWindow)
+
+    createWindow()
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) fail('no window')
+    win.setBounds({ x: -3000, y: -3000, width: 1400, height: 900 })
+    win.showInactive()
+    await new Promise<void>((r) => {
+      if (!win.webContents.isLoading()) return r()
+      win.webContents.once('did-finish-load', () => r())
+    })
+    const ui = win.webContents
+
+    const evalIn = async <T>(js: string): Promise<T> => (await ui.executeJavaScript(js)) as T
+    const waitFor = async (js: string, what: string, ms = 8000): Promise<void> => {
+      const deadline = Date.now() + ms
+      for (;;) {
+        if (await evalIn<boolean>(`!!(${js})`)) return
+        if (Date.now() > deadline) fail(`timed out waiting for ${what}`)
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+
+    // Open the workspace the way a click would.
+    await waitFor(`document.querySelector('.task-card, .task-row, [data-focus-zone]')`, 'home to render')
+    await evalIn(`window.__asitStore.getState().openTask(${JSON.stringify(task.id)})`)
+    await waitFor(`document.querySelector('.pane-grid')`, 'the workspace')
+
+    // Open the pinned URL so a page pane exists, then wait for its toolbar.
+    await evalIn(
+      `(() => { const r = window.__asitStore.getState().activeResources[0]
+                window.__asitGrid && window.__asitGrid.openResource(r.id) })()`
+    )
+    await waitFor(`document.querySelector('.pane-toolbar .browser-address')`, 'the address bar')
+
+    // THE question: is the address bar reachable where it is drawn, and does
+    // clicking it actually put the caret in it?
+    const probe = await evalIn<{
+      hit: string
+      covered: string | null
+      focused: boolean
+      readOnly: boolean
+      pointerEvents: string
+    }>(`(() => {
+      const el = document.querySelector('.pane-toolbar .browser-address')
+      const r = el.getBoundingClientRect()
+      const x = r.x + r.width / 2, y = r.y + r.height / 2
+      const top = document.elementFromPoint(x, y)
+      el.focus()
+      return {
+        hit: top ? (top === el ? 'the address bar' : (top.className || top.tagName)) : 'nothing',
+        covered: top === el ? null : (top ? (top.className || top.tagName) : 'nothing'),
+        focused: document.activeElement === el,
+        readOnly: !!el.readOnly || !!el.disabled,
+        pointerEvents: getComputedStyle(el).pointerEvents
+      }
+    })()`)
+
+    if (probe.pointerEvents === 'none') fail('the address bar has pointer-events: none')
+    if (probe.readOnly) fail('the address bar is read-only')
+    if (probe.covered) fail(`the address bar is covered by "${probe.covered}" — clicks never reach it`)
+    if (!probe.focused) fail('the address bar refused focus')
+    console.log('[ui-smoke] the address bar is reachable, focusable and editable')
+
+    // Typing into it must actually change it (a controlled input wired to the
+    // wrong state looks fine and silently discards every keystroke).
+    ui.focus()
+    await evalIn(`document.querySelector('.pane-toolbar .browser-address').focus()`)
+    for (const ch of 'abc') ui.sendInputEvent({ type: 'char', keyCode: ch })
+    await new Promise((r) => setTimeout(r, 250))
+    const typed = await evalIn<string>(
+      `document.querySelector('.pane-toolbar .browser-address').value`
+    )
+    if (!typed.includes('abc')) fail(`typing did nothing — the field still reads "${typed}"`)
+    console.log('[ui-smoke] typing into the address bar works')
+
+    // Selection + copy: "I can't even copy it" is its own bug.
+    const selected = await evalIn<string>(`(() => {
+      const el = document.querySelector('.pane-toolbar .browser-address')
+      el.focus(); el.select()
+      return el.value.slice(el.selectionStart, el.selectionEnd)
+    })()`)
+    if (!selected) fail('the address bar cannot be selected')
+    console.log('[ui-smoke] the address can be selected for copying')
+
+    // THE check renderer hit-testing cannot make. document.elementFromPoint
+    // knows nothing about WebContentsViews — they are a separate compositing
+    // layer — so a pane sitting over a control looks perfectly reachable to
+    // the page while every real click lands on the website instead. That is
+    // invariant 2's failure mode, and it is invisible from inside the DOM.
+    // Generous settle: layout, ResizeObserver and the bounds round-trip to
+    // main are all async, and a transient overlap is a different bug from a
+    // permanent one.
+    await new Promise((r) => setTimeout(r, 2000))
+    const toolbar = await evalIn<{ x: number; y: number; w: number; h: number } | null>(
+      `(() => { const el = document.querySelector('.pane-toolbar')
+                if (!el) return null
+                const r = el.getBoundingClientRect()
+                return { x: r.x, y: r.y, w: r.width, h: r.height } })()`
+    )
+    if (!toolbar) fail('no toolbar')
+    // The find bar is the other thing that appears ABOVE the pane and pushes
+    // it down — the same shape of bug, so open it before measuring.
+    await evalIn(`window.__asitStore.getState().tabSurface.find()`)
+    await waitFor(`document.querySelector('.find-bar')`, 'the find bar')
+    await new Promise((r) => setTimeout(r, 400))
+
+    // Do it for EVERY piece of app chrome, not just the address bar. This is
+    // the general shape of the bug: any control that shares screen space with
+    // a pane can end up underneath it, and nothing on screen looks wrong.
+    const chrome = await evalIn<{ what: string; x: number; y: number; w: number; h: number }[]>(
+      `Array.from(document.querySelectorAll(
+         '.pane-toolbar, .tab-strip, .find-bar, .resource-rail, .workspace-header, .browser-toolbar, .browser-tabs'
+       )).map(el => {
+         const r = el.getBoundingClientRect()
+         return { what: el.className, x: r.x, y: r.y, w: r.width, h: r.height }
+       }).filter(r => r.w > 0 && r.h > 0)`
+    )
+    if (chrome.length === 0) fail('found no app chrome to check')
+    const zoom = ui.getZoomFactor() || 1
+    for (const c of chrome) {
+      const box = { x: c.x * zoom, y: c.y * zoom, w: c.w * zoom, h: c.h * zoom }
+      for (const [paneId, b] of paneManager.boundsForSmoke()) {
+        const ox = Math.min(box.x + box.w, b.x + b.width) - Math.max(box.x, b.x)
+        const oy = Math.min(box.y + box.h, b.y + b.height) - Math.max(box.y, b.y)
+        if (ox > 1 && oy > 1) {
+          fail(
+            `pane "${paneId}" covers ${Math.round(ox)}x${Math.round(oy)}px of "${c.what}" ` +
+              `— clicks there hit the page instead (control ${JSON.stringify(box)}, pane ${JSON.stringify(b)})`
+          )
+        }
+      }
+    }
+    console.log(`[ui-smoke] no pane overlaps any of the ${chrome.length} app controls on screen`)
+
+    tasks.deleteTask(task.id)
+    console.log('[ui-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[ui-smoke] FAIL:', err)
     app.exit(1)
   }
 }

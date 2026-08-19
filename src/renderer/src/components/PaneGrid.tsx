@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState, Resource, Task, WorkspaceLayout } from '@shared/types'
 import NotesEditor from './NotesEditor'
@@ -249,7 +249,23 @@ export default function PaneGrid({
     }
   }, [validLayout])
 
+  // What was last sent to main, so re-measuring on every render is cheap.
+  const sentGeometry = useRef<Record<string, string>>({})
+
   // Visibility + bounds: for each slot, only the active view-backed tab shows.
+  //
+  // This runs after EVERY render rather than on a dependency list, and that is
+  // the point. A pane is positioned from a DOM rect, so anything that changes
+  // the layout has to re-measure — and the list of such things is not
+  // knowable in advance. It already included the page toolbar (which appears
+  // only once a page reports its URL) and the find bar, neither of which was
+  // in the old dependency list; the pane kept its pre-toolbar bounds and sat
+  // on top of the toolbar, so every click on the address bar, back, or reload
+  // went to the WEBSITE instead. Nothing looked wrong on screen, because a
+  // WebContentsView draws over app DOM without disturbing it.
+  //
+  // Cheap because it dedupes: measuring is a couple of getBoundingClientRect
+  // calls and the IPC only fires when a number actually changed.
   const syncPanes = useCallback((): void => {
     validLayout.slots.forEach((slot, i) => {
       const activeId = validLayout.active[i]
@@ -258,27 +274,32 @@ export default function PaneGrid({
         const tab = tabInfoFor(id, task, resources)
         if (!tab?.viewBacked) continue
         const isActive = id === activeId && !slotCollapsed
+        const el = isActive ? slotContentRefs[i].current : null
+        const rect = el?.getBoundingClientRect()
+        const key = rect
+          ? `${isActive}:${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`
+          : `${isActive}`
+        if (sentGeometry.current[id] === key) continue
+        sentGeometry.current[id] = key
         window.asit.panes.setVisible(id, isActive)
-        if (isActive) {
-          const el = slotContentRefs[i].current
-          if (el) {
-            const rect = el.getBoundingClientRect()
-            window.asit.panes.setBounds(id, {
-              x: rect.x,
-              y: rect.y,
-              width: rect.width,
-              height: rect.height
-            })
-          }
+        if (rect) {
+          window.asit.panes.setBounds(id, {
+            x: rect.x,
+            y: rect.y,
+            width: rect.width,
+            height: rect.height
+          })
         }
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validLayout, task, resources])
 
-  useEffect(() => {
+  // No dependency array on purpose — see above. useLayoutEffect so the pane
+  // moves in the same frame the layout changed, instead of one frame late.
+  useLayoutEffect(() => {
     syncPanes()
-  }, [syncPanes])
+  })
 
   // Track slot geometry changes (window resize, split drag, header changes).
   useEffect(() => {
@@ -308,6 +329,8 @@ export default function PaneGrid({
     return window.asit.on(IPC.PANES_GONE, (...args: unknown[]) => {
       const { paneId } = args[0] as { paneId: string }
       if (!openedPanes.current.delete(paneId)) return
+      // The replacement view starts with no bounds, so forget what we sent.
+      delete sentGeometry.current[paneId]
       setNavStates((prev) => {
         const next = { ...prev }
         delete next[paneId]

@@ -238,3 +238,8 @@ setLoadFailureSink(
     if (useStore.getState().loadError) useStore.setState({ loadError: null })
   }
 )
+
+// Test handle for the real-UI smoke (ASIT_SMOKE_UI=1), and a genuinely useful
+// debugging one. Safe to expose: this is the renderer's own store, and pages
+// live in separate WebContents that cannot see this world.
+;(window as unknown as { __asitStore?: unknown }).__asitStore = useStore
