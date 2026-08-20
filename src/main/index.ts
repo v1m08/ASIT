@@ -4,7 +4,7 @@ import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
-import { installCrashLogging, logError } from './log'
+import { logError } from './log'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
 import { initScheduler, stopScheduler } from './services/scheduler'
@@ -47,9 +47,7 @@ app.userAgentFallback =
 if (!Object.entries(process.env).some(([k, v]) => k.startsWith('ASIT_SMOKE') && v === '1')) {
   process.on('uncaughtException', (err) => {
     try {
-      const line = `${new Date().toISOString()} uncaught: ${err.stack ?? err.message}\n`
-      appendFileSync(join(app.getPath('userData'), 'error.log'), line)
-      console.error('uncaught exception (survived):', err)
+      logError('uncaught', err)
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(IPC.APP_EVENT, {
           type: 'toast',
@@ -62,9 +60,7 @@ if (!Object.entries(process.env).some(([k, v]) => k.startsWith('ASIT_SMOKE') && 
   })
   process.on('unhandledRejection', (reason) => {
     try {
-      const line = `${new Date().toISOString()} unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}\n`
-      appendFileSync(join(app.getPath('userData'), 'error.log'), line)
-      console.error('unhandled rejection (survived):', reason)
+      logError('unhandledRejection', reason)
     } catch {
       // ignore
     }
@@ -136,10 +132,28 @@ app.whenReady().then(() => {
     // their task folders + tasks index out of the real Documents\ASIT too.
     const { tmpdir } = require('os') as typeof import('os')
     const { join: joinPath } = require('path') as typeof import('path')
-    app.setPath('documents', joinPath(tmpdir(), 'asit-smoke-docs'))
+    const { rmSync } = require('fs') as typeof import('fs')
+    const docs = joinPath(tmpdir(), 'asit-smoke-docs')
+    app.setPath('documents', docs)
+
+    // START FROM NOTHING. The smoke profile persisted between runs, so state
+    // piled up across every invocation — thousands of leftover tasks — until
+    // a test that creates a workspace collided with one from days ago and
+    // failed for a reason that had nothing to do with the code. A suite that
+    // rots as you use it teaches you to ignore it. Voice models are cached
+    // elsewhere in userData and are deliberately NOT cleared (130MB).
+    const userData = app.getPath('userData')
+    for (const p of [
+      docs,
+      joinPath(userData, 'backups'),
+      joinPath(userData, 'asit.db'),
+      joinPath(userData, 'asit.db-wal'),
+      joinPath(userData, 'asit.db-shm')
+    ]) {
+      rmSync(p, { recursive: true, force: true })
+    }
   }
 
-  installCrashLogging()
   getDb() // open DB + run migrations before any IPC arrives
 
   if (process.env.ASIT_SMOKE === '1') {
@@ -1989,6 +2003,56 @@ async function runSmokeTest(): Promise<void> {
     if (missing.length > 0)
       throw new Error(`these shortcuts would not appear on the cheat sheet: ${missing.join(', ')}`)
     console.log('[smoke] no shortcut is double-booked, and every one is listed on the sheet')
+
+    // Backups. Written after six days of work vanished with a WAL: the main
+    // database file was perfectly intact and six days stale, so nothing
+    // reported an error — the app just came up missing a week.
+    {
+      const { app: electronApp } = await import('electron')
+      const dbmod = await import('./db')
+      const backup = await import('./db/backup')
+      const { readdirSync: rd, writeFileSync: wf2, copyFileSync } = await import('fs')
+      const userData = electronApp.getPath('userData')
+      const live = dbmod.getDb()
+
+      if (!backup.isHealthy(live)) throw new Error('a healthy database reported unhealthy')
+      const snapPath = backup.snapshot(live, userData, 'smoke')
+      if (!snapPath || !existsSync(snapPath)) throw new Error('snapshot was not written')
+      // A snapshot has to be a usable database, not just a file that exists.
+      const Sqlite = (await import('better-sqlite3')).default
+      const snapDb = new Sqlite(snapPath, { readonly: true })
+      const snapTasks = (snapDb.prepare('SELECT COUNT(*) c FROM tasks').get() as { c: number }).c
+      snapDb.close()
+      if (snapTasks < 1) throw new Error('the snapshot contains no tasks')
+      console.log(`[smoke] database snapshot written and readable (${snapTasks} tasks)`)
+
+      // Now corrupt a COPY and prove the open path detects it and restores.
+      const scratch = join(tmpdir(), 'asit-db-rescue-smoke')
+      ;(await import('fs')).rmSync(scratch, { recursive: true, force: true })
+      ;(await import('fs')).mkdirSync(join(scratch, 'backups'), { recursive: true })
+      const brokenPath = join(scratch, 'asit.db')
+      copyFileSync(snapPath, join(scratch, 'backups', 'asit-2020-01-01T00-00-00-000Z-daily.db'))
+      wf2(brokenPath, 'this is definitely not a sqlite database')
+
+      let broken: InstanceType<typeof Sqlite> | null = null
+      try {
+        broken = new Sqlite(brokenPath)
+        if (backup.isHealthy(broken)) throw new Error('a corrupt database passed the health check')
+        broken.close()
+      } catch {
+        broken = null // could not even open it — also a failure we must handle
+      }
+      const usedBackup = backup.restoreFromSnapshot(brokenPath, scratch)
+      if (!usedBackup) throw new Error('no backup was used to restore a corrupt database')
+      const healed = new Sqlite(brokenPath, { readonly: true })
+      const healedTasks = (healed.prepare('SELECT COUNT(*) c FROM tasks').get() as { c: number }).c
+      healed.close()
+      if (healedTasks !== snapTasks)
+        throw new Error(`restore lost data: ${healedTasks} tasks, expected ${snapTasks}`)
+      if (!rd(scratch).some((f) => f.startsWith('asit.db.unreadable-')))
+        throw new Error('the corrupt database was deleted instead of kept aside')
+      console.log('[smoke] a corrupt database is detected, kept aside, and restored from backup')
+    }
 
     const listed = tasks.listTasks()
     if (!listed.some((t) => t.id === task.id)) throw new Error('task not listed')

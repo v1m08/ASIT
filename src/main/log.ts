@@ -18,7 +18,7 @@ const MAX_BYTES = 512 * 1024
 function logPath(): string {
   const dir = app.getPath('userData')
   mkdirSync(dir, { recursive: true })
-  return join(dir, 'asit-errors.log')
+  return join(dir, 'error.log')
 }
 
 /** Keep one previous file so a crash loop can't erase the first failure. */
@@ -47,17 +47,6 @@ export function logError(where: string, err: unknown): void {
   }
 }
 
-/**
- * Anything that escapes to the top. Without this an unhandled rejection in
- * main is completely silent, and the symptom shows up somewhere unrelated —
- * a boot-time throw before IPC registration, for instance, leaves every
- * channel unhandled and the UI just says a remote method failed.
- */
-export function installCrashLogging(): void {
-  process.on('uncaughtException', (err) => logError('uncaughtException', err))
-  process.on('unhandledRejection', (reason) => logError('unhandledRejection', reason))
-}
-
 export function errorLogPath(): string {
-  return join(app.getPath('userData'), 'asit-errors.log')
+  return join(app.getPath('userData'), 'error.log')
 }

@@ -227,6 +227,9 @@ const migrations: string[] = [
   `
 ]
 
+/** Target schema version — used to decide whether a migration is pending. */
+export const MIGRATION_COUNT = migrations.length
+
 export function migrate(db: Database): void {
   const current = db.pragma('user_version', { simple: true }) as number
   for (let v = current; v < migrations.length; v++) {
