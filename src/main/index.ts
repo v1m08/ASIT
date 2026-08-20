@@ -4,6 +4,7 @@ import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
+import { installCrashLogging, logError } from './log'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
 import { initScheduler, stopScheduler } from './services/scheduler'
@@ -138,6 +139,7 @@ app.whenReady().then(() => {
     app.setPath('documents', joinPath(tmpdir(), 'asit-smoke-docs'))
   }
 
+  installCrashLogging()
   getDb() // open DB + run migrations before any IPC arrives
 
   if (process.env.ASIT_SMOKE === '1') {
@@ -195,15 +197,27 @@ app.whenReady().then(() => {
   void loadExtensions()
   initScheduler() // time-based agent runs
 
-  registerIpc(() => mainWindow)
-  timer.init(() => mainWindow)
-  initQuestions(() => mainWindow)
-  initActions(() => mainWindow)
-  initUsage(() => mainWindow)
-  initActivity(() => mainWindow)
-  initWatchers(() => mainWindow)
-  initTodos(() => mainWindow)
-  initVoice(() => mainWindow)
+  // Each init is isolated. These used to run as one straight sequence, so a
+  // throw in any of them skipped every later one — and if it landed before
+  // registerIpc, the app came up with NO ipc handlers at all and the only
+  // symptom was the UI reporting that some remote method failed.
+  for (const [name, init] of [
+    ['ipc', () => registerIpc(() => mainWindow)],
+    ['timer', () => timer.init(() => mainWindow)],
+    ['questions', () => initQuestions(() => mainWindow)],
+    ['actions', () => initActions(() => mainWindow)],
+    ['usage', () => initUsage(() => mainWindow)],
+    ['activity', () => initActivity(() => mainWindow)],
+    ['watchers', () => initWatchers(() => mainWindow)],
+    ['todos', () => initTodos(() => mainWindow)],
+    ['voice', () => initVoice(() => mainWindow)]
+  ] as const) {
+    try {
+      init()
+    } catch (err) {
+      logError(`init:${name}`, err)
+    }
+  }
   // Jarvis's action file is watched for the app's whole lifetime — the
   // universal agent can act regardless of which screen is open.
   try {

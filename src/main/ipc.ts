@@ -1,4 +1,5 @@
 import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from 'electron'
+import { logError } from './log'
 import { IPC } from '@shared/ipc-contract'
 import type { CreateTaskInput, Settings, UpdateTaskInput } from '@shared/types'
 import * as tasks from './services/tasks'
@@ -63,7 +64,7 @@ function handle(channel: string, fn: Parameters<typeof ipcMain.handle>[1]): void
     try {
       return await fn(event, ...args)
     } catch (err) {
-      console.error(`[ipc] ${channel} threw:`, err)
+      logError(`ipc ${channel}`, err)
       throw err
     }
   })
