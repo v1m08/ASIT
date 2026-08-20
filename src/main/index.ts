@@ -1354,6 +1354,38 @@ async function runUiSmokeTest(): Promise<void> {
     }
     console.log(`[ui-smoke] no pane overlaps any of the ${chrome.length} app controls on screen`)
 
+    // Call the bridge the way the screens do. A registered handler can still
+    // throw on real data, and the renderer only ever sees "Error invoking
+    // remote method 'x'" with the cause buried — so exercise the read-only
+    // ones for real and report which failed and why.
+    const bridge = await evalIn<{ name: string; error: string }[]>(`(async () => {
+      const calls = {
+        'usage.summary': () => window.asit.usage.summary(),
+        'usage.activity': () => window.asit.usage.activity(),
+        'tasks.list': () => window.asit.tasks.list(),
+        'tasks.stats': () => window.asit.tasks.stats(),
+        'settings.get': () => window.asit.settings.get(),
+        'todos.list': () => window.asit.todos.list(),
+        'questions.due': () => window.asit.questions.due(),
+        'history.recent': () => window.asit.history.recent(5),
+        'library.list': () => window.asit.library.list(),
+        'activity.list': () => window.asit.activity.list(),
+        'skills.list': () => window.asit.skills.list(),
+        'vault.list': () => window.asit.vault.list(),
+        'panes.downloads': () => window.asit.panes.downloads(),
+        'session.state': () => window.asit.session.state(),
+        'chat.running': () => window.asit.chat.running()
+      }
+      const bad = []
+      for (const [name, fn] of Object.entries(calls)) {
+        try { await fn() } catch (e) { bad.push({ name, error: String(e && e.message || e) }) }
+      }
+      return bad
+    })()`)
+    if (bridge.length > 0)
+      fail(`these bridge calls failed:\n  ${bridge.map((b) => `${b.name}: ${b.error}`).join('\n  ')}`)
+    console.log('[ui-smoke] every read-only bridge call the screens make succeeds')
+
     tasks.deleteTask(task.id)
     console.log('[ui-smoke] ALL PASS')
     app.exit(0)
@@ -1915,6 +1947,29 @@ async function runSmokeTest(): Promise<void> {
     const clashes = conflictingAccelerators()
     if (clashes.length > 0)
       throw new Error(`two actions share these accelerators: ${clashes.join(', ')}`)
+    // Every channel the preload can call must actually have a handler.
+    // Registration is imperative code: a handler can be skipped, mistyped, or
+    // stranded after an early return, and today the only way to find out is a
+    // user clicking the thing and getting "Error invoking remote method 'x'".
+    {
+      const { registerIpc, registeredIpcChannels } = await import('./ipc')
+      registerIpc(() => null)
+      const { readFileSync: readSrc } = await import('fs')
+      const { IPC } = await import('@shared/ipc-contract')
+      const preloadSrc = readSrc(join(process.cwd(), 'src', 'preload', 'index.ts'), 'utf-8')
+      const wanted = new Set<string>()
+      for (const m of preloadSrc.matchAll(/ipcRenderer\.invoke\(\s*IPC\.([A-Z_]+)/g)) {
+        const channel = (IPC as unknown as Record<string, string>)[m[1]]
+        if (channel) wanted.add(channel)
+      }
+      if (wanted.size < 50) throw new Error(`only found ${wanted.size} preload calls — the scan broke`)
+      const have = new Set(registeredIpcChannels())
+      const missing = [...wanted].filter((c) => !have.has(c))
+      if (missing.length > 0)
+        throw new Error(`the preload calls these, but nothing handles them: ${missing.join(', ')}`)
+      console.log(`[smoke] all ${wanted.size} IPC channels the preload calls have handlers`)
+    }
+
     const { ungroupedShortcuts } = await import('@shared/shortcuts')
     const missing = ungroupedShortcuts()
     if (missing.length > 0)
