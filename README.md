@@ -145,7 +145,7 @@ list something that doesn't work or miss something that does.
 Everything is on your machine, in two places **outside this repo**, shared by dev and installed builds:
 
 - **`Documents\ASIT\`** — `tasks\` (one folder per workspace = the AI's context), `private\` (no-AI workspaces), `library\`, `skills\`, `.trash\`.
-- **`%APPDATA%\asit`** — the SQLite database (workspaces, questions, chats, browsing history), your browser-profile logins, and the encrypted password vault.
+- **`%APPDATA%\asit`** — the SQLite database (workspaces, questions, chats, browsing history), your browser-profile logins, and the encrypted password vault. If something misbehaves, **`asit-errors.log`** in that folder has the real error and stack, rather than the one-line version the UI shows.
 
 Uninstalling or reinstalling never erases this. The AI only ever sees a workspace's own folder (and, for Jarvis, all non-private workspaces) — private workspaces sit physically outside every AI path, and nothing is ever sent to a server.
 
