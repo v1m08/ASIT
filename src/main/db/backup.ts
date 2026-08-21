@@ -1,5 +1,5 @@
-import type { Database } from 'better-sqlite3'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'fs'
+import Sqlite, { type Database as DatabaseType, type Database } from 'better-sqlite3'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs'
 import { join } from 'path'
 import { logError } from '../log'
 
@@ -55,6 +55,23 @@ export function snapshot(db: Database, userDataDir: string, tag: string): string
     db.prepare(`VACUUM INTO ?`).run(dest)
   } catch (err) {
     logError('db backup', err)
+    // VACUUM INTO leaves the destination behind when it fails partway. An
+    // empty file here is worse than no file: it looks like a backup, sorts as
+    // the newest one, and restoring it would wipe everything.
+    try {
+      rmSync(dest, { force: true })
+    } catch {
+      // nothing more we can do
+    }
+    return null
+  }
+  if (!usable(dest)) {
+    logError('db backup', new Error(`snapshot ${dest} came out unusable — discarding`))
+    try {
+      rmSync(dest, { force: true })
+    } catch {
+      // nothing more we can do
+    }
     return null
   }
   for (const old of snapshots(dir).slice(KEEP)) {
@@ -98,6 +115,29 @@ export function startCheckpointing(db: Database): NodeJS.Timeout {
   return timer
 }
 
+/**
+ * Is this file a database with the user's data in it? Structural validity is
+ * not enough — an empty file is structurally perfect.
+ */
+export function usable(file: string): boolean {
+  let db: DatabaseType | null = null
+  try {
+    db = new Sqlite(file, { readonly: true, fileMustExist: true })
+    const rows = db.pragma('quick_check') as { quick_check: string }[]
+    if (rows.length !== 1 || rows[0].quick_check !== 'ok') return false
+    const t = db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='table' AND name='tasks'").get() as { c: number }
+    return t.c === 1
+  } catch {
+    return false
+  } finally {
+    try {
+      db?.close()
+    } catch {
+      // already gone
+    }
+  }
+}
+
 /** `quick_check` — same detection as integrity_check, without reading it all. */
 export function isHealthy(db: Database): boolean {
   try {
@@ -117,6 +157,14 @@ export function restoreFromSnapshot(dbPath: string, userDataDir: string): string
   const dir = backupDir(userDataDir)
   for (const name of snapshots(dir)) {
     const candidate = join(dir, name)
+    // A file passing quick_check proves only that it is a valid SQLite file —
+    // a ZERO-BYTE database is perfectly valid and completely empty. Restoring
+    // one would look like a successful recovery and destroy everything, so
+    // require that it actually contains the user's data.
+    if (!usable(candidate)) {
+      logError('db restore', new Error(`skipping empty or broken backup ${name}`))
+      continue
+    }
     try {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-')
       if (existsSync(dbPath)) renameSync(dbPath, `${dbPath}.unreadable-${stamp}`)

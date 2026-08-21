@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
+import { existsSync, renameSync } from 'fs'
 import { join } from 'path'
 import { MIGRATION_COUNT, migrate } from './migrations'
 import {
@@ -29,23 +30,53 @@ export function getDb(): Database.Database {
       } catch {
         // already unusable
       }
+      // The commonest cause by far: a -wal/-shm left by a previous run that
+      // belongs to a DIFFERENT database file. SQLite pairs them by checksum,
+      // so a mismatch reads as "database disk image is malformed" even though
+      // both files are individually perfect. They are regenerable, and at this
+      // point unusable anyway, so move them aside and try again BEFORE
+      // reaching for a backup.
+      for (const sidecar of [`${dbPath}-wal`, `${dbPath}-shm`]) {
+        if (!existsSync(sidecar)) continue
+        try {
+          renameSync(sidecar, `${sidecar}.mismatched-${Date.now()}`)
+        } catch (err) {
+          logError('db sidecar', err)
+        }
+      }
+      opened = openAt(dbPath)
+      if (opened && isHealthy(opened)) {
+        logError('db open', new Error('recovered by clearing mismatched WAL/SHM sidecars'))
+        db = opened
+        finishOpen(db, userData)
+        return db
+      }
+      try {
+        opened?.close()
+      } catch {
+        // unusable
+      }
+
       const restored = restoreFromSnapshot(dbPath, userData)
       opened = openAt(dbPath)
       if (restored) logError('db restore', new Error(`restored from backup ${restored}`))
       if (!opened) throw new Error('could not open the database, and no usable backup exists')
     }
     db = opened
-
-    // Snapshot BEFORE migrating: a migration is the one moment the schema is
-    // rewritten, and the copy has to predate it to be worth anything.
-    const from = db.pragma('user_version', { simple: true }) as number
-    if (from < MIGRATION_COUNT) snapshot(db, userData, `pre-v${from}`)
-    migrate(db)
-
-    snapshotIfDue(db, userData)
-    startCheckpointing(db)
+    finishOpen(db, userData)
   }
   return db
+}
+
+/** Snapshot, migrate, and start the keep-it-recoverable machinery. */
+function finishOpen(d: Database.Database, userData: string): void {
+  // Snapshot BEFORE migrating: a migration is the one moment the schema is
+  // rewritten, and the copy has to predate it to be worth anything.
+  const from = d.pragma('user_version', { simple: true }) as number
+  if (from < MIGRATION_COUNT) snapshot(d, userData, `pre-v${from}`)
+  migrate(d)
+  snapshotIfDue(d, userData)
+  startCheckpointing(d)
 }
 
 /** Open + pragmas, or null if the file cannot be opened at all. */

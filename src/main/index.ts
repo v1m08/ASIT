@@ -2042,7 +2042,14 @@ async function runSmokeTest(): Promise<void> {
       } catch {
         broken = null // could not even open it — also a failure we must handle
       }
+      // An EMPTY database passes quick_check — it is a structurally perfect
+      // file with nothing in it. Restoring one looks like a successful
+      // recovery and destroys everything, so plant one NEWER than the good
+      // backup and prove it is skipped rather than used.
+      wf2(join(scratch, 'backups', 'asit-2099-01-01T00-00-00-000Z-daily.db'), '')
       const usedBackup = backup.restoreFromSnapshot(brokenPath, scratch)
+      if (usedBackup && usedBackup.startsWith('asit-2099'))
+        throw new Error('restored from an EMPTY backup — that would wipe the user')
       if (!usedBackup) throw new Error('no backup was used to restore a corrupt database')
       const healed = new Sqlite(brokenPath, { readonly: true })
       const healedTasks = (healed.prepare('SELECT COUNT(*) c FROM tasks').get() as { c: number }).c
