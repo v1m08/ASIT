@@ -16,6 +16,7 @@ import * as transfer from './services/transfer'
 import * as assistant from './services/assistant'
 import * as library from './services/library'
 import * as history from './services/history'
+import * as updater from './services/updater'
 import * as skills from './services/skills'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
@@ -225,6 +226,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         menu.popup({ window: win, callback: () => resolve(picked) })
       })
   )
+
+  // --- updates ---
+  handle(IPC.UPDATE_STATUS, () => updater.updateStatus())
+  handle(IPC.UPDATE_CHECK, () => updater.checkForUpdates())
+  handle(IPC.UPDATE_INSTALL, () => updater.installUpdate())
 
   // --- browsing history (user-facing only; no agent verb reaches this) ---
   handle(IPC.HISTORY_SEARCH, (_e, q: string, limit?: number) =>

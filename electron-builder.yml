@@ -28,6 +28,10 @@ asarUnpack:
 win:
   target:
     - nsis
+  # Generated from the app's own logo mark by `npm run icon`. Without this
+  # electron-builder shipped the default Electron icon, so the installer, the
+  # taskbar and Alt-Tab all showed someone else's logo.
+  icon: build/icon.ico
   # Skips the winCodeSign toolchain, whose extraction needs symlink privileges
   # (fails without Windows Developer Mode). We don't sign the exe anyway.
   signAndEditExecutable: false
@@ -36,3 +40,13 @@ nsis:
   perMachine: false
   deleteAppDataOnUninstall: false
   shortcutName: ASIT
+  createDesktopShortcut: true
+  # One double-click, no wizard, and it opens when it's done.
+  runAfterFinish: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+# Where the app looks for updates, and where `npm run release` publishes them.
+publish:
+  provider: github
+  owner: v1m08
+  repo: ASIT

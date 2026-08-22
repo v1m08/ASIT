@@ -4,6 +4,7 @@ import type { DownloadItem } from '@shared/types'
 import { useStore } from '../store/useStore'
 import SavePasswordPrompt from './SavePasswordPrompt'
 import Dictation from './Dictation'
+import UpdatePill from './UpdatePill'
 
 // Everything that used to float along the bottom edge — running work, job
 // progress, toasts, the quick-assistant launcher — compressed into the header
@@ -105,6 +106,7 @@ export default function StatusCluster(): JSX.Element {
           })}
         </div>
       )}
+      <UpdatePill />
       <Dictation />
       {/* The only way to learn a keyboard is to be told it exists. One quiet
           button, always in the same place. */}

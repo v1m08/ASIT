@@ -4,10 +4,24 @@
 
 ---
 
-## Get started in 3 minutes
+## Install
 
-1. **Install & sign in to the AI.** ASIT uses the [Claude Code CLI](https://claude.com/claude-code) (`claude` → `/login`, once). Everything works without it except the AI features.
-2. **Open ASIT** (desktop icon / Start menu). You land on the **scratchpad** — a browser with your workspace sidebar.
+**[⬇ Download ASIT for Windows](https://github.com/v1m08/ASIT/releases/latest)** — grab
+`ASIT-Setup-*.exe`, double-click, done. No wizard, no options, and it opens
+itself when it finishes.
+
+Windows will show a blue *"Windows protected your PC"* box, because the app
+isn't code-signed (a certificate costs a few hundred dollars a year). Click
+**More info → Run anyway**. You only see it once.
+
+**It updates itself from then on.** New versions download quietly in the
+background; a small *Update ready — restart* button appears in the header when
+one is waiting. Nothing is ever installed underneath you mid-task.
+
+## Then, in 3 minutes
+
+1. **Sign in to the AI.** ASIT uses the [Claude Code CLI](https://claude.com/claude-code) (`claude` → `/login`, once). Everything works without it except the AI features.
+2. **Open ASIT.** You land on the **scratchpad** — a browser with your workspace sidebar.
 3. **Make your first workspace.** Browse to a course page or open a PDF, then hit **💾 Save session** — or click **+ New workspace** in the sidebar. That folder is now the AI's context; you never paste or explain anything.
 4. **Try the AI.** Open a PDF in the workspace, press **`Ctrl+K`**, and ask a question about it. Or press **`Ctrl+Space`** and just *talk* to it.
 
@@ -177,10 +191,23 @@ Alt+Tab briefly escapes before the window re-grabs focus (~1s). Ctrl+Alt+Del, Ta
 npm install
 npm run dev        # HMR dev
 npm run typecheck  # both tsconfigs
-npm run dist       # Windows installer → dist/
+npm run icon       # regenerate build/icon.ico from the app's own logo mark
+npm run dist       # Windows installer → dist/  (nothing published)
 ```
 
 **Requirements:** Windows, Node 22+.
+
+**Shipping a version.** Tag it and push — CI builds the installer, attaches it
+to a GitHub Release, and that release *is* the update feed every installed copy
+polls, so releasing and delivering are one action:
+
+```bash
+npm version patch && git push --follow-tags
+```
+
+`npm run release` does the same thing from your own machine if you'd rather
+(needs `GH_TOKEN`). The icon is generated rather than committed, so it can
+never drift from the mark the app actually draws.
 
 **Architecture** lives in [`CLAUDE.md`](CLAUDE.md) — the load-bearing invariants (task-folder-as-context, WebContentsView z-order, pane ownership, private-task isolation, agent containment) are documented there.
 

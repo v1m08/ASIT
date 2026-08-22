@@ -60,6 +60,16 @@ export interface ChatSession {
   lastMessageAt: string | null
 }
 
+/** Background update state, surfaced in the header. */
+export interface UpdateStatus {
+  supported: boolean
+  checking: boolean
+  available: string | null
+  downloaded: string | null
+  error: string | null
+  lastCheckedAt: number | null
+}
+
 /** A page the user visited in an embedded pane. Private workspaces excluded. */
 export interface HistoryEntry {
   id: string

@@ -5,6 +5,7 @@ import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
 import { logError } from './log'
+import { initUpdater } from './services/updater'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
 import { initScheduler, stopScheduler } from './services/scheduler'
@@ -224,7 +225,8 @@ app.whenReady().then(() => {
     ['activity', () => initActivity(() => mainWindow)],
     ['watchers', () => initWatchers(() => mainWindow)],
     ['todos', () => initTodos(() => mainWindow)],
-    ['voice', () => initVoice(() => mainWindow)]
+    ['voice', () => initVoice(() => mainWindow)],
+    ['updater', () => initUpdater(() => mainWindow)]
   ] as const) {
     try {
       init()

@@ -171,6 +171,11 @@ const api = {
     save: () => ipcRenderer.invoke(IPC.VAULT_SAVE_PENDING),
     discard: () => ipcRenderer.invoke(IPC.VAULT_DISCARD_PENDING)
   },
+  updates: {
+    status: () => ipcRenderer.invoke(IPC.UPDATE_STATUS),
+    check: () => ipcRenderer.invoke(IPC.UPDATE_CHECK),
+    install: () => ipcRenderer.invoke(IPC.UPDATE_INSTALL)
+  },
   ui: {
     contextMenu: (
       items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]

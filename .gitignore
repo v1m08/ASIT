@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+# Generated from the app's own logo by `npm run icon` — not committed, so it
+# can never drift from the mark the app actually draws.
+build/
 *.log
 *.tsbuildinfo
 .DS_Store

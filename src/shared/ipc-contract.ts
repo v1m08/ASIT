@@ -38,6 +38,9 @@ export const IPC = {
   PANES_TYPE_ACTIVE: 'panes:type-active',
   PANES_FOCUS: 'panes:focus', // focus ring landed on a page zone
   PANES_DOM_FOCUS: 'panes:dom-focus', // renderer gained/lost the keyboard
+  UPDATE_STATUS: 'update:status',       // push M→R and a getter
+  UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
   UI_CONTEXT_MENU: 'ui:context-menu',
   VAULT_SAVE_PENDING: 'vault:save-pending',   // commit the offered login
   VAULT_DISCARD_PENDING: 'vault:discard-pending',

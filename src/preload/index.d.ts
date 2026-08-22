@@ -3,6 +3,7 @@ import type {
   ChatSession,
   CreateTaskInput,
   HistoryEntry,
+  UpdateStatus,
   Question,
   Resource,
   Settings,
@@ -156,6 +157,11 @@ declare global {
       vaultPrompt: {
         save: () => Promise<unknown>
         discard: () => Promise<void>
+      }
+      updates: {
+        status: () => Promise<UpdateStatus>
+        check: () => Promise<UpdateStatus>
+        install: () => Promise<void>
       }
       ui: {
         contextMenu: (
