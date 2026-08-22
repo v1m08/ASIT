@@ -264,6 +264,20 @@ app.whenReady().then(() => {
   })
 })
 
+// The database must be folded away on EVERY exit path, not just the one where
+// the user closes the last window. An update installing itself, a Windows
+// shutdown, or anything calling app.quit() directly all skip the handler
+// below — and each of those leaves a hot WAL that the next launch has to
+// recover from. closeDb() checkpoints and closes; it is idempotent, so
+// running here and again below is harmless.
+app.on('before-quit', () => {
+  try {
+    closeDb()
+  } catch (err) {
+    logError('shutdown closeDb', err)
+  }
+})
+
 app.on('window-all-closed', async () => {
   // Reap CLI children first — otherwise a running generation job would keep
   // spending tokens after the app closes (Windows children outlive parents).
