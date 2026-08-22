@@ -50,3 +50,7 @@ publish:
   provider: github
   owner: v1m08
   repo: ASIT
+  # electron-builder defaults to a DRAFT release. A draft is invisible to the
+  # download link, to anyone browsing Releases, and to electron-updater — so
+  # the build would succeed and nothing would actually ship.
+  releaseType: release
