@@ -38,11 +38,20 @@ export default function ScratchBrowser({
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [navStates, setNavStates] = useState<Record<string, PaneNavState>>({})
+  // Find-in-page: Ctrl+F was simply dead on the Home browser.
+  const [findOpen, setFindOpen] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [findResult, setFindResult] = useState<{ activeMatch: number; matches: number } | null>(
+    null
+  )
+  const findInputRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const tabsRef = useRef<BrowserTab[]>([])
   tabsRef.current = tabs
   const activeRef = useRef<string | null>(null)
   activeRef.current = activeId
+  // Which tab was last auto-scrolled into view (see the tab ref callback).
+  const scrolledToRef = useRef<string | null>(null)
 
   const newTabId = (): string => `scratch-tab-${Date.now()}-${++tabCounter}`
 
@@ -162,6 +171,14 @@ export default function ScratchBrowser({
     onApi?.({ openTab, currentTabs: () => tabsRef.current })
   }, [onApi, openTab])
 
+  // Register as the app-wide URL opener while Home is on screen, so history
+  // and command-palette clicks open a tab here instead of doing nothing.
+  const setUrlOpener = useStore((st) => st.setUrlOpener)
+  useEffect(() => {
+    setUrlOpener((url) => openTab(url))
+    return () => setUrlOpener(null)
+  }, [setUrlOpener, openTab])
+
   // Home's tabs had NO shortcut access at all — every browser key was wired
   // to the workspace grid. Register as the tab surface while home is on
   // screen so Ctrl+T/W/Tab/R/zoom mean the same thing here.
@@ -188,11 +205,56 @@ export default function ScratchBrowser({
       forward: () => activeRef.current && window.asit.panes.navigate(activeRef.current, { nav: 'forward' }),
       zoom: (delta) => {
         if (activeRef.current) void window.asit.panes.zoom(activeRef.current, delta)
+      },
+      find: () => {
+        setFindOpen(true)
+        setTimeout(() => findInputRef.current?.select(), 40)
+      },
+      copyAddress: () => {
+        const tab = tabsRef.current.find((t) => t.id === activeRef.current)
+        if (tab) void navigator.clipboard.writeText(tab.url)
       }
     })
     return () => setTabSurface(null)
     // openTab/closeTab are stable enough for the lifetime of this screen.
   }, [setTabSurface, openTab])
+
+  // Ctrl+F pressed while an embedded page held focus (main replays it as an
+  // app event), or "Find in page…" from the page's context menu.
+  useEffect(() => {
+    return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      const e = args[0] as { type: string; paneId?: string }
+      if (e.type !== 'find-in-page') return
+      if (e.paneId && !e.paneId.startsWith('scratch-tab-')) return
+      setFindOpen(true)
+      setTimeout(() => findInputRef.current?.select(), 40)
+    })
+  }, [])
+
+  // Find results stream from main as the user types.
+  useEffect(() => {
+    return window.asit.on(IPC.PANES_FIND_RESULT, (...args: unknown[]) => {
+      const r = args[0] as { paneId: string; activeMatch: number; matches: number }
+      if (r.paneId !== activeRef.current) return
+      setFindResult({ activeMatch: r.activeMatch, matches: r.matches })
+    })
+  }, [])
+
+  const runFind = useCallback((text: string, findNext: boolean, forward = true): void => {
+    const id = activeRef.current
+    if (!id) return
+    setFindText(text)
+    if (!text) setFindResult(null)
+    void window.asit.panes.find(id, text, forward, findNext)
+  }, [])
+
+  const closeFind = useCallback((): void => {
+    const id = activeRef.current
+    if (id) void window.asit.panes.findStop(id)
+    setFindOpen(false)
+    setFindText('')
+    setFindResult(null)
+  }, [])
 
   function cycle(dir: 1 | -1): void {
     const list = tabsRef.current
@@ -200,6 +262,49 @@ export default function ScratchBrowser({
     const at = list.findIndex((t) => t.id === activeRef.current)
     const next = list[(at + dir + list.length) % list.length]
     setActiveId(next.id)
+  }
+
+  // Native menu, not an HTML dropdown — the page would paint over a DOM one
+  // (invariant 2). Same options as the workspace tab menu where they apply.
+  async function tabMenu(tab: BrowserTab): Promise<void> {
+    const ids = tabsRef.current.map((t) => t.id)
+    const at = ids.indexOf(tab.id)
+    const picked = await window.asit.ui.contextMenu([
+      { id: 'reload', label: 'Reload' },
+      { id: 'duplicate', label: 'Duplicate tab' },
+      { separator: true },
+      { id: 'copy', label: 'Copy address' },
+      { id: 'external', label: 'Open in your default browser' },
+      { separator: true },
+      { id: 'close', label: 'Close tab' },
+      { id: 'others', label: 'Close other tabs', enabled: ids.length > 1 },
+      { id: 'right', label: 'Close tabs to the right', enabled: at < ids.length - 1 }
+    ])
+    if (!picked) return
+    if (picked === 'reload') window.asit.panes.navigate(tab.id, { nav: 'reload' })
+    else if (picked === 'duplicate') openTab(tab.url)
+    else if (picked === 'copy') void navigator.clipboard.writeText(tab.url)
+    else if (picked === 'external') void window.asit.resources.openExternal({ url: tab.url })
+    else if (picked === 'close') closeTab(tab.id)
+    else if (picked === 'others') closeMany(ids.filter((id) => id !== tab.id))
+    else if (picked === 'right') closeMany(ids.slice(at + 1))
+  }
+
+  // Batch close in ONE state update. Looping closeTab left activeId pointing
+  // at a tab a later iteration had closed (activeRef is stale inside a
+  // synchronous loop), which blanked the whole browser.
+  function closeMany(ids: string[]): void {
+    if (ids.length === 0) return
+    const doomed = new Set(ids)
+    for (const id of ids) window.asit.panes.close(id)
+    setTabs((prev) => {
+      const next = prev.filter((t) => !doomed.has(t.id))
+      if (activeRef.current && doomed.has(activeRef.current)) {
+        setActiveId(next[next.length - 1]?.id ?? null)
+      }
+      if (next.length === 0) localStorage.removeItem(STORE_KEY)
+      return next
+    })
   }
 
   function closeTab(id: string): void {
@@ -237,11 +342,44 @@ export default function ScratchBrowser({
           <div
             key={tab.id}
             className={`browser-tab ${tab.id === activeId ? 'browser-tab-active' : ''}`}
+            // Once per activation — inline refs re-run on every render, and
+            // nav-state pushes would yank the strip mid-scroll otherwise.
+            ref={(el) => {
+              if (el && tab.id === activeId && scrolledToRef.current !== tab.id) {
+                scrolledToRef.current = tab.id
+                el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+              }
+            }}
             onClick={() => {
               setActiveId(tab.id)
             }}
+            // Middle-click closes, same as the workspace strip.
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault()
+                closeTab(tab.id)
+              }
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              void tabMenu(tab)
+            }}
             title={tab.url}
           >
+            <span className="tab-icon">
+              {navStates[tab.id]?.loading ? (
+                <span className="tab-spinner" />
+              ) : navStates[tab.id]?.favicon ? (
+                <img
+                  className="tab-favicon"
+                  src={navStates[tab.id]!.favicon!}
+                  alt=""
+                  onError={(e) => (e.currentTarget.style.display = 'none')}
+                />
+              ) : (
+                '◍'
+              )}
+            </span>
             <span className="browser-tab-title">{tab.title || hostOf(tab.url)}</span>
             <button
               className="tab-btn"
@@ -276,9 +414,13 @@ export default function ScratchBrowser({
         </button>
         <button
           className="nav-btn"
-          onClick={() => active && window.asit.panes.navigate(active.id, { nav: 'reload' })}
+          title={nav?.loading ? 'Stop loading' : 'Reload'}
+          onClick={() =>
+            active &&
+            window.asit.panes.navigate(active.id, { nav: nav?.loading ? 'stop' : 'reload' })
+          }
         >
-          ⟳
+          {nav?.loading ? '✕' : '⟳'}
         </button>
         <AddressBar url={active?.url ?? ''} onNavigate={navigate} />
         <button
@@ -290,6 +432,49 @@ export default function ScratchBrowser({
           ⌾
         </button>
       </div>
+
+      {findOpen && (
+        <div className="find-bar">
+          <input
+            ref={findInputRef}
+            autoFocus
+            placeholder="Find in page…"
+            value={findText}
+            onChange={(e) => runFind(e.target.value, false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                closeFind()
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                runFind(findText, true, !e.shiftKey)
+              }
+            }}
+          />
+          <span className="find-count">
+            {findText
+              ? findResult && findResult.matches > 0
+                ? `${findResult.activeMatch}/${findResult.matches}`
+                : findResult
+                  ? 'no matches'
+                  : '…'
+              : ''}
+          </span>
+          <button
+            className="nav-btn"
+            title="Previous (Shift+Enter)"
+            onClick={() => runFind(findText, true, false)}
+          >
+            ↑
+          </button>
+          <button className="nav-btn" title="Next (Enter)" onClick={() => runFind(findText, true, true)}>
+            ↓
+          </button>
+          <button className="nav-btn" title="Close (Esc)" onClick={closeFind}>
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="browser-content" ref={contentRef} />
     </div>

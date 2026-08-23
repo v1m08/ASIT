@@ -58,7 +58,7 @@ declare global {
         setVisible: (paneId: string | null, visible: boolean) => Promise<void>
         navigate: (
           paneId: string,
-          action: { url?: string; nav?: 'back' | 'forward' | 'reload' }
+          action: { url?: string; nav?: 'back' | 'forward' | 'reload' | 'stop' }
         ) => Promise<void>
         close: (paneId: string) => Promise<void>
         closeAll: () => Promise<void>
@@ -322,6 +322,10 @@ declare global {
       settings: {
         get: () => Promise<Settings>
         set: (patch: Partial<Settings>) => Promise<Settings>
+        /** Where the Claude CLI was found, or null if it wasn't. */
+        cliStatus: () => Promise<{ path: string | null }>
+        /** File picker → saves the chosen path to settings. picked=false on cancel. */
+        locateCli: () => Promise<{ path: string | null; picked: boolean }>
       }
       on: (channel: string, listener: (...args: unknown[]) => void) => () => void
     }

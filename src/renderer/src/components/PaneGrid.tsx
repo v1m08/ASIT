@@ -7,7 +7,7 @@ import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import AddressBar from './AddressBar'
+import AddressBar, { hostOf } from './AddressBar'
 import { useOverlay } from '../hooks/useOverlay'
 
 export const BUILTIN_NOTES = 'builtin-notes'
@@ -16,12 +16,21 @@ export const BUILTIN_REVIEW = 'builtin-review'
 export const BUILTIN_TERMINAL = 'builtin-terminal'
 export const BUILTIN_APP = 'builtin-app'
 
+// Ad-hoc browser tabs. The workspace used to have exactly ONE web surface
+// (the search pane): Ctrl+T and "open link in new tab" both navigated it,
+// clobbering whatever page was showing. Web tabs are real tabs — as many as
+// you like, URLs persisted in the layout so they survive a restart.
+const WEBTAB_PREFIX = 'webtab-'
+let webTabCounter = 0
+const newWebTabId = (): string => `${WEBTAB_PREFIX}${Date.now().toString(36)}-${++webTabCounter}`
+
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   slots: [[], []],
   active: [null, null],
   split: 0.55,
   collapsed: [false, false],
-  direction: 'row'
+  direction: 'row',
+  webTabs: {}
 }
 
 interface TabInfo {
@@ -45,12 +54,19 @@ function clampSplit(v: number): number {
   return Math.min(0.8, Math.max(0.2, v))
 }
 
-export function tabInfoFor(id: string, task: Task, resources: Resource[]): TabInfo | null {
+export function tabInfoFor(
+  id: string,
+  task: Task,
+  resources: Resource[],
+  webTabs?: Record<string, string>
+): TabInfo | null {
   if (id === BUILTIN_NOTES) {
     return { id, title: 'Notes', kind: 'builtin-note', viewBacked: false, resource: null }
   }
-  if (id === BUILTIN_SEARCH) {
-    return { id, title: 'Search', kind: 'url', viewBacked: true, resource: null }
+  if (id.startsWith(WEBTAB_PREFIX)) {
+    const url = webTabs?.[id]
+    if (!url) return null
+    return { id, title: hostOf(url), kind: 'url', viewBacked: true, resource: null }
   }
   if (id === BUILTIN_REVIEW) {
     return { id, title: 'Review', kind: 'builtin-review', viewBacked: false, resource: null }
@@ -106,12 +122,32 @@ export default function PaneGrid({
     if (task.layoutJson) {
       try {
         const parsed = JSON.parse(task.layoutJson) as WorkspaceLayout
+        // Migrate the retired single search pane: layouts saved before web
+        // tabs existed may still hold a `builtin-search` id. It becomes an
+        // ordinary web tab, and the special case disappears from the rest of
+        // the component.
+        const webTabs: Record<string, string> = { ...(parsed.webTabs ?? {}) }
+        const migrate = (id: string): string => {
+          if (id !== BUILTIN_SEARCH) return id
+          const fresh = newWebTabId()
+          webTabs[fresh] = 'https://www.google.com'
+          return fresh
+        }
+        const slots: [string[], string[]] = [
+          (parsed.slots?.[0] ?? []).map(migrate),
+          (parsed.slots?.[1] ?? []).map(migrate)
+        ]
+        const active: [string | null, string | null] = [
+          parsed.active?.[0] === BUILTIN_SEARCH ? null : (parsed.active?.[0] ?? null),
+          parsed.active?.[1] === BUILTIN_SEARCH ? null : (parsed.active?.[1] ?? null)
+        ]
         return {
-          slots: [parsed.slots?.[0] ?? [], parsed.slots?.[1] ?? []],
-          active: [parsed.active?.[0] ?? null, parsed.active?.[1] ?? null],
+          slots,
+          active,
           split: clampSplit(parsed.split ?? 0.55),
           collapsed: [parsed.collapsed?.[0] ?? false, parsed.collapsed?.[1] ?? false],
-          direction: parsed.direction === 'column' ? 'column' : 'row'
+          direction: parsed.direction === 'column' ? 'column' : 'row',
+          webTabs
         }
       } catch {
         return DEFAULT_LAYOUT
@@ -130,8 +166,11 @@ export default function PaneGrid({
   const [findResult, setFindResult] = useState<{ activeMatch: number; matches: number } | null>(null)
   const findInputRef = useRef<HTMLInputElement>(null)
   const [zoomLabel, setZoomLabel] = useState<number | null>(null)
-  // Ctrl+Shift+T: the tab ids most recently removed from the layout.
-  const closedTabs = useRef<string[]>([])
+  // Ctrl+Shift+T: recently closed tabs. Resources reopen by id; web tabs by
+  // the URL they were on when closed (the id's pane is gone for good).
+  const closedTabs = useRef<{ id?: string; url?: string }[]>([])
+  // Which tab each slot last auto-scrolled to (see the tab ref callback).
+  const scrolledTo = useRef<Record<number, string>>({})
   const hidePin = useStore((st) => st.settings?.hidePin ?? false)
   // A page painted over the slot would eat every drag event, so the views go
   // away for the duration of the drag — same rule as any overlay (invariant 2).
@@ -143,15 +182,20 @@ export default function PaneGrid({
   // The open-effect depends on this, so the tab gets re-opened rather than
   // sitting there blank.
   const [paneEpoch, setPaneEpoch] = useState(0)
-  const searchUrlRef = useRef<string>('https://www.google.com')
 
   // Prune tabs whose resources were removed.
   const validLayout = useMemo((): WorkspaceLayout => {
-    const valid = (id: string): boolean => !!tabInfoFor(id, task, resources)
+    const valid = (id: string): boolean => !!tabInfoFor(id, task, resources, layout.webTabs)
     const slots: [string[], string[]] = [
       layout.slots[0].filter(valid),
       layout.slots[1].filter(valid)
     ]
+    // Web-tab URLs only for tabs that still exist — closed ones must not
+    // accumulate in the persisted layout forever.
+    const webTabs: Record<string, string> = {}
+    for (const id of [...slots[0], ...slots[1]]) {
+      if (layout.webTabs?.[id]) webTabs[id] = layout.webTabs[id]
+    }
     // Normalize: if only the second slot has tabs, promote them to the first —
     // a lone tab should always occupy the full area, never sit beside an
     // empty pane it can't close.
@@ -176,8 +220,19 @@ export default function PaneGrid({
       rawCollapsed[1] && slots[0].length > 0
     ]
     if (collapsed[0] && collapsed[1]) collapsed[1] = false
-    return { slots, active, split: layout.split, collapsed, direction: layout.direction ?? 'row' }
+    return {
+      slots,
+      active,
+      split: layout.split,
+      collapsed,
+      direction: layout.direction ?? 'row',
+      webTabs
+    }
   }, [layout, task, resources])
+
+  // The valid layout, reachable from stable callbacks without a stale closure.
+  const layoutRef = useRef(validLayout)
+  layoutRef.current = validLayout
 
   /**
    * What to call a tab. A web tab is named by the PAGE, like every browser:
@@ -227,11 +282,12 @@ export default function PaneGrid({
   useEffect(() => {
     for (const slot of validLayout.slots) {
       for (const id of slot) {
-        const tab = tabInfoFor(id, task, resources)
+        const tab = tabInfoFor(id, task, resources, validLayout.webTabs)
         if (tab?.viewBacked && !openedPanes.current.has(id)) {
           openedPanes.current.add(id)
-          const target =
-            id === BUILTIN_SEARCH ? { url: searchUrlRef.current } : paneTargetFor(tab)
+          const target = id.startsWith(WEBTAB_PREFIX)
+            ? { url: validLayout.webTabs?.[id] }
+            : paneTargetFor(tab)
           window.asit.panes.open(id, target, task.id)
         }
       }
@@ -271,7 +327,7 @@ export default function PaneGrid({
       const activeId = validLayout.active[i]
       const slotCollapsed = validLayout.collapsed?.[i] ?? false
       for (const id of slot) {
-        const tab = tabInfoFor(id, task, resources)
+        const tab = tabInfoFor(id, task, resources, validLayout.webTabs)
         if (!tab?.viewBacked) continue
         const isActive = id === activeId && !slotCollapsed
         const el = isActive ? slotContentRefs[i].current : null
@@ -320,6 +376,15 @@ export default function PaneGrid({
     return window.asit.on(IPC.PANES_DID_NAVIGATE, (...args: unknown[]) => {
       const state = args[0] as PaneNavState
       setNavStates((prev) => ({ ...prev, [state.paneId]: state }))
+      // Track where each web tab has wandered, so reopening the workspace
+      // restores the page you were actually on — not where the tab started.
+      if (state.paneId.startsWith(WEBTAB_PREFIX) && /^https?:/i.test(state.url)) {
+        setLayout((prev) =>
+          prev.webTabs?.[state.paneId] && prev.webTabs[state.paneId] !== state.url
+            ? { ...prev, webTabs: { ...prev.webTabs, [state.paneId]: state.url } }
+            : prev
+        )
+      }
     })
   }, [])
 
@@ -469,46 +534,96 @@ export default function PaneGrid({
     setFindResult(null)
   }, [findFor])
 
+  // The slot the user last interacted with (clicked a tab, focused a pane).
+  // Every keyboard shortcut and new-tab action acts HERE — they used to
+  // hard-code slot 0, so in a split Ctrl+W/Ctrl+Tab/Ctrl+R always hit the
+  // left pane regardless of which one you were actually using.
+  const focusedSlotRef = useRef<0 | 1>(0)
+  const focusSlot = useCallback((): 0 | 1 => {
+    const want = focusedSlotRef.current
+    if (layoutRef.current.active[want]) return want
+    return layoutRef.current.active[want === 0 ? 1 : 0] ? (want === 0 ? 1 : 0) : 0
+  }, [])
+  useEffect(() => {
+    return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      const e = args[0] as { type: string; paneId?: string }
+      if (e.type !== 'pane-focused' || !e.paneId) return
+      const at = layoutRef.current.slots.findIndex((s) => s.includes(e.paneId!))
+      if (at === 0 || at === 1) focusedSlotRef.current = at
+    })
+  }, [])
+
+  /**
+   * A NEW browser tab, in the slot the user is browsing in. This is what
+   * Ctrl+T, ctrl+click, and "open link in new tab" reach — they used to all
+   * navigate the single search pane, replacing whatever it was showing.
+   */
+  const openWebTab = useCallback(
+    (url: string, inSlot?: 0 | 1): void => {
+      const id = newWebTabId()
+      setLayout((prev) => {
+        const viewBackedAt = (i: 0 | 1): boolean => {
+          const a = prev.active[i]
+          return !!a && !!tabInfoFor(a, task, resources, prev.webTabs)?.viewBacked
+        }
+        // "The slot the user is browsing in" means the FOCUSED slot first —
+        // preferring slot 0 outright sent ctrl+clicked links from the right
+        // pane to the left one.
+        const focused = focusedSlotRef.current
+        const other: 0 | 1 = focused === 0 ? 1 : 0
+        const slotIndex: 0 | 1 =
+          inSlot ?? (viewBackedAt(focused) ? focused : viewBackedAt(other) ? other : focused)
+        focusedSlotRef.current = slotIndex
+        const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
+        slots[slotIndex].push(id)
+        const active: [string | null, string | null] = [...prev.active]
+        active[slotIndex] = id
+        const collapsed: [boolean, boolean] = [...(prev.collapsed ?? [false, false])]
+        collapsed[slotIndex] = false
+        return { ...prev, slots, active, collapsed, webTabs: { ...prev.webTabs, [id]: url } }
+      })
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [task.id, resources]
+  )
+
   const openSearch = useCallback(
     (query: string): void => {
       const url = query.trim()
         ? `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`
         : 'https://www.google.com'
-      searchUrlRef.current = url
-      if (openedPanes.current.has(BUILTIN_SEARCH)) {
-        window.asit.panes.navigate(BUILTIN_SEARCH, { url })
+      // Like a browser's address bar: searching reuses the tab you're on if
+      // it's a web tab; otherwise (notes, a PDF) the results open beside it.
+      // "The tab you're on" = the FOCUSED slot's active tab, not slot 0's —
+      // in a split that distinction is the whole point (see focusSlot).
+      const activeId = layoutRef.current.active[focusSlot()]
+      if (activeId && activeId.startsWith(WEBTAB_PREFIX)) {
+        window.asit.panes.navigate(activeId, { url })
+        setLayout((prev) => ({ ...prev, webTabs: { ...prev.webTabs, [activeId]: url } }))
+        return
       }
-      openResource(BUILTIN_SEARCH)
+      openWebTab(url)
     },
-    [openResource]
+    [openWebTab, focusSlot]
   )
 
-  const openUrl = useCallback(
-    (url: string): void => {
-      searchUrlRef.current = url
-      if (openedPanes.current.has(BUILTIN_SEARCH)) {
-        window.asit.panes.navigate(BUILTIN_SEARCH, { url })
-      }
-      openResource(BUILTIN_SEARCH)
-    },
-    [openResource]
-  )
+  const openUrl = useCallback((url: string): void => openWebTab(url), [openWebTab])
 
   // Keyboard shortcuts fire from a listener registered once, so they reach the
   // CURRENT versions of these through refs rather than a stale closure.
   const openResourceRef = useRef(openResource)
-  const openSearchRef = useRef(openSearch)
+  const openWebTabRef = useRef(openWebTab)
   const closeActiveTabRef = useRef<(() => void) | null>(null)
   const cycleTabRef = useRef<((dir: 1 | -1) => void) | null>(null)
   openResourceRef.current = openResource
-  openSearchRef.current = openSearch
+  openWebTabRef.current = openWebTab
   closeActiveTabRef.current = () => {
-    const slot = validLayout.active[0] ? 0 : 1
+    const slot = focusSlot()
     const id = validLayout.active[slot]
-    if (id) closeTab(slot as 0 | 1, id)
+    if (id) closeTab(slot, id)
   }
   cycleTabRef.current = (dir) => {
-    const slot: 0 | 1 = validLayout.active[0] ? 0 : 1
+    const slot = focusSlot()
     const tabs = validLayout.slots[slot]
     if (tabs.length < 2) return
     const at = tabs.indexOf(validLayout.active[slot] ?? '')
@@ -529,7 +644,8 @@ export default function PaneGrid({
     async (slotIndex: 0 | 1, tab: TabInfo): Promise<void> => {
       const ids = validLayout.slots[slotIndex]
       const at = ids.indexOf(tab.id)
-      const url = navStates[tab.id]?.url ?? tab.resource?.url ?? ''
+      const url =
+        navStates[tab.id]?.url ?? tab.resource?.url ?? validLayout.webTabs?.[tab.id] ?? ''
       const picked = await window.asit.ui.contextMenu([
         { id: 'reload', label: 'Reload', enabled: tab.viewBacked },
         { id: 'duplicate', label: 'Duplicate tab', enabled: !!url },
@@ -566,16 +682,16 @@ export default function PaneGrid({
   const setTabSurface = useStore((st) => st.setTabSurface)
   useEffect(() => {
     const activePaneId = (): string | null => {
-      const slot: 0 | 1 = validLayout.active[0] ? 0 : 1
-      const id = validLayout.active[slot]
-      return id && tabInfoFor(id, task, resources)?.viewBacked ? id : null
+      const id = validLayout.active[focusSlot()]
+      return id && tabInfoFor(id, task, resources, validLayout.webTabs)?.viewBacked ? id : null
     }
     setTabSurface({
-      newTab: () => openSearchRef.current?.(''),
+      newTab: () => openWebTabRef.current?.('https://www.google.com'),
       closeTab: () => closeActiveTabRef.current?.(),
       reopenTab: () => {
-        const id = closedTabs.current.pop()
-        if (id) openResourceRef.current?.(id)
+        const gone = closedTabs.current.pop()
+        if (gone?.url) openWebTabRef.current?.(gone.url)
+        else if (gone?.id) openResourceRef.current?.(gone.id)
       },
       nextTab: () => cycleTabRef.current?.(1),
       prevTab: () => cycleTabRef.current?.(-1),
@@ -599,7 +715,7 @@ export default function PaneGrid({
         })
       },
       find: () => {
-        const id = validLayout.active[validLayout.active[0] ? 0 : 1]
+        const id = validLayout.active[focusSlot()]
         if (id) {
           setFindFor(id)
           setTimeout(() => findInputRef.current?.select(), 40)
@@ -650,6 +766,7 @@ export default function PaneGrid({
   }, [setTabSurface, validLayout, task, resources, navStates, onPin, onResourcesChanged])
 
   function selectTab(slotIndex: 0 | 1, id: string): void {
+    focusedSlotRef.current = slotIndex
     setLayout((prev) => {
       const active: [string | null, string | null] = [...prev.active]
       active[slotIndex] = id
@@ -658,9 +775,15 @@ export default function PaneGrid({
   }
 
   function closeTab(slotIndex: 0 | 1, id: string): void {
-    // Only real resources can be reopened; builtins are always one click away.
-    if (!id.startsWith('builtin-')) {
-      closedTabs.current = [...closedTabs.current.filter((t) => t !== id), id].slice(-10)
+    // Only real tabs can be reopened; builtins are always one click away.
+    if (id.startsWith(WEBTAB_PREFIX)) {
+      // Only a real page is worth restoring — a tab that died on about:blank
+      // or an error page reopens from the last good URL the layout recorded.
+      const live = navStates[id]?.url
+      const url = /^https?:/i.test(live ?? '') ? live : layoutRef.current.webTabs?.[id]
+      if (url) closedTabs.current = [...closedTabs.current, { url }].slice(-10)
+    } else if (!id.startsWith('builtin-')) {
+      closedTabs.current = [...closedTabs.current.filter((t) => t.id !== id), { id }].slice(-10)
     }
     setLayout((prev) => {
       const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
@@ -729,7 +852,7 @@ export default function PaneGrid({
 
   function renderSlot(slotIndex: 0 | 1): JSX.Element {
     const tabs = validLayout.slots[slotIndex]
-      .map((id) => tabInfoFor(id, task, resources))
+      .map((id) => tabInfoFor(id, task, resources, validLayout.webTabs))
       .filter((t): t is TabInfo => !!t)
     const activeId = validLayout.active[slotIndex]
     const activeTab = tabs.find((t) => t.id === activeId) ?? null
@@ -772,6 +895,17 @@ export default function PaneGrid({
               <div
                 key={tab.id}
                 className={`tab ${tab.id === activeId ? 'tab-active' : ''}`}
+                // Ctrl+Tab can activate a tab that's scrolled out of the
+                // strip; bring it into view or it looks like nothing
+                // happened. ONCE per activation — inline refs re-run every
+                // render, and nav-state pushes would otherwise yank the strip
+                // back while the user is scrolling it.
+                ref={(el) => {
+                  if (el && tab.id === activeId && scrolledTo.current[slotIndex] !== tab.id) {
+                    scrolledTo.current[slotIndex] = tab.id
+                    el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
+                  }
+                }}
                 onClick={() => selectTab(slotIndex, tab.id)}
                 // Middle-click closes, like every browser since 2004.
                 onAuxClick={(e) => {
@@ -787,16 +921,16 @@ export default function PaneGrid({
                 title={tabLabel(tab)}
               >
                 <span className="tab-icon">
-                  {navStates[tab.id]?.favicon && tab.viewBacked ? (
+                  {navStates[tab.id]?.loading && tab.viewBacked ? (
+                    <span className="tab-spinner" />
+                  ) : navStates[tab.id]?.favicon && tab.viewBacked ? (
                     <img
                       className="tab-favicon"
                       src={navStates[tab.id]!.favicon!}
                       alt=""
                       onError={(e) => (e.currentTarget.style.display = 'none')}
                     />
-                  ) : tab.id === BUILTIN_SEARCH
-                    ? '⌕'
-                    : tab.kind === 'builtin-review'
+                  ) : tab.kind === 'builtin-review'
                       ? '◎'
                       : tab.kind === 'builtin-terminal'
                       ? '▶_'
@@ -833,6 +967,13 @@ export default function PaneGrid({
                 </button>
               </div>
             ))}
+            <button
+              className="tab-btn tab-new"
+              title="New tab (Ctrl+T)"
+              onClick={() => openWebTab('https://www.google.com', slotIndex)}
+            >
+              +
+            </button>
             {bothSlotsUsed && (
               <span className="slot-strip-actions">
                 {slotIndex === 0 && (
@@ -877,9 +1018,12 @@ export default function PaneGrid({
             </button>
             <button
               className="nav-btn"
-              onClick={() => window.asit.panes.navigate(activeTab.id, { nav: 'reload' })}
+              title={nav.loading ? 'Stop loading' : 'Reload'}
+              onClick={() =>
+                window.asit.panes.navigate(activeTab.id, { nav: nav.loading ? 'stop' : 'reload' })
+              }
             >
-              ⟳
+              {nav.loading ? '✕' : '⟳'}
             </button>
             <AddressBar
               className="pane-address"
@@ -968,7 +1112,13 @@ export default function PaneGrid({
           )}
           {!activeTab && (
             <div className="slot-empty">
-              <p>Open a resource from the left rail.</p>
+              <button
+                className="btn"
+                onClick={() => openWebTab('https://www.google.com', slotIndex)}
+              >
+                + New tab
+              </button>
+              <p>…or open a resource from the left rail.</p>
             </div>
           )}
           {dragItem && (

@@ -500,6 +500,29 @@ select:focus {
   color: var(--text);
 }
 
+.tab-new {
+  padding: 2px 8px;
+  font-size: 1rem;
+  align-self: center;
+}
+
+/* Page-loading spinner in the tab's favicon spot. */
+.tab-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent, var(--text));
+  border-radius: 50%;
+  animation: tab-spin 0.8s linear infinite;
+}
+
+@keyframes tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .pane-toolbar {
   display: flex;
   align-items: center;
@@ -548,6 +571,8 @@ select:focus {
 
 .slot-empty {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
   align-items: center;
   justify-content: center;
   height: 100%;
@@ -2916,6 +2941,103 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   border: 1px solid var(--border);
   color: var(--text-dim);
   animation: slide-in 0.16s ease-out;
+}
+
+/* Error notices are buttons (click for the full text). */
+button.status-notice {
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.74rem;
+}
+
+/* Popovers off the status cluster (CLI setup, full error text). */
+.cli-popover {
+  right: 8px;
+  left: auto;
+  width: 340px;
+  padding: 12px 14px;
+}
+
+.cli-popover-text {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0 0 10px;
+  word-break: break-word;
+}
+
+.cli-popover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Settings — AI engine section */
+.settings-cli {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.settings-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.45;
+}
+
+.settings-cli-ok {
+  color: var(--ok, #6fbf82);
+}
+
+.settings-cli-bad {
+  color: var(--danger, #d17b7b);
+}
+
+/* Render-crash fallback (error boundary in main.tsx). */
+.crash-screen {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.crash-card {
+  max-width: 480px;
+  padding: 32px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.crash-card h1 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.crash-card p {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.crash-card code {
+  display: block;
+  padding: 10px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  word-break: break-word;
+  color: var(--text-dim);
 }
 
 .status-notice-ok {

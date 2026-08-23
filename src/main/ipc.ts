@@ -7,7 +7,7 @@ import * as resources from './services/resources'
 import * as settings from './services/settings'
 import { paneManager, type PaneBounds, type PaneTarget } from './services/panes'
 import * as chat from './services/chat'
-import { invalidateClaudePathCache } from './services/claude'
+import { invalidateClaudePathCache, resolveClaudePath } from './services/claude'
 import { timer } from './services/timer'
 import * as questions from './services/questions'
 import * as accounts from './services/accounts'
@@ -273,7 +273,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   })
   handle(
     IPC.PANES_NAVIGATE,
-    (_e, paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' }) =>
+    (_e, paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' | 'stop' }) =>
       paneManager.navigate(paneId, action)
   )
   // --- native app windows (user-driven; agents have no verb for this) ---
@@ -671,5 +671,29 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const result = settings.setSettings(patch)
     invalidateClaudePathCache()
     return result
+  })
+  // The CLI is what every AI feature runs on, and installing ASIT doesn't
+  // install it. Check proactively so the app can SAY so, instead of each
+  // feature failing one at a time.
+  handle(IPC.CLAUDE_CLI_STATUS, () => {
+    invalidateClaudePathCache() // a fresh install should be noticed on re-check
+    return { path: resolveClaudePath() }
+  })
+  handle(IPC.CLAUDE_CLI_LOCATE, async () => {
+    const win = getWindow()
+    if (!win) return { path: null }
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Locate claude.exe',
+      filters: [{ name: 'claude.exe', extensions: ['exe'] }],
+      properties: ['openFile']
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      // picked:false so the caller knows cancel changed NOTHING — it must
+      // not copy the returned path into a settings draft.
+      return { path: resolveClaudePath(), picked: false }
+    }
+    settings.setSettings({ claudePath: result.filePaths[0] })
+    invalidateClaudePathCache()
+    return { path: resolveClaudePath(), picked: true }
   })
 }

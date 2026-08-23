@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import type { Resource, Task } from '@shared/types'
 import ReviewCards from '../components/ReviewCards'
-import SettingsModal from '../components/SettingsModal'
 import QuestionsModal from '../components/QuestionsModal'
 import ActivityGraph from '../components/ActivityGraph'
 import TodoList from '../components/TodoList'
@@ -94,6 +93,7 @@ function ActivityModal({ onClose }: { onClose: () => void }): JSX.Element {
 
 export default function Home(): JSX.Element {
   const tasks = useStore((s) => s.tasks)
+  const tasksLoaded = useStore((s) => s.tasksLoaded)
   const loadTasks = useStore((s) => s.loadTasks)
   const openTask = useStore((s) => s.openTask)
   const startFocus = useStore((s) => s.startFocus)
@@ -109,7 +109,8 @@ export default function Home(): JSX.Element {
     costByTask: Record<string, number>
   } | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const showSettings = useStore((s) => s.settingsOpen)
+  // The modal itself is mounted in App.tsx (so Ctrl+, works everywhere);
+  // Home only needs to be able to open it.
   const setShowSettings = useStore((s) => s.setSettingsOpen)
   const [showActivity, setShowActivity] = useState(false)
   const [showReview, setShowReview] = useState(false)
@@ -170,8 +171,12 @@ export default function Home(): JSX.Element {
   // browser tab; PDFs open via file: url; notes toggles the notes panel.
   useEffect(() => {
     return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
-      const p = args[0] as { type: string; id?: string }
-      if (p.type === 'open-resource' && p.id) {
+      const p = args[0] as { type: string; id?: string; url?: string; owner?: string }
+      if (p.type === 'open-url-tab' && p.url) {
+        // Ctrl/middle-click or "open link in new tab" from a scratchpad page.
+        // This was only handled in the workspace, so on Home it did nothing.
+        if (!p.owner || p.owner === scratch?.id) browserApi.current?.openTab(p.url)
+      } else if (p.type === 'open-resource' && p.id) {
         if (p.id === 'builtin-notes') {
           setNotesOpen(true)
           return
@@ -187,7 +192,7 @@ export default function Home(): JSX.Element {
         loadTasks()
       }
     })
-  }, [refreshScratchResources, loadTasks, scratchResources])
+  }, [refreshScratchResources, loadTasks, scratchResources, scratch?.id])
 
   const dueByTask = stats?.dueByTask ?? {}
   const active = tasks
@@ -198,12 +203,24 @@ export default function Home(): JSX.Element {
   async function handleCreate(e: React.FormEvent): Promise<void> {
     e.preventDefault()
     if (!title.trim()) return
-    await window.asit.tasks.create({
-      title: title.trim(),
-      priority,
-      dueDate: dueDate || null,
-      aiDisabled: createPrivate
-    })
+    try {
+      await window.asit.tasks.create({
+        title: title.trim(),
+        priority,
+        dueDate: dueDate || null,
+        aiDisabled: createPrivate
+      })
+    } catch (err) {
+      // Folder creation can fail (OneDrive, permissions) — the form used to
+      // just sit there, still filled, with no explanation.
+      useStore
+        .getState()
+        .pushNotice(
+          `Couldn't create the workspace — ${err instanceof Error ? err.message : String(err)}`,
+          'error'
+        )
+      return
+    }
     setTitle('')
     setPriority(2)
     setDueDate('')
@@ -328,6 +345,16 @@ export default function Home(): JSX.Element {
             )}
             <button onClick={() => { setMenuTaskId(null); setQuestionsTask(task) }}>
               ❓ Manage questions
+            </button>
+            <button
+              onClick={() => {
+                setMenuTaskId(null)
+                // The folder IS the workspace (notes, PDFs, AI context) — it
+                // was the app's central concept with no way to reach it.
+                void window.asit.resources.openExternal({ filePath: task.folderPath })
+              }}
+            >
+              📁 Open folder in Explorer
             </button>
             {!task.aiDisabled && (
               <button
@@ -487,7 +514,6 @@ export default function Home(): JSX.Element {
           </button>
         </aside>
         {renderMain()}
-        {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
         {showReview && <ReviewOverlay onClose={() => setShowReview(false)} />}
       </div>
     )
@@ -570,7 +596,7 @@ export default function Home(): JSX.Element {
             rows[Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)))]?.focus()
           }}
         >
-          {active.length === 0 && (
+          {active.length === 0 && tasksLoaded && (
             <p className="empty">No workspaces yet — browse in the scratchpad, then save your session.</p>
           )}
           {active.map((t, i) => renderTaskRow(t, i === 0))}
@@ -596,7 +622,6 @@ export default function Home(): JSX.Element {
       {renderMain()}
 
       {menuTaskId && <div className="menu-backdrop" onClick={() => setMenuTaskId(null)} />}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showActivity && <ActivityModal onClose={() => setShowActivity(false)} />}
       {showReview && <ReviewOverlay onClose={() => setShowReview(false)} />}
       {questionsTask && (

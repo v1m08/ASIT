@@ -192,11 +192,9 @@ export function installFocusRing(): () => void {
       return
     }
 
-    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault()
-      cycle(e.shiftKey)
-      return
-    }
+    // Tab is NOT handled here any more. It belongs to whatever has focus —
+    // the page, a form, the notes editor — which is what everyone expects it
+    // to do. F6 / Shift+F6 move between the app's panels instead.
     // Ctrl+1…9 jump to a panel.
     if (e.ctrlKey && !e.altKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
       e.preventDefault()
@@ -251,6 +249,10 @@ export function installFocusRing(): () => void {
         // grabs the left one, so Ctrl+L in the right pane retyped the left
         // pane's URL. Prefer the bar inside whichever zone is focused.
         return focusSelector('.browser-address', '[data-focus-active]')
+      case 'cycle-zone':
+        return cycle(false)
+      case 'cycle-zone-back':
+        return cycle(true)
       case 'voice-toggle':
         return store.bumpVoice()
       case 'dictate-toggle':
@@ -334,12 +336,11 @@ export function installFocusRing(): () => void {
   const offEvent = window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
     const p = args[0] as { type: string; back?: boolean; index?: number; paneId?: string }
     if (p.type === 'pane-focused' && p.paneId) {
-      // The user clicked into a page: move the ring there so the next Tab
+      // The user clicked into a page: move the ring there so the next F6
       // continues from that pane, not from wherever the DOM was last focused.
       currentPaneId = p.paneId
       mark(document.querySelector<HTMLElement>(`[data-focus-pane="${CSS.escape(p.paneId)}"]`))
-    } else if (p.type === 'cycle-focus') cycle(!!p.back)
-    else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
+    } else if (p.type === 'focus-zone' && typeof p.index === 'number') jumpTo(p.index)
     else runShortcutInternal(p.type)
   })
 

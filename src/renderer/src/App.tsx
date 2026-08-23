@@ -12,6 +12,14 @@ import { useFileDropGuard } from './hooks/useFileDrop'
 import HistoryModal from './components/HistoryModal'
 import CommandPalette from './components/CommandPalette'
 import ShortcutsModal from './components/ShortcutsModal'
+import SettingsModal from './components/SettingsModal'
+
+function SettingsGate(): JSX.Element | null {
+  const open = useStore((s) => s.settingsOpen)
+  const setOpen = useStore((s) => s.setSettingsOpen)
+  if (!open) return null
+  return <SettingsModal onClose={() => setOpen(false)} />
+}
 
 export default function App(): JSX.Element {
   const view = useStore((s) => s.view)
@@ -71,6 +79,10 @@ export default function App(): JSX.Element {
       <HistoryModal />
       <CommandPalette />
       <ShortcutsModal />
+      {/* Same reason: Ctrl+, used to set settingsOpen from a workspace, but
+          the modal only existed on Home — nothing appeared until you went
+          home, where it then popped open unexpectedly. */}
+      <SettingsGate />
       {showWelcome && <AccountsModal welcome onClose={closeWelcome} />}
     </>
   )

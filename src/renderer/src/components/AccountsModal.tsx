@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOverlay } from '../hooks/useOverlay'
+import { CliSetupButtons, useCliStatus } from './CliSetup'
 
 interface AccountRow {
   id: string
@@ -8,6 +9,14 @@ interface AccountRow {
   connected: boolean
 }
 
+/**
+ * First-run welcome + the connected-accounts manager.
+ *
+ * The welcome used to lead with eight sign-in buttons and never mention the
+ * AI — homework before anything worked, silence about the one dependency
+ * that actually blocks the app. Now it leads with whether the AI is ready
+ * (with the fix one click away) and makes accounts the optional step it is.
+ */
 export default function AccountsModal({
   welcome,
   onClose
@@ -18,6 +27,8 @@ export default function AccountsModal({
   useOverlay(true)
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [showAccounts, setShowAccounts] = useState(!welcome)
+  const cli = useCliStatus()
 
   const refresh = useCallback(async (): Promise<void> => {
     setAccounts(await window.asit.accounts.list())
@@ -34,51 +45,82 @@ export default function AccountsModal({
     await refresh()
   }
 
+  const accountsList = (
+    <div className="accounts-list">
+      {accounts.map((a) => (
+        <div key={a.id} className="account-row">
+          <div className="account-info">
+            <span className="account-name">{a.name}</span>
+            <span className="account-desc">{a.description}</span>
+          </div>
+          {a.connected ? (
+            <span className="account-connected">✓ Connected</span>
+          ) : (
+            <button className="btn" disabled={busyId !== null} onClick={() => connect(a.id)}>
+              {busyId === a.id ? 'Waiting…' : 'Sign in'}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal card accounts-modal" onClick={(e) => e.stopPropagation()}>
         {welcome ? (
           <>
             <h2>Welcome to ASIT 👋</h2>
-            <p className="accounts-sub"> ASIT has its own built-in browser profile that stays logged in forever. Connect the
-              accounts you study with once, and every task workspace opens pre-authenticated. Start
-              with Google — it unlocks most &quot;Sign in with Google&quot; sites too.
+            <p className="accounts-sub">
+              Browse and study in one place, with an AI that can see your open pages, PDFs, and
+              notes. Two quick things and you&apos;re set:
             </p>
+
+            <div className="settings-cli">
+              <div className="rail-header">1 · The AI engine</div>
+              {cli.path === undefined ? (
+                <p className="settings-hint">Checking for Claude Code…</p>
+              ) : cli.path ? (
+                <p className="settings-hint settings-cli-ok" title={cli.path}>
+                  ✓ Claude Code found — the AI is ready to go.
+                </p>
+              ) : (
+                <>
+                  <p className="settings-hint">
+                    ASIT&apos;s AI runs on the free <strong>Claude Code</strong> app. Install it,
+                    sign in when it asks, and come back — everything else is automatic.
+                  </p>
+                  <CliSetupButtons status={cli} />
+                </>
+              )}
+            </div>
+
+            <div className="settings-cli">
+              <div className="rail-header">2 · Your accounts (optional)</div>
+              <p className="settings-hint">
+                ASIT&apos;s built-in browser stays signed in forever. Connect what you study with
+                now, or just sign in to sites as you visit them — it sticks either way.
+              </p>
+              <button className="btn btn-ghost" onClick={() => setShowAccounts((v) => !v)}>
+                {showAccounts ? '▾ Hide accounts' : '▸ Connect accounts…'}
+              </button>
+              {showAccounts && accountsList}
+            </div>
           </>
         ) : (
           <>
             <h2>Connected accounts</h2>
-            <p className="accounts-sub"> Logins live in ASIT&apos;s persistent browser profile and are shared by every
+            <p className="accounts-sub">
+              Logins live in ASIT&apos;s persistent browser profile and are shared by every
               workspace pane.
+            </p>
+            {accountsList}
+            <p className="accounts-note">
+              Need another site? Add it to any task as a website resource and sign in there — it
+              sticks the same way.
             </p>
           </>
         )}
-
-        <div className="accounts-list">
-          {accounts.map((a) => (
-            <div key={a.id} className="account-row">
-              <div className="account-info">
-                <span className="account-name">{a.name}</span>
-                <span className="account-desc">{a.description}</span>
-              </div>
-              {a.connected ? (
-                <span className="account-connected">✓ Connected</span>
-              ) : (
-                <button
-                  className="btn"
-                  disabled={busyId !== null}
-                  onClick={() => connect(a.id)}
-                >
-                  {busyId === a.id ? 'Waiting…' : 'Sign in'}
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-
-        <p className="accounts-note"> Need another site? Add it to any task as a website resource and sign in there — it sticks
-          the same way.
-        </p>
 
         <div className="modal-actions">
           <button className="btn btn-primary" onClick={onClose}>

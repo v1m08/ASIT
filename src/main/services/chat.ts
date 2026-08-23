@@ -81,6 +81,34 @@ function describeAction(a: Record<string, unknown>): string | null {
       return '📸 Re-reading the page'
     case 'wait':
       return `⏳ Waiting ${Math.round(Number(a.ms ?? 0) / 100) / 10}s`
+    case 'create_workspace':
+      return `🗂 Creating workspace "${s(a.title ?? a.value, 30)}"`
+    case 'open_workspace':
+      return `🗂 Opening workspace "${s(a.target ?? a.value, 30)}"`
+    case 'delete_workspace':
+      return `🗑 Deleting workspace "${s(a.target ?? a.value, 30)}" (to trash)`
+    case 'list_workspaces':
+      return '🗂 Listing your workspaces'
+    case 'add_note':
+      return `✎ Creating note "${s(a.title ?? a.target, 30)}"${where}`
+    case 'add_todo':
+      return `☑ Adding to-do: ${s(a.value ?? a.content ?? a.title, 40)}`
+    case 'complete_todo':
+      return `☑ Completing to-do: ${s(a.target ?? a.value, 40)}`
+    case 'delete_todo':
+      return `☑ Removing to-do: ${s(a.target ?? a.value, 40)}`
+    case 'list_todos':
+      return '☑ Reading your to-do list'
+    case 'start_focus':
+      return `▶ Starting a focus session${where}`
+    case 'schedule':
+      return `⏰ Scheduling: ${s(a.prompt ?? a.value, 40)}`
+    case 'unschedule':
+      return '⏰ Removing a schedule'
+    case 'search':
+      return `🔎 Searching the web for "${s(a.query ?? a.value, 40)}"`
+    case 'remember':
+      return `🧠 Remembering: ${s(a.value ?? a.content, 40)}`
     default:
       return null
   }

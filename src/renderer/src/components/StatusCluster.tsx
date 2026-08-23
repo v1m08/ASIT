@@ -1,10 +1,63 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { DownloadItem } from '@shared/types'
 import { useStore } from '../store/useStore'
 import SavePasswordPrompt from './SavePasswordPrompt'
 import Dictation from './Dictation'
 import UpdatePill from './UpdatePill'
+import { useOverlay } from '../hooks/useOverlay'
+import { CliSetupButtons, useCliStatus } from './CliSetup'
+
+/**
+ * Everything AI in this app runs on the Claude Code CLI, and installing ASIT
+ * does not install it. This used to be discovered one broken feature at a
+ * time — the app booted looking perfectly healthy with a dead AI, and the fix
+ * lived in a settings field under "Advanced". Check on startup and say so, in
+ * the one strip pages never paint over, with the fix one click away.
+ */
+function CliHealth(): JSX.Element | null {
+  const status = useCliStatus()
+  const [open, setOpen] = useState(false)
+  const missing = status.path === null
+  useOverlay(open && missing)
+
+  // The hook re-probes on a timer and when Settings closes, so fixing the
+  // CLI anywhere clears this chip on its own; celebrate it once.
+  const wasMissing = useRef(false)
+  useEffect(() => {
+    if (missing) wasMissing.current = true
+    else if (wasMissing.current) {
+      wasMissing.current = false
+      setOpen(false)
+      useStore.getState().pushNotice('AI is ready — Claude Code found.', 'ok')
+    }
+  }, [missing])
+
+  if (!missing) return null
+
+  return (
+    <>
+      <button
+        className="status-load-error"
+        title="The AI features need the Claude Code app. Click to set it up."
+        onClick={() => setOpen((v) => !v)}
+      >
+        ⚠ AI setup needed
+      </button>
+      {open && (
+        <div className="downloads-popover cli-popover">
+          <p className="cli-popover-text">
+            ASIT&apos;s AI features run on the free <strong>Claude Code</strong> app, which
+            isn&apos;t installed yet. Install it, sign in when it asks, and you&apos;re done.
+          </p>
+          <div className="cli-popover-actions">
+            <CliSetupButtons status={status} />
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
 
 // Everything that used to float along the bottom edge — running work, job
 // progress, toasts, the quick-assistant launcher — compressed into the header
@@ -16,6 +69,37 @@ function elapsed(startedAt: number, now: number): string {
   const sec = Math.max(0, Math.floor((now - startedAt) / 1000))
   if (sec < 60) return `${sec}s`
   return `${Math.floor(sec / 60)}m`
+}
+
+/**
+ * An error chip that stays until dismissed, with the FULL message one click
+ * away — the header hasn't room for a paragraph, but a popover does.
+ */
+function ErrorNotice({ text }: { text: string }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const dismiss = useStore((s) => s.dismissNotice)
+  useOverlay(open)
+  return (
+    <>
+      <button
+        className="status-notice status-notice-error"
+        title="Click for details"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {text}
+      </button>
+      {open && (
+        <div className="downloads-popover cli-popover">
+          <p className="cli-popover-text">{text}</p>
+          <div className="cli-popover-actions">
+            <button className="btn" onClick={dismiss}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 export default function StatusCluster(): JSX.Element {
@@ -33,6 +117,8 @@ export default function StatusCluster(): JSX.Element {
   // in the header band (the one strip pages never paint over).
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [showDownloads, setShowDownloads] = useState(false)
+  // The popover hangs below the header into pane territory (invariant 2).
+  useOverlay(showDownloads && downloads.length > 0)
 
   useEffect(() => {
     void window.asit.panes.downloads().then(setDownloads)
@@ -57,6 +143,7 @@ export default function StatusCluster(): JSX.Element {
 
   return (
     <div className="status-cluster">
+      <CliHealth />
       {loadError && (
         <button
           className="status-load-error"
@@ -118,11 +205,12 @@ export default function StatusCluster(): JSX.Element {
         ⌘
       </button>
       <SavePasswordPrompt />
-      {notice && (
+      {notice && notice.kind !== 'error' && (
         <span className={`status-notice status-notice-${notice.kind}`} title={notice.text}>
           {notice.text}
         </span>
       )}
+      {notice && notice.kind === 'error' && <ErrorNotice text={notice.text} />}
       {jobStatus && (
         <span className="status-job" title={jobStatus.label}>
           <span className="working-dot" />

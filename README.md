@@ -128,7 +128,8 @@ list something that doesn't work or miss something that does.
 
 | Keys | What |
 |---|---|
-| `Tab` / `Shift+Tab` | Move between the panes/notes/chat that matter (not every DOM element) |
+| `Tab` | Normal — moves between fields on whatever page or form has focus |
+| `F6` / `Shift+F6` | Move between the app's panels (panes / notes / chat) |
 | `Ctrl+1…9` | Jump straight to a zone |
 | `Ctrl+K` / `Ctrl+J` | Toggle the ⚡ quick assistant / 🤖 Jarvis |
 | `Ctrl+Space` | Talk to Jarvis (pause to send) |

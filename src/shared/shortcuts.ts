@@ -53,6 +53,19 @@ export const SHORTCUTS: ShortcutDef[] = [
   { id: 'back', accel: 'Alt+Left', key: 'arrowleft', alt: true, label: 'Back' },
   { id: 'forward', accel: 'Alt+Right', key: 'arrowright', alt: true, label: 'Forward' },
   { id: 'find', accel: 'CommandOrControl+F', key: 'f', ctrl: true, label: 'Find in page' },
+  // Moving between the app's panels. This used to be Tab, which meant Tab
+  // never reached the page you were looking at — you could not tab between
+  // fields on a form, which is most of what Tab is FOR. F6 is what Windows
+  // and Chrome already use to cycle UI regions, so Tab goes back to the
+  // page and the app takes the key nobody was using.
+  { id: 'cycle-zone', accel: 'F6', key: 'f6', label: 'Next panel' },
+  {
+    id: 'cycle-zone-back',
+    accel: 'Shift+F6',
+    key: 'f6',
+    shift: true,
+    label: 'Previous panel'
+  },
   { id: 'open-history', accel: 'CommandOrControl+H', key: 'h', ctrl: true, label: 'History' },
   {
     id: 'open-palette',
@@ -240,7 +253,10 @@ export const SHORTCUT_GROUPS: { title: string; ids: string[] }[] = [
     title: 'Assistant & voice',
     ids: ['focus-jarvis', 'focus-assistant', 'voice-toggle', 'dictate-toggle']
   },
-  { title: 'Getting around', ids: ['focus-zone', 'go-home', 'open-settings'] }
+  {
+    title: 'Getting around',
+    ids: ['cycle-zone', 'cycle-zone-back', 'focus-zone', 'go-home', 'open-settings']
+  }
 ]
 
 /** Labelled actions the cheat sheet would not show. Asserted by the smoke. */

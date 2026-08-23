@@ -47,7 +47,7 @@ const api = {
       ipcRenderer.invoke(IPC.PANES_SET_BOUNDS, paneId, bounds),
     setVisible: (paneId: string | null, visible: boolean) =>
       ipcRenderer.invoke(IPC.PANES_SET_VISIBLE, paneId, visible),
-    navigate: (paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' }) =>
+    navigate: (paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' | 'stop' }) =>
       ipcRenderer.invoke(IPC.PANES_NAVIGATE, paneId, action),
     close: (paneId: string) => ipcRenderer.invoke(IPC.PANES_CLOSE, paneId),
     closeAll: () => ipcRenderer.invoke(IPC.PANES_CLOSE_ALL),
@@ -254,7 +254,9 @@ const api = {
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
-    set: (patch: Partial<Settings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, patch)
+    set: (patch: Partial<Settings>) => ipcRenderer.invoke(IPC.SETTINGS_SET, patch),
+    cliStatus: () => ipcRenderer.invoke(IPC.CLAUDE_CLI_STATUS),
+    locateCli: () => ipcRenderer.invoke(IPC.CLAUDE_CLI_LOCATE)
   },
   on: (channel: string, listener: (...args: unknown[]) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, ...args: unknown[]): void =>

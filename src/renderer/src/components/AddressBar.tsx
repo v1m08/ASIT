@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HistoryEntry } from '@shared/types'
+import { useOverlay } from '../hooks/useOverlay'
 
 // The address bar, for every surface that shows a web page.
 //
@@ -52,6 +53,13 @@ export default function AddressBar({
   const [highlight, setHighlight] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
+
+  // The dropdown hangs down over the page area, and WebContentsViews paint
+  // above ALL renderer DOM (invariant 2) — without this the suggestions were
+  // simply invisible wherever a page was showing. Keyed to the editing
+  // session (focus…blur), NOT the suggestion count: the count crosses 0↔N
+  // per keystroke, and each crossing would flash every pane hidden/visible.
+  useOverlay(draft !== null)
 
   const close = useCallback((): void => {
     setDraft(null)

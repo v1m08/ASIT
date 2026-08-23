@@ -165,6 +165,10 @@ export interface WorkspaceLayout {
   split: number // first-slot size fraction, 0.2..0.8
   collapsed?: [boolean, boolean]
   direction?: 'row' | 'column' // side-by-side (default) or top/bottom
+  // Ad-hoc browser tabs (id → current URL). Unlike resources these aren't
+  // pinned to the rail — they're ordinary tabs, and persisting their URLs is
+  // what lets a workspace reopen with yesterday's pages still there.
+  webTabs?: Record<string, string>
 }
 
 export interface PaneNavState {
@@ -175,6 +179,7 @@ export interface PaneNavState {
   canGoForward: boolean
   favicon?: string | null
   zoom?: number
+  loading?: boolean
 }
 
 export interface DownloadItem {

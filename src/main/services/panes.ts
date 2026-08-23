@@ -110,9 +110,11 @@ const MAX_PANES = 14
 // Derived from the SHARED table — main's job is only to forward the key's id
 // when an embedded page has swallowed it. It no longer decides what any key
 // means; the renderer's dispatcher does, for both origins.
+//
+// Tab is deliberately ABSENT. Grabbing it here meant a focused page never
+// received it, so Tab could not move between fields on a form — the single
+// most common thing Tab does. Panel cycling moved to F6.
 const NAV_ACCELERATORS: { accel: string; event: Record<string, unknown> }[] = [
-  { accel: 'Tab', event: { type: 'cycle-focus', back: false } },
-  { accel: 'Shift+Tab', event: { type: 'cycle-focus', back: true } },
   ...SHORTCUTS.map((d) => ({ accel: d.accel, event: { type: d.id } })),
   ...ZONE_ACCELERATORS.map((z) => ({ accel: z.accel, event: { type: 'focus-zone', index: z.index } }))
 ]
@@ -307,11 +309,8 @@ class PaneManager {
         this.sendAppEvent({ type: input.shift ? 'prev-tab' : 'next-tab' })
         return
       }
-      if (input.key === 'Tab' && !input.control && !input.alt && !input.meta) {
-        event.preventDefault()
-        this.sendAppEvent({ type: 'cycle-focus', back: input.shift })
-        return
-      }
+      // Plain Tab is deliberately NOT handled: it belongs to the page, so a
+      // form's fields tab in order. Panel cycling is F6 (see NAV_ACCELERATORS).
       if (!input.control || input.alt || input.meta) return
       const k = input.key.toLowerCase()
       if (k === 'k') {
@@ -348,19 +347,31 @@ class PaneManager {
       }
     })
 
+    let lastNavPayload = ''
     const pushNavState = (): void => {
       if (!this.win || this.win.isDestroyed()) return
       const wc = view.webContents
-      this.win.webContents.send(IPC.PANES_DID_NAVIGATE, {
+      const payload = {
         paneId,
         url: wc.getURL(),
         title: wc.getTitle(),
         canGoBack: wc.navigationHistory.canGoBack(),
         canGoForward: wc.navigationHistory.canGoForward(),
         favicon: this.favicons.get(paneId) ?? null,
-        zoom: this.zoomLevels.get(paneId) ?? 0
-      })
+        zoom: this.zoomLevels.get(paneId) ?? 0,
+        loading: wc.isLoading()
+      }
+      // Deduped: loading events fire per frame-load cycle (iframe-heavy
+      // pages flip constantly), and every send re-renders both tab strips.
+      const key = JSON.stringify(payload)
+      if (key === lastNavPayload) return
+      lastNavPayload = key
+      this.win.webContents.send(IPC.PANES_DID_NAVIGATE, payload)
     }
+    // Loading state, so the UI can show a spinner and a stop button — without
+    // these a slow page and a dead page look identical.
+    view.webContents.on('did-start-loading', pushNavState)
+    view.webContents.on('did-stop-loading', pushNavState)
     // Strip the page's own interruption furniture as soon as its DOM is
     // up. dom-ready rather than did-navigate: inserting before the
     // document exists is a no-op, and consent walls appear immediately.
@@ -484,7 +495,10 @@ class PaneManager {
     setAllAppWindowsVisible(!this.allHidden)
   }
 
-  navigate(paneId: string, action: { url?: string; nav?: 'back' | 'forward' | 'reload' }): void {
+  navigate(
+    paneId: string,
+    action: { url?: string; nav?: 'back' | 'forward' | 'reload' | 'stop' }
+  ): void {
     const pane = this.panes.get(paneId)
     if (!pane) return
     const wc = pane.view.webContents
@@ -493,6 +507,7 @@ class PaneManager {
     else if (action.nav === 'forward' && wc.navigationHistory.canGoForward())
       wc.navigationHistory.goForward()
     else if (action.nav === 'reload') wc.reload()
+    else if (action.nav === 'stop') wc.stop()
   }
 
   // --- browser basics (user-driven only; none of this is agent-reachable) ---

@@ -5,6 +5,59 @@ import { SHORTCUTS } from '@shared/shortcuts'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
 import AccountsModal from './AccountsModal'
+import { CliSetupButtons, useCliStatus } from './CliSetup'
+
+/**
+ * The one setting the app cannot work without, promoted out of "Advanced":
+ * where the Claude CLI is. Shows live status instead of a bare text input —
+ * a path field with no validation told you nothing until a chat failed.
+ */
+function CliSection({
+  settings,
+  setSettings
+}: {
+  settings: Settings
+  setSettings: (s: Settings) => void
+}): JSX.Element {
+  const status = useCliStatus()
+
+  async function browse(): Promise<void> {
+    const s = await status.recheck(true)
+    // Only if the user actually PICKED a file: the picker saved the path to
+    // disk, so mirror it into the modal's draft or a later "Save" would
+    // overwrite it with the stale value. Cancel must change nothing.
+    if (s.picked && s.path) setSettings({ ...settings, claudePath: s.path })
+  }
+
+  return (
+    <div className="settings-cli">
+      <div className="rail-header">AI engine</div>
+      {status.path === undefined ? (
+        <p className="settings-hint">Checking for Claude Code…</p>
+      ) : status.path ? (
+        <>
+          <p className="settings-hint settings-cli-ok" title={status.path}>
+            ✓ Claude Code found — AI features are ready.
+          </p>
+          <button className="btn btn-ghost" onClick={() => void browse()}>
+            Use a different claude.exe…
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="settings-hint settings-cli-bad">
+            ✗ Claude Code isn&apos;t installed (or couldn&apos;t be found). AI chat, questions,
+            and the assistant need it.
+          </p>
+          <CliSetupButtons
+            status={status}
+            onLocated={(path) => setSettings({ ...settings, claudePath: path })}
+          />
+        </>
+      )}
+    </div>
+  )
+}
 
 function SnippetAdder({ onAdd }: { onAdd: (key: string, value: string) => void }): JSX.Element {
   const [key, setKey] = useState('')
@@ -577,6 +630,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
   useOverlay(true)
   const [settings, setSettings] = useState<Settings | null>(null)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [showAccounts, setShowAccounts] = useState(false)
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [transferMsg, setTransferMsg] = useState<string | null>(null)
@@ -620,22 +674,53 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
     // Clamp numerics — a cleared input would otherwise persist 0 and make
     // hold-to-quit instant (defeating the lockdown's whole point).
     const clamp = (v: number, min: number, max: number, fallback: number): number => Number.isFinite(v) && v >= min ? Math.min(max, v) : fallback
-    await window.asit.settings.set({
-      ...settings,
-      workMin: clamp(settings.workMin, 1, 240, 25),
-      breakMin: clamp(settings.breakMin, 1, 60, 5),
-      holdToQuitSeconds: clamp(settings.holdToQuitSeconds, 5, 120, 30)
-    })
+    try {
+      await window.asit.settings.set({
+        ...settings,
+        workMin: clamp(settings.workMin, 1, 240, 25),
+        breakMin: clamp(settings.breakMin, 1, 60, 5),
+        holdToQuitSeconds: clamp(settings.holdToQuitSeconds, 5, 120, 30)
+      })
+    } catch (err) {
+      // Inline, not a header notice: the header sits BEHIND this modal's
+      // backdrop, so a notice there is invisible exactly when it matters.
+      setSaveError(
+        `Settings didn't save — ${err instanceof Error ? err.message : String(err)}`
+      )
+      return
+    }
+    setSaveError(null)
     setSaved(true)
     setTimeout(onClose, 600)
   }
 
-  if (!settings) return <div />
+  if (!settings)
+    return (
+      // Still dismissable — if settings never load (DB trouble), this must
+      // not become a full-screen trap with every pane hidden.
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal card" onClick={(e) => e.stopPropagation()}>
+          <h2>Settings</h2>
+          <p className="settings-hint">Loading…</p>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    )
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal card" onClick={(e) => e.stopPropagation()}>
         <h2>Settings</h2>
+
+        <CliSection settings={settings} setSettings={setSettings} />
+
+        <button className="btn" onClick={() => setShowAccounts(true)}>
+          ⚿ Connected accounts…
+        </button>
 
         <label className="settings-field"> Work minutes
           <input
@@ -689,13 +774,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           />
         </label>
 
-        <label className="settings-field"> Claude CLI path
-          <input
-            value={settings.claudePath}
-            onChange={(e) => setSettings({ ...settings, claudePath: e.target.value })}
-          />
-        </label>
-
         <div className="snippets-section">
           <div className="rail-header">Quick snippets — type /KEY + space anywhere in ASIT</div>
           {Object.entries(settings.snippets ?? {}).map(([key, value]) => (
@@ -725,10 +803,6 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
 
         <GuardrailsSection settings={settings} setSettings={setSettings} />
 
-        <button className="btn" onClick={() => setShowAccounts(true)}>
-          ⚿ Connected accounts…
-        </button>
-
         <VoiceSection />
 
         <div className="transfer-section">
@@ -750,6 +824,7 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           </div>
         )}
 
+        {saveError && <p className="settings-hint settings-cli-bad">{saveError}</p>}
         <div className="modal-actions">
           <button className="btn btn-ghost" onClick={onClose}> Cancel
           </button>

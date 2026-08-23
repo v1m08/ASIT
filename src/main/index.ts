@@ -1,10 +1,10 @@
-import { app, BrowserWindow, globalShortcut, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, shell } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
 import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
-import { logError } from './log'
+import { errorLogPath, logError } from './log'
 import { initUpdater } from './services/updater'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
@@ -262,6 +262,21 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+}).catch((err) => {
+  // Without this, a startup throw (e.g. the database failed to open) was
+  // swallowed by the unhandledRejection logger: the process sat in Task
+  // Manager with NO window, and relaunching just "focused" a window that
+  // didn't exist. Tell the user, then exit cleanly.
+  logError('startup', err)
+  try {
+    dialog.showErrorBox(
+      'ASIT could not start',
+      `${err instanceof Error ? err.message : String(err)}\n\nDetails were written to:\n${errorLogPath()}`
+    )
+  } catch {
+    // dialog can fail before ready — the log entry above still exists
+  }
+  app.exit(1)
 })
 
 // The database must be folded away on EVERY exit path, not just the one where
@@ -472,7 +487,31 @@ async function runSecuritySmokeTest(): Promise<void> {
       fail(`flow workspace targeting not refused: ${flowLog[1]}`)
     if (resourcesSvc.listResources(task.id).some((r) => r.url?.includes('x.com')))
       fail('flow cross-workspace action leaked through')
+    // A poisoned flow must not be able to trash a workspace or trap the user
+    // in a locked session either.
+    const flowLog2 = await actions.runFlow(task.id, [
+      { action: 'delete_workspace', target: 'Sec Test' },
+      { action: 'start_focus' }
+    ] as never)
+    if (!flowLog2[0]?.includes('not allowed inside a replayed skill flow'))
+      fail(`flow delete_workspace not refused: ${flowLog2[0]}`)
+    if (!flowLog2[1]?.includes('not allowed inside a replayed skill flow'))
+      fail(`flow start_focus not refused: ${flowLog2[1]}`)
     console.log('[security-smoke] replayed flows cannot message or cross workspaces')
+
+    // App-command walls: delete_workspace/open_workspace are Jarvis-only, and
+    // there is NO verb that stops a focus session (absence, not permission).
+    const delAsWorkspace = await actions.executeAction(task.id, {
+      action: 'delete_workspace',
+      target: 'Sec Test'
+    })
+    if (!delAsWorkspace.includes('only available to the universal agent'))
+      fail(`workspace agent could delete workspaces: ${delAsWorkspace}`)
+    for (const verb of ['stop_focus', 'end_focus', 'release_lockdown', 'stop_session']) {
+      const tryStop = await actions.executeAction(jarvis.id, { action: verb })
+      if (!tryStop.startsWith('unknown action')) fail(`session-stop verb exists: ${verb}`)
+    }
+    console.log('[security-smoke] delete_workspace is Jarvis-only; no session-stop verb exists')
 
     // Private workspace unreachable by Jarvis name resolution.
     const priv = tasksSvc.createTask({ title: 'Secret', aiDisabled: true })

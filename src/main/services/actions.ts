@@ -6,14 +6,25 @@ import type { UpdateTaskInput } from '@shared/types'
 import { getDb, newId, nowIso } from '../db'
 import {
   createTask,
+  deleteTask,
   getTask,
   jarvisTaskId,
+  listTasks,
   refreshClaudeMd,
   resolveWorkspace,
   updateTask
 } from './tasks'
 import { recipientAllowed, sendAuthorized, sendRefusalReason } from './guardrails'
-import { addUrlResource, listResources, removeResource, renameResource, reorderResources } from './resources'
+import {
+  addNoteResource,
+  addUrlResource,
+  listResources,
+  removeResource,
+  renameResource,
+  reorderResources
+} from './resources'
+import { addTodo, deleteTodo, listTodos, setTodoDone } from './todos'
+import { timer } from './timer'
 import { paneManager } from './panes'
 import { enqueueCustomGeneration, type CustomQuestionParams } from './questions'
 import { saveSkill } from './skills'
@@ -165,9 +176,11 @@ class ActionsWatcher {
       if (this.debounceTimer) clearTimeout(this.debounceTimer)
       // Serialize batches: processNewLines awaits page settles/snapshots, and
       // a second fs event mid-run must not interleave its actions with ours.
+      // Just long enough to coalesce the write events one Write produces.
+      // This is dead time on every batch, so it is as short as it can be.
       this.debounceTimer = setTimeout(() => {
         this.chain = this.chain.then(() => this.processNewLines(taskId, file)).catch(() => undefined)
-      }, 120)
+      }, 40)
     })
     // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
     // renamed; without a handler that would crash the main process.
@@ -216,7 +229,10 @@ class ActionsWatcher {
     // Close the loop: settle, refresh what the model sees, then report.
     const task = getTask(taskId)
     if (mutated) {
-      await new Promise((r) => setTimeout(r, 450)) // let the page react
+      // Let the page react before snapshotting it. Capturing the DOM costs
+      // ~2ms, so this pause IS the post-batch cost — keep it to what a page
+      // actually needs to run its handlers and repaint.
+      await new Promise((r) => setTimeout(r, 250))
       try {
         if (task && !task.aiDisabled) await paneManager.snapshotAll(task.folderPath, taskId)
       } catch {
@@ -368,6 +384,125 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       push({ type: 'task-updated' })
       push({ type: 'toast', text: `Created workspace "${created.title}"` })
       return `created workspace "${created.title}" (id ${created.id}). Add resources to it with {"action":"add_url","workspace":"${created.title}",...}`
+    }
+
+    // ----- app command surface: the agent can do what the user can do in the
+    // UI, so "make me a workspace with a plan and three to-dos" is one prompt.
+    // The walls stay: private workspaces are invisible (resolveWorkspace and
+    // listTasks-filter both exclude them), the vault/terminal/settings have no
+    // verbs, sends stay user-authorized, and NOTHING here can release a
+    // lockdown (invariant 3 — start_focus exists, no stop counterpart). -----
+
+    case 'add_todo': {
+      const text = (action.value ?? action.content ?? action.title ?? '').trim()
+      if (!text) return 'add_todo: needs the to-do text in "value"'
+      const made = addTodo({
+        text,
+        dueDate: action.due_date ?? null,
+        priority: typeof action.priority === 'number' ? action.priority : 2,
+        taskId: taskId === jarvisTaskId() ? null : taskId
+      })
+      if (!made) return 'add_todo: empty after trimming'
+      push({ type: 'toast', text: `☑ Added to-do: ${text.slice(0, 60)}` })
+      return `added to-do "${text.slice(0, 100)}"${made.dueDate ? ` due ${made.dueDate}` : ''}`
+    }
+
+    case 'complete_todo':
+    case 'delete_todo': {
+      const q = (action.target ?? action.value ?? '').trim().toLowerCase()
+      if (!q) return `${action.action}: name the to-do (a distinctive part of its text)`
+      const open = listTodos(action.action === 'delete_todo')
+      const hit =
+        open.find((t) => t.text.toLowerCase() === q) ??
+        open.find((t) => t.text.toLowerCase().includes(q))
+      if (!hit) return `${action.action}: no to-do matching "${q.slice(0, 60)}"`
+      if (action.action === 'complete_todo') {
+        setTodoDone(hit.id, true)
+        push({ type: 'toast', text: `☑ Completed: ${hit.text.slice(0, 60)}` })
+        return `completed "${hit.text.slice(0, 100)}"`
+      }
+      deleteTodo(hit.id)
+      push({ type: 'toast', text: `☑ Deleted to-do: ${hit.text.slice(0, 60)}` })
+      return `deleted to-do "${hit.text.slice(0, 100)}"`
+    }
+
+    case 'list_todos': {
+      const todos = listTodos()
+      if (todos.length === 0) return 'no open to-dos'
+      return todos
+        .slice(0, 40)
+        .map((t) => `- ${t.text}${t.dueDate ? ` (due ${t.dueDate})` : ''}`)
+        .join('\n')
+    }
+
+    // A named note file in this workspace, optionally with starting content.
+    // The agent could already Write files; this one also pins it to the rail
+    // and refreshes context, so the note is visible and citable immediately.
+    case 'add_note': {
+      const title = (action.title ?? action.target ?? '').trim()
+      if (!title) return 'add_note: needs a title'
+      const resource = addNoteResource(taskId, task.folderPath, title.slice(0, 80))
+      const content = (action.content ?? '').trim()
+      if (content && resource.filePath) {
+        writeFileSync(resource.filePath, `# ${title}\n\n${content}\n`)
+      }
+      refreshClaudeMd(taskId)
+      push({ type: 'resources-changed' })
+      push({ type: 'toast', text: `✎ Claude added note: ${title.slice(0, 50)}` })
+      return `note "${title}" created${content ? ' with content' : ''} — it's pinned to the rail`
+    }
+
+    // Private workspaces are structurally absent from this list — same rule
+    // as every other surface.
+    case 'list_workspaces': {
+      const all = listTasks().filter((t) => !t.aiDisabled)
+      if (all.length === 0) return 'no workspaces yet — create one with create_workspace'
+      return all
+        .map(
+          (t) =>
+            `- ${t.title} (${t.status}${t.dueDate ? `, due ${t.dueDate}` : ''}, priority ${t.priority})`
+        )
+        .join('\n')
+    }
+
+    // Bring a workspace on screen. Universal-agent only: cross-workspace
+    // navigation is Jarvis's job, a workspace agent has no business stealing
+    // the screen.
+    case 'open_workspace': {
+      if (taskId !== jarvisTaskId()) return 'open_workspace is only available to the universal agent'
+      const target = resolveWorkspace(String(action.target ?? action.value ?? ''))
+      if (!target) return `no workspace matching "${String(action.target ?? '').slice(0, 60)}"`
+      push({ type: 'open-workspace', taskId: target.id })
+      return `opened workspace "${target.title}"`
+    }
+
+    // Jarvis-only, and REVERSIBLE by construction: deleteTask moves the folder
+    // to Documents\ASIT\.trash (invariant 5), never erases. Loud toast so a
+    // deletion can't happen quietly.
+    case 'delete_workspace': {
+      if (taskId !== jarvisTaskId())
+        return 'delete_workspace is only available to the universal agent'
+      const target = resolveWorkspace(String(action.target ?? action.value ?? ''))
+      if (!target) return `no workspace matching "${String(action.target ?? '').slice(0, 60)}"`
+      const res = deleteTask(target.id)
+      if (!res.ok) return `could not delete "${target.title}": ${res.reason}`
+      push({ type: 'task-updated' })
+      push({ type: 'toast', text: `🗑 Agent deleted workspace "${target.title}" — files are in trash` })
+      return `deleted workspace "${target.title}" (its files moved to trash and can be restored)`
+    }
+
+    // Start a focus session. There is DELIBERATELY no stop/release verb: the
+    // lockdown's escape friction is validated in main from user input only
+    // (invariant 3), and an agent must never be able to end a session.
+    case 'start_focus': {
+      const mode = action.mode === 'pomodoro' ? 'pomodoro' : 'stopwatch'
+      const st = timer.start(taskId, mode)
+      if (st.taskId !== taskId || st.phase === 'idle') {
+        return 'a session is already running — finish it first (the agent cannot stop sessions)'
+      }
+      push({ type: 'open-workspace', taskId })
+      push({ type: 'toast', text: `▶ Focus started (${mode})` })
+      return `focus session started (${mode}). It ends only when the user releases it.`
     }
 
     // Explicit web search. `fetch` reads the user's own mail; this reads the
@@ -682,7 +817,14 @@ export function appendResultNote(taskId: string, note: string): void {
 // messages a person or crosses into another workspace is refused even if a
 // poisoned flow encodes it. (Navigation/clicks stay allowed: that's what
 // automation flows are for, and each navigate is toasted.)
-const FLOW_FORBIDDEN = new Set(['send_whatsapp', 'read_terminal'])
+// delete_workspace and start_focus join the list: a replayed flow could
+// otherwise silently trash a workspace or trap the user in a locked session.
+const FLOW_FORBIDDEN = new Set([
+  'send_whatsapp',
+  'read_terminal',
+  'delete_workspace',
+  'start_focus'
+])
 
 export async function runFlow(taskId: string, steps: AppAction[]): Promise<string[]> {
   const log: string[] = []

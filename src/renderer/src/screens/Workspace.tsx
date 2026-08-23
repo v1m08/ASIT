@@ -77,6 +77,13 @@ export default function Workspace(): JSX.Element {
     return () => clearInterval(t)
   }, [pendingResourceId])
 
+  // The grid registers itself as the app-wide URL opener below; un-register
+  // on unmount or history/palette clicks on Home would call a stale closure
+  // over a grid that no longer exists (and nothing would visibly happen).
+  useEffect(() => {
+    return () => useStore.getState().setUrlOpener(null)
+  }, [])
+
   const handleGoHome = useCallback(async (): Promise<void> => {
     // Park (hide, keep alive) — pages don't reload when you come back.
     await window.asit.panes.park()

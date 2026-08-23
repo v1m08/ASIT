@@ -43,7 +43,7 @@ export function invalidateClaudePathCache(): void {
 export class ClaudeNotFoundError extends Error {
   constructor() {
     super(
-      'Claude Code CLI not found. Install it (https://claude.com/claude-code) or set its path in ASIT settings.'
+      "ASIT's AI runs on the free Claude Code app, which isn't installed yet. Click “⚠ AI setup needed” in the top bar (or open Settings → AI engine) to set it up."
     )
   }
 }
@@ -53,7 +53,7 @@ function isAuthError(text: string): boolean {
 }
 
 const AUTH_HINT =
-  'Claude CLI is not logged in. Open a terminal, run `claude`, and complete /login — then try again.'
+  'Claude Code is installed but not signed in yet. Open the Claude Code app once, sign in when it asks, then try again here.'
 
 // ---------------------------------------------------------------------------
 // NDJSON line parser (stdout arrives in arbitrary chunks; buffer partials).
@@ -301,7 +301,10 @@ export function runClaudeStream(
     finished = true
     const detail = stderrText.trim().slice(0, 500)
     if (isAuthError(detail)) handlers.onError(AUTH_HINT)
-    else handlers.onError(`Claude CLI exited (code ${code}).${detail ? ` ${detail}` : ''}`)
+    else
+      handlers.onError(
+        `The AI stopped unexpectedly (exit code ${code})${detail ? ` — ${detail}` : ''}. Try again; if it keeps happening, restart ASIT.`
+      )
   })
 
   return {

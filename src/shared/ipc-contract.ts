@@ -159,6 +159,10 @@ export const IPC = {
   // settings
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
+  // Claude CLI health: is the binary reachable? (The app is dead-in-the-water
+  // without it, so the UI checks proactively instead of failing per-feature.)
+  CLAUDE_CLI_STATUS: 'claude:cliStatus',
+  CLAUDE_CLI_LOCATE: 'claude:cliLocate',
   SNIPPETS_GET: 'snippets:get', // pane preload fetches snippets (literal string there)
 
   // to-dos

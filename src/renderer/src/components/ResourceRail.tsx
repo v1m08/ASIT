@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { useFileDrop } from '../hooks/useFileDrop'
 import type { Resource, Task } from '@shared/types'
 import { BUILTIN_APP, BUILTIN_NOTES, BUILTIN_REVIEW, BUILTIN_TERMINAL } from './PaneGrid'
+import { looksLikeUrl } from './AddressBar'
 import { useStore } from '../store/useStore'
 
 function railIcon(kind: string): string {
@@ -94,9 +95,10 @@ export default function ResourceRail({
     setUrlValue('')
     setShowAddUrl(false)
     // A real URL becomes a resource; anything else opens an in-app web search
-    // (browse to the page, then ⌾ pin it to the task).
-    const looksLikeUrl = !/\s/.test(value) && value.includes('.')
-    if (looksLikeUrl) {
+    // (browse to the page, then ⌾ pin it to the task). Same detector as the
+    // address bar — two heuristics disagreeing about "localhost:3000" is
+    // exactly the kind of seam users trip on.
+    if (looksLikeUrl(value)) {
       const r = await window.asit.resources.addUrl(task.id, urlTitle.trim(), value)
       await onResourcesChanged()
       onOpen(r.id)

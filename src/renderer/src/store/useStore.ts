@@ -38,6 +38,8 @@ export interface TabSurface {
 interface AsitState {
   view: 'home' | 'workspace'
   tasks: Task[]
+  /** False until the first successful tasks load — gates empty states. */
+  tasksLoaded: boolean
   activeTask: Task | null
   activeResources: Resource[]
   settings: Settings | null
@@ -64,6 +66,7 @@ interface AsitState {
   setJobStatus: (s: { label: string; queued: number } | null) => void
   notice: { id: number; text: string; kind: 'info' | 'ok' | 'error' } | null
   pushNotice: (text: string, kind: 'info' | 'ok' | 'error') => void
+  dismissNotice: () => void
   pendingResourceId: string | null
   consumePendingResource: () => string | null
   openTaskAndResource: (taskId: string, resourceId: string) => Promise<void>
@@ -119,6 +122,7 @@ interface AsitState {
 export const useStore = create<AsitState>((set, get) => ({
   view: 'home',
   tasks: [],
+  tasksLoaded: false,
   activeTask: null,
   activeResources: [],
   settings: null,
@@ -142,12 +146,21 @@ export const useStore = create<AsitState>((set, get) => ({
   setJobStatus: (s) => set({ jobStatus: s }),
   notice: null,
   pushNotice: (text, kind) => {
+    // A sticky error is on screen until the user dismisses it — a passing
+    // info/ok toast must not silently replace it (that would auto-clear in
+    // 6s and take the error with it).
+    if (get().notice?.kind === 'error' && kind !== 'error') return
     const id = ++noticeCounter
     set({ notice: { id, text, kind } })
+    // Errors STAY until dismissed. Six seconds of a 220px ellipsis was the
+    // only trace many failures ever left, and blinking away mid-read is the
+    // opposite of actionable.
+    if (kind === 'error') return
     setTimeout(() => {
       if (get().notice?.id === id) set({ notice: null })
     }, 6000)
   },
+  dismissNotice: () => set({ notice: null }),
   pendingResourceId: null,
   consumePendingResource: () => {
     const id = get().pendingResourceId
@@ -200,7 +213,10 @@ export const useStore = create<AsitState>((set, get) => ({
   // real data (or an unknown state) with an empty one.
   loadTasks: async () => {
     const tasks = await reliably('workspaces', () => window.asit.tasks.list())
-    if (tasks) set({ tasks })
+    // tasksLoaded gates the "No workspaces yet" empty state: before the first
+    // resolve the truthful answer is "don't know yet", and a user with thirty
+    // workspaces should not be told they have none on every launch.
+    if (tasks) set({ tasks, tasksLoaded: true })
   },
 
   loadSettings: async () => {
@@ -209,9 +225,20 @@ export const useStore = create<AsitState>((set, get) => ({
   },
 
   openTask: async (id: string) => {
-    const result = await window.asit.tasks.open(id)
-    if (result) {
-      set({ view: 'workspace', activeTask: result.task, activeResources: result.resources })
+    // Failure must SAY something — a click that silently does nothing reads
+    // as "the app is broken", which is worse than any error message.
+    try {
+      const result = await window.asit.tasks.open(id)
+      if (result) {
+        set({ view: 'workspace', activeTask: result.task, activeResources: result.resources })
+      } else {
+        get().pushNotice("Couldn't open that workspace — it may have been deleted.", 'error')
+      }
+    } catch (err) {
+      get().pushNotice(
+        `Couldn't open that workspace — ${err instanceof Error ? err.message : String(err)}`,
+        'error'
+      )
     }
   },
 
