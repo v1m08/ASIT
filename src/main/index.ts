@@ -806,7 +806,9 @@ async function runTerminalSmokeTest(): Promise<void> {
     const other = tasksSvc.createTask({ title: 'Term Other' })
 
     // A real pty must actually work — otherwise the rest proves nothing.
-    const opened = term.openTerminal(task.id, 'cmd', () => null)
+    // No shell name: resolveShell picks what this platform actually has.
+    // Asking for 'cmd' passed on Windows and failed the whole macOS suite.
+    const opened = term.openTerminal(task.id, undefined, () => null)
     if (!('id' in opened) || !opened.id) fail(`terminal did not open: ${JSON.stringify(opened)}`)
     const termId = (opened as { id: string }).id
     term.writeFromUser(termId, 'echo SMOKE_MARKER_OK\r\n')
@@ -832,7 +834,14 @@ async function runTerminalSmokeTest(): Promise<void> {
     if (!(await waitFor(() => term.replayBuffer(termId).includes('hunter2'))))
       fail('secret line never reached the buffer')
     const filtered = await actions.executeAction(task.id, { action: 'read_terminal' })
-    if (filtered.includes('hunter2')) fail('protected line leaked to the agent')
+    if (filtered.includes('hunter2')) {
+      const where = filtered
+        .split('\n')
+        .filter((l) => l.includes('hunter2'))
+        .map((l) => JSON.stringify(l.trim()))
+        .join(' | ')
+      fail(`protected line leaked to the agent: ${where}`)
+    }
     console.log('[terminal-smoke] protected topics stripped from terminal reads')
 
     // Another workspace must not see this terminal, even opted in.

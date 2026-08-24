@@ -31,6 +31,8 @@ interface Session {
   pty: IPty
   buffer: string // rolling scrollback, capped
   exited: boolean
+  /** Current width. Needed to rejoin rows the pty hard-wrapped (see unwrap). */
+  cols: number
 }
 
 const sessions = new Map<string, Session>()
@@ -123,7 +125,7 @@ export function openTerminal(
     return { error: err instanceof Error ? err.message : String(err) }
   }
 
-  const session: Session = { id, owner: taskId, pty, buffer: '', exited: false }
+  const session: Session = { id, owner: taskId, pty, buffer: '', exited: false, cols: 80 }
   sessions.set(id, session)
 
   pty.onData((data) => {
@@ -158,7 +160,9 @@ export function resizeTerminal(id: string, cols: number, rows: number): void {
   const s = sessions.get(id)
   if (!s || s.exited) return
   try {
-    s.pty.resize(Math.max(2, Math.floor(cols)), Math.max(1, Math.floor(rows)))
+    const width = Math.max(2, Math.floor(cols))
+    s.pty.resize(width, Math.max(1, Math.floor(rows)))
+    s.cols = width
   } catch {
     // the pty can exit between the check and the resize
   }
@@ -209,6 +213,25 @@ function stripAnsi(text: string): string {
  * The ONLY way any agent sees a terminal. Every gate is checked here, in main,
  * from database state the model cannot influence.
  */
+/**
+ * Rejoin rows a terminal hard-wrapped. A row of exactly the terminal width
+ * was almost certainly continued on the next one — there is no marker for it,
+ * width is the only signal a pty leaves behind.
+ *
+ * Being wrong here is safe in the direction that matters: joining two lines
+ * that were genuinely separate can only cause MORE redaction, never less.
+ */
+function unwrap(lines: string[], cols: number): string[] {
+  if (!Number.isFinite(cols) || cols < 20) return lines
+  const out: string[] = []
+  for (const line of lines) {
+    const previous = out[out.length - 1]
+    if (previous !== undefined && previous.length >= cols) out[out.length - 1] = previous + line
+    else out.push(line)
+  }
+  return out
+}
+
 export function readForAgent(taskId: string, terminalId?: string): string {
   const task = getTask(taskId)
   if (!task) return 'BLOCKED: unknown workspace.'
@@ -224,8 +247,13 @@ export function readForAgent(taskId: string, terminalId?: string): string {
   if (!target) return 'BLOCKED: no terminal with that id in this workspace.'
 
   const text = stripAnsi(target.buffer).slice(-MAX_AGENT_READ)
-  // A shell echoes tokens, keys and env dumps — same protected-topic wall as mail.
-  const { kept, removed } = filterSensitiveLines(text.split('\n'))
+  // A shell echoes tokens, keys and env dumps — same protected-topic wall as
+  // mail. UNWRAP FIRST: a terminal hard-wraps at its column width, so a long
+  // sensitive line arrives split across rows. Filtering the rows directly
+  // removed the row holding the word "password" and happily returned the next
+  // row holding the actual secret — found by pointing the smoke at a shell
+  // that wraps. Rejoining continuations makes the filter see whole lines.
+  const { kept, removed } = filterSensitiveLines(unwrap(text.split('\n'), target.cols))
   const body = kept.join('\n').trim()
   const note = removed > 0 ? `\n\n_(${removed} line(s) hidden — protected topics)_` : ''
   return body.length > 0
