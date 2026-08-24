@@ -66,7 +66,10 @@ app.whenReady().then(async () => {
   // refuses to lay out very small frameless windows reliably (a 24px one fails
   // to load at all), and a flaky icon build is worse than a slightly softer
   // 16px entry.
-  const BASE = 256
+  // 1024 because macOS requires an icon of at least 512x512 (electron-builder
+  // refuses to package otherwise), and the .ico entries downscale from the
+  // same render so both platforms stay in sync.
+  const BASE = 1024
   const win = new BrowserWindow({
     width: BASE,
     height: BASE,
@@ -90,7 +93,7 @@ app.whenReady().then(async () => {
 
   const images = SIZES.map((size) => ({
     size,
-    png: (size === BASE ? base : base.resize({ width: size, height: size, quality: 'best' })).toPNG()
+    png: base.resize({ width: size, height: size, quality: 'best' }).toPNG()
   }))
 
   mkdirSync(OUT_DIR, { recursive: true })
