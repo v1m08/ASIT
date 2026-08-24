@@ -603,22 +603,27 @@ async function handleUtterance(samples: Float32Array): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Mouth: a persistent PowerShell SpeechSynthesizer — zero downloads, speaks
-// within ~100ms. Reads one JSON line per utterance; "STOP" cancels.
+// Mouth: the operating system's own speech engine — zero downloads, speaks
+// within ~100ms. A long-lived helper reads one JSON line per utterance and
+// prints DONE when it finishes; "STOP" cancels. Windows uses a PowerShell
+// SpeechSynthesizer, macOS the `say` command; the protocol between them and
+// this file is identical, so nothing above here changes per platform.
+// (Kokoro, when downloaded, replaces this entirely with a nicer voice.)
 // ---------------------------------------------------------------------------
 
 let tts: ChildProcess | null = null
 let ttsDoneCb: (() => void) | null = null
 
-function ensureTts(): ChildProcess {
-  if (tts && !tts.killed) return tts
-  tts = spawn(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `Add-Type -AssemblyName System.Speech
+/** The helper process, per platform. Same stdin/stdout contract either way. */
+function spawnTtsHelper(): ChildProcess {
+  if (process.platform === 'win32') {
+    return spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `Add-Type -AssemblyName System.Speech
 $sp = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $sp.Rate = 1
 while ($true) {
@@ -632,9 +637,37 @@ while ($true) {
     [Console]::Out.WriteLine('DONE')
   } catch { [Console]::Out.WriteLine('DONE') }
 }`
+      ],
+      { windowsHide: true }
+    )
+  }
+  // macOS: `say` is built in. node reads the same line protocol and shells out
+  // per utterance, killing any in-flight one so barge-in still works.
+  return spawn(
+    process.execPath,
+    [
+      '-e',
+      `const { spawn } = require('child_process')
+let cur = null
+require('readline')
+  .createInterface({ input: process.stdin })
+  .on('line', (line) => {
+    if (cur) { try { cur.kill('SIGKILL') } catch {} cur = null }
+    if (line === 'STOP') return
+    let text = ''
+    try { text = JSON.parse(line) } catch { console.log('DONE'); return }
+    cur = spawn('say', [String(text)])
+    cur.on('exit', () => { cur = null; console.log('DONE') })
+    cur.on('error', () => { cur = null; console.log('DONE') })
+  })`
     ],
-    { windowsHide: true }
+    { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
   )
+}
+
+function ensureTts(): ChildProcess {
+  if (tts && !tts.killed) return tts
+  tts = spawnTtsHelper()
   tts.stdout?.on('data', (d: Buffer) => {
     if (d.toString().includes('DONE')) {
       const cb = ttsDoneCb

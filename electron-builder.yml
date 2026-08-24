@@ -14,6 +14,12 @@ files:
   - '!node_modules/pdf-parse/lib/pdf.js/v2.0.550/**'
 asarUnpack:
   - node_modules/better-sqlite3/**
+  # Per-platform native payloads. npm installs only the ones matching the
+  # build host, so the globs that don't apply simply match nothing.
+  - node_modules/sherpa-onnx-darwin-x64/**
+  - node_modules/sherpa-onnx-darwin-arm64/**
+  - node_modules/@lydell/node-pty-darwin-x64/**
+  - node_modules/@lydell/node-pty-darwin-arm64/**
   # Native speech stack: the .node addon + its DLLs must live on the real
   # filesystem for the loader to find them.
   - node_modules/sherpa-onnx-node/**
@@ -45,6 +51,26 @@ nsis:
   runAfterFinish: true
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
+mac:
+  # Both architectures: Apple silicon natively, Intel for older machines.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip # electron-updater needs the zip; the dmg is for humans
+      arch: [arm64, x64]
+  icon: build/icon.png
+  category: public.app-category.productivity
+  # The app asks for the mic (dictation) and reaches the network. macOS kills
+  # apps that use these without declaring why.
+  extendInfo:
+    NSMicrophoneUsageDescription: ASIT uses your microphone for local dictation and voice commands. Audio never leaves your machine.
+  # Unsigned builds: Gatekeeper quarantines a downloaded app unless the
+  # quarantine bit is cleared. Documented in the README rather than pretended
+  # away — signing needs a paid Apple Developer account.
+  identity: null
+dmg:
+  writeUpdateInfo: false
+
 # Where the app looks for updates, and where `npm run release` publishes them.
 publish:
   provider: github

@@ -14,7 +14,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "dist": "electron-vite build && electron-builder --win --publish never",
     "icon": "electron scripts/make-icon.cjs",
-    "release": "electron-vite build && electron-builder --win --publish always"
+    "release": "electron-vite build && electron-builder --win --publish always",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
+    "release:mac": "electron-vite build && electron-builder --mac --publish always",
+    "smoke": "electron-vite build && node scripts/smoke.cjs"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.15",

@@ -1,3 +1,4 @@
+import { isAbsolute } from 'path'
 import { spawn as ptySpawn, type IPty } from '@lydell/node-pty'
 import { BrowserWindow } from 'electron'
 import { existsSync } from 'fs'
@@ -39,30 +40,56 @@ const MAX_BUFFER = 200_000 // ~200KB of scrollback per terminal
 const MAX_AGENT_READ = 8_000 // what a single agent read may return
 const MAX_TERMINALS_PER_TASK = 4
 
-/** Windows shells we're willing to launch, resolved to real paths. */
-function resolveShell(requested?: string): { file: string; args: string[] } | null {
-  const sys = process.env.SystemRoot ?? 'C:\\Windows'
-  const known: Record<string, { file: string; args: string[] }> = {
-    cmd: { file: `${sys}\\System32\\cmd.exe`, args: [] },
-    powershell: {
-      file: `${sys}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
-      args: ['-NoLogo']
-    },
-    pwsh: { file: 'pwsh.exe', args: ['-NoLogo'] },
-    wsl: { file: `${sys}\\System32\\wsl.exe`, args: [] },
-    bash: { file: 'C:\\Program Files\\Git\\bin\\bash.exe', args: ['--login', '-i'] }
+const IS_WINDOWS = process.platform === 'win32'
+
+/** The shells we're willing to launch, resolved to real paths. */
+function shellTable(): Record<string, { file: string; args: string[] }> {
+  if (IS_WINDOWS) {
+    const sys = process.env.SystemRoot ?? 'C:\\Windows'
+    return {
+      cmd: { file: `${sys}\\System32\\cmd.exe`, args: [] },
+      powershell: {
+        file: `${sys}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+        args: ['-NoLogo']
+      },
+      pwsh: { file: 'pwsh.exe', args: ['-NoLogo'] },
+      wsl: { file: `${sys}\\System32\\wsl.exe`, args: [] },
+      bash: { file: 'C:\\Program Files\\Git\\bin\\bash.exe', args: ['--login', '-i'] }
+    }
   }
-  const pick = known[(requested ?? 'powershell').toLowerCase()]
+  // macOS/Linux. -l so the user's PATH and aliases are actually present: a GUI
+  // app inherits launchd's environment, not the one their shell sets up.
+  return {
+    zsh: { file: '/bin/zsh', args: ['-l'] },
+    bash: { file: '/bin/bash', args: ['-l'] },
+    sh: { file: '/bin/sh', args: ['-l'] },
+    fish: { file: '/opt/homebrew/bin/fish', args: ['-l'] },
+    pwsh: { file: '/usr/local/bin/pwsh', args: ['-NoLogo'] }
+  }
+}
+
+/** What we open when the user hasn't chosen. */
+function defaultShell(): string {
+  if (IS_WINDOWS) return 'powershell'
+  // $SHELL is the user's real login shell when it's set.
+  const fromEnv = (process.env.SHELL ?? '').split('/').pop()
+  return fromEnv && fromEnv in shellTable() ? fromEnv : 'zsh'
+}
+
+function resolveShell(requested?: string): { file: string; args: string[] } | null {
+  const known = shellTable()
+  const fallback = defaultShell()
+  const pick = known[(requested ?? fallback).toLowerCase()]
   if (!pick) return null
-  // pwsh/bash may not be installed — fall back rather than throwing at the user.
-  if (pick.file.includes('\\') && !existsSync(pick.file)) {
-    return requested === 'powershell' ? null : known.powershell
+  // Not every shell is installed — fall back rather than throwing at the user.
+  if (isAbsolute(pick.file) && !existsSync(pick.file)) {
+    return requested === fallback ? null : (known[fallback] ?? null)
   }
   return pick
 }
 
 export function listShells(): string[] {
-  return ['powershell', 'cmd', 'bash', 'wsl', 'pwsh'].filter((s) => resolveShell(s) !== null)
+  return Object.keys(shellTable()).filter((s) => resolveShell(s) !== null)
 }
 
 export function openTerminal(

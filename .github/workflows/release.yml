@@ -1,8 +1,8 @@
 name: Release
 
-# Push a version tag and this builds the Windows installer and attaches it to
-# a GitHub Release. That release is also the update feed the app itself polls,
-# so shipping a fix and delivering it are the same action:
+# Push a version tag and this builds installers for Windows and macOS and
+# attaches them to a GitHub Release. That release is also the update feed the
+# app itself polls, so shipping a fix and delivering it are the same action:
 #
 #   npm version patch && git push --follow-tags
 #
@@ -14,11 +14,23 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # needed to create the release and upload the installer
+  contents: write # needed to create the release and upload the installers
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      # One platform failing must not delete the other's artifacts from a
+      # half-published release.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            build: npm run release
+          - os: macos-latest
+            name: mac
+            build: npm run release:mac
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,20 +46,32 @@ jobs:
       - run: npm run typecheck
 
       # The icon is generated, not committed, so it needs a display to render
-      # into. Windows runners have one, but a missing icon is not worth
-      # failing a release over — electron-builder falls back to the default.
+      # into. Both runners have one, but a missing icon is not worth failing a
+      # release over — electron-builder falls back to the default.
       - run: npm run icon
         continue-on-error: true
+
+      # The suite that can run without a logged-in Claude CLI. This is the
+      # only real verification macOS gets — nobody here has a Mac to click
+      # through, so at minimum the app must build, boot, open a window, and
+      # pass its own invariants on that platform.
+      - name: Smoke tests
+        run: npm run smoke
+        env:
+          ASIT_NO_UPDATE: '1'
 
       - name: Build and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release
+        run: ${{ matrix.build }}
 
-      - name: Keep the installer even if publishing fails
+      - name: Keep the installers even if publishing fails
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ASIT-installer
-          path: dist/*.exe
+          name: ASIT-${{ matrix.name }}
+          path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
           if-no-files-found: warn

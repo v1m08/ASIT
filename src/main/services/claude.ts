@@ -5,25 +5,51 @@ import { join } from 'path'
 import { getSettings } from './settings'
 
 // ---------------------------------------------------------------------------
-// Binary resolution. The native installer puts claude.exe at
-// %USERPROFILE%\.local\bin\claude.exe and it is NOT on PATH in
-// non-interactive shells, so we resolve an absolute path ourselves.
+// Binary resolution. The native installer drops the CLI in ~/.local/bin and it
+// is NOT on PATH in non-interactive shells, so we resolve an absolute path
+// ourselves. GUI apps on macOS inherit launchd's PATH, not your shell's, so
+// `which` misses Homebrew and nvm installs too — hence the explicit list.
 // ---------------------------------------------------------------------------
+
+const IS_WINDOWS = process.platform === 'win32'
+
+/** Where each platform's installers actually put it. */
+function claudeCandidates(): string[] {
+  const home = homedir()
+  if (IS_WINDOWS) {
+    return [
+      join(home, '.local', 'bin', 'claude.exe'),
+      join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd')
+    ]
+  }
+  return [
+    join(home, '.local', 'bin', 'claude'),
+    '/opt/homebrew/bin/claude', // Apple silicon Homebrew
+    '/usr/local/bin/claude', // Intel Homebrew, and most installers
+    join(home, '.npm-global', 'bin', 'claude'),
+    join(home, '.bun', 'bin', 'claude'),
+    '/usr/bin/claude'
+  ]
+}
 
 let cachedPath: string | null | undefined
 
 export function resolveClaudePath(): string | null {
   if (cachedPath !== undefined) return cachedPath
   const settingsPath = getSettings().claudePath
-  const candidates = [settingsPath, join(homedir(), '.local', 'bin', 'claude.exe')]
-  for (const c of candidates) {
+  for (const c of [settingsPath, ...claudeCandidates()]) {
     if (c && existsSync(c)) {
       cachedPath = c
       return c
     }
   }
   try {
-    const out = execFileSync('where.exe', ['claude'], { encoding: 'utf-8' })
+    // Last resort: ask the OS. On macOS a login shell is used so the user's
+    // PATH (nvm, asdf, Homebrew) is actually in scope — the app's own PATH
+    // usually isn't.
+    const out = IS_WINDOWS
+      ? execFileSync('where.exe', ['claude'], { encoding: 'utf-8' })
+      : execFileSync('/bin/sh', ['-lc', 'command -v claude'], { encoding: 'utf-8' })
     const first = out.split(/\r?\n/).find((l) => l.trim().length > 0)
     if (first) {
       cachedPath = first.trim()
@@ -111,8 +137,19 @@ function spawnClaude(args: string[], cwd: string, prompt: string): ChildProcess 
 function killTree(child: ChildProcess): void {
   if (child.pid === undefined || child.killed) return
   try {
-    // claude.exe spawns helpers; taskkill /T takes the whole tree down.
-    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    if (process.platform === 'win32') {
+      // The CLI spawns helpers; taskkill /T takes the whole tree down.
+      execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      // Unix: the child was spawned into its own process group, so a negative
+      // pid signals the group. Killing only the leader would orphan its
+      // helpers, which is exactly what taskkill /T avoids on Windows.
+      try {
+        process.kill(-child.pid, 'SIGKILL')
+      } catch {
+        child.kill('SIGKILL')
+      }
+    }
   } catch {
     child.kill()
   }

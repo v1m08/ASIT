@@ -1,11 +1,13 @@
 import AdmZip from 'adm-zip'
 import { basename, dirname, join, resolve, sep } from 'path'
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { getDb, newId, nowIso } from '../db'
 import type { Settings, Task, WorkspaceLayout } from '@shared/types'
 import { createTask, listTasks, refreshClaudeMd, updateTask } from './tasks'
 import { listResources } from './resources'
 import { getSettings, setSettings } from './settings'
+import { listSkills, saveSkill } from './skills'
+import { memoryPath, rememberFact } from './memory'
 
 // ---------------------------------------------------------------------------
 // Backup / sharing export. DELIBERATELY EXCLUDED (sensitive or machine-bound):
@@ -56,12 +58,94 @@ interface ExportTask {
   noteFiles: string[] // md files at task root (notes.md + extra notes)
 }
 
+/** Everything that isn't attached to one workspace. */
+interface ExportExtras {
+  todos: {
+    text: string
+    done: boolean
+    priority: number
+    dueDate: string | null
+    link: string | null
+    createdAt: string
+  }[]
+  skills: { name: string; content: string }[]
+  memory: string | null // the shared facts file
+  schedules: { prompt: string; repeat: string; nextAt: string; enabled: boolean }[]
+}
+
 interface ExportBundle {
   format: 'asit-backup'
-  version: 1
+  // 2 adds `extras`. Version 1 bundles still import — a backup you made
+  // before this change must not stop working because of it.
+  version: 1 | 2
   exportedAt: string
+  /** Which platform produced it. Informational; nothing branches on it. */
+  platform?: string
   settings: Partial<Settings>
   tasks: ExportTask[]
+  extras?: ExportExtras
+}
+
+/**
+ * The parts of "my data" that don't hang off a single workspace: to-dos,
+ * saved skills, the shared memory file, and schedules. These were previously
+ * left out, which made a backup a partial one — you'd move machines and find
+ * your to-do list and everything you'd taught the agent gone.
+ *
+ * Still deliberately excluded: browser logins and the password vault. Both
+ * are encrypted against THIS machine's account (DPAPI on Windows, Keychain on
+ * macOS) and are meaningless anywhere else — copying them would move
+ * unreadable bytes and imply the sessions came along when they did not.
+ */
+function gatherExtras(): ExportExtras {
+  const db = getDb()
+  const todos = (
+    db
+      .prepare(
+        'SELECT text, done, priority, due_date AS dueDate, link, created_at AS createdAt FROM todos'
+      )
+      .all() as Record<string, unknown>[]
+  ).map((r) => ({
+    text: r.text as string,
+    done: (r.done as number) === 1,
+    priority: (r.priority as number) ?? 2,
+    dueDate: (r.dueDate as string) ?? null,
+    link: (r.link as string) ?? null,
+    createdAt: r.createdAt as string
+  }))
+
+  let skills: { name: string; content: string }[] = []
+  try {
+    skills = listSkills().map((sk) => ({ name: sk.name, content: sk.content }))
+  } catch {
+    // a broken skills folder must not sink the whole export
+  }
+
+  let memory: string | null = null
+  try {
+    const mem = memoryPath()
+    if (existsSync(mem)) memory = readFileSync(mem, 'utf-8')
+  } catch {
+    memory = null
+  }
+
+  let schedules: ExportExtras['schedules'] = []
+  try {
+    schedules = (
+      db
+        .prepare('SELECT prompt, repeat, next_at AS nextAt, enabled FROM schedules')
+        .all() as Record<string, unknown>[]
+    ).map((r) => ({
+      prompt: r.prompt as string,
+      repeat: r.repeat as string,
+      nextAt: r.nextAt as string,
+      enabled: (r.enabled as number) === 1
+    }))
+  } catch {
+    schedules = []
+  }
+
+  return { todos, skills, memory, schedules }
 }
 
 export function exportToZip(zipPath: string): { tasks: number; questions: number } {
@@ -135,9 +219,11 @@ export function exportToZip(zipPath: string): { tasks: number; questions: number
 
   const bundle: ExportBundle = {
     format: 'asit-backup',
-    version: 1,
+    version: 2,
     exportedAt: nowIso(),
+    platform: process.platform,
     settings,
+    extras: gatherExtras(),
     tasks: bundleTasks
   }
   zip.addFile('data.json', Buffer.from(JSON.stringify(bundle, null, 2), 'utf-8'))
@@ -148,13 +234,77 @@ export function exportToZip(zipPath: string): { tasks: number; questions: number
 // Import always CREATES new tasks — it never overwrites or merges, so a bad
 // import can't destroy anything. Settings are whitelisted again on the way in
 // (a hand-crafted zip can't smuggle an escape phrase or CLI path in).
+/**
+ * Put the non-workspace data back. Everything here is ADDITIVE and skips
+ * duplicates: importing a backup onto a machine you already use must not
+ * wipe what is there, and importing the same file twice must not double it.
+ */
+function restoreExtras(extras: ExportExtras | undefined): void {
+  if (!extras) return // a version-1 bundle simply has none
+  const db = getDb()
+
+  try {
+    const seen = new Set(
+      (db.prepare('SELECT text FROM todos').all() as { text: string }[]).map((r) => r.text)
+    )
+    const insert = db.prepare(
+      'INSERT INTO todos (id, text, done, priority, due_date, task_id, source_file, link, created_at, completed_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL)'
+    )
+    for (const t of extras.todos ?? []) {
+      if (seen.has(t.text)) continue
+      insert.run(newId(), t.text, t.done ? 1 : 0, t.priority, t.dueDate, t.link, t.createdAt)
+    }
+  } catch (err) {
+    console.error('todo import failed:', err)
+  }
+
+  for (const sk of extras.skills ?? []) {
+    try {
+      saveSkill(sk.name, sk.content)
+    } catch (err) {
+      console.error('skill import failed:', sk.name, err)
+    }
+  }
+
+  // Memory is APPENDED fact by fact, never overwritten — the machine you are
+  // importing onto may have learned things this backup never knew.
+  if (extras.memory) {
+    for (const line of extras.memory.split(/\r?\n/)) {
+      const fact = line.replace(/^[-*]\s*/, '').trim()
+      if (fact && !fact.startsWith('#')) {
+        try {
+          rememberFact(fact, 'import')
+        } catch {
+          // capped at 40 facts; a full list is not an error
+        }
+      }
+    }
+  }
+
+  try {
+    const existing = new Set(
+      (db.prepare('SELECT prompt FROM schedules').all() as { prompt: string }[]).map((r) => r.prompt)
+    )
+    const insert = db.prepare(
+      'INSERT INTO schedules (id, prompt, task_id, repeat, next_at, enabled, last_run_at, last_result, created_at) VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, ?)'
+    )
+    for (const sc of extras.schedules ?? []) {
+      if (existing.has(sc.prompt)) continue
+      insert.run(newId(), sc.prompt, sc.repeat, sc.nextAt, sc.enabled ? 1 : 0, nowIso())
+    }
+  } catch (err) {
+    console.error('schedule import failed:', err)
+  }
+}
+
 export function importFromZip(zipPath: string): { tasks: number; questions: number } {
   const zip = new AdmZip(zipPath)
   const entry = zip.getEntry('data.json')
   if (!entry) throw new Error('Not an ASIT backup (data.json missing).')
   const bundle = JSON.parse(zip.readAsText(entry)) as ExportBundle
   if (bundle.format !== 'asit-backup') throw new Error('Not an ASIT backup file.')
-  if (bundle.version !== 1) throw new Error(`Unsupported backup version ${bundle.version}.`)
+  if (bundle.version !== 1 && bundle.version !== 2)
+    throw new Error(`Unsupported backup version ${bundle.version}.`)
 
   const db = getDb()
 
@@ -164,6 +314,8 @@ export function importFromZip(zipPath: string): { tasks: number; questions: numb
     if (v !== undefined) (safeSettings as Record<string, unknown>)[k] = v
   }
   if (Object.keys(safeSettings).length > 0) setSettings(safeSettings)
+
+  restoreExtras(bundle.extras)
 
   let taskCount = 0
   let questionCount = 0

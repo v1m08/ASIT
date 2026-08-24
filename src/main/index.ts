@@ -382,6 +382,16 @@ async function runTransferSmokeTest(): Promise<void> {
        VALUES (?, ?, ?, 'tq', 'ta', 2.1, 5, 3, 1, ?, ?, 'extracted')`
     ).run(newId(), task.id, rid, nowIso(), nowIso())
 
+    // The things that are not attached to a workspace. A backup that loses
+    // these is a partial one: you move machines and find your to-do list and
+    // everything you taught the agent gone.
+    const todosSvc = await import('./services/todos')
+    const skillsSvc = await import('./services/skills')
+    const memorySvc = await import('./services/memory')
+    todosSvc.addTodo({ text: 'TRANSFER-SMOKE-TODO' })
+    skillsSvc.saveSkill('transfer-smoke-skill', '# transfer smoke\nbody')
+    memorySvc.rememberFact('TRANSFER-SMOKE-FACT', 'smoke')
+
     const zipPath = join(os.tmpdir(), `asit-smoke-${Date.now()}.zip`)
     const exported = transfer.exportToZip(zipPath)
     console.log(`[transfer-smoke] exported ${exported.tasks} tasks, ${exported.questions} questions`)
@@ -395,9 +405,35 @@ async function runTransferSmokeTest(): Promise<void> {
     if (/chat_messages|chat_sessions/i.test(dataJson)) fail('chat data leaked')
     console.log('[transfer-smoke] sensitive-data audit clean ✓')
 
+    // Zip entry names must use forward slashes or a macOS import cannot match
+    // the files/<key>/ prefix a Windows export wrote.
+    const badSep = zip.getEntries().find((e) => e.entryName.includes('\\'))
+    if (badSep) fail(`zip entry uses a backslash, so it will not unpack cross-platform: ${badSep.entryName}`)
+    console.log('[transfer-smoke] archive paths are portable across platforms ✓')
+
     tasks.deleteTask(task.id)
+    // Wipe the non-workspace data too, so the import has to genuinely restore
+    // it rather than finding it already there.
+    for (const t of todosSvc.listTodos()) {
+      if (t.text === 'TRANSFER-SMOKE-TODO') todosSvc.deleteTodo(t.id)
+    }
+    skillsSvc.deleteSkill('transfer-smoke-skill')
+    memorySvc.forgetFact('TRANSFER-SMOKE-FACT')
+
     const imported = transfer.importFromZip(zipPath)
     console.log(`[transfer-smoke] imported ${imported.tasks} tasks, ${imported.questions} questions`)
+
+    if (!todosSvc.listTodos().some((t) => t.text === 'TRANSFER-SMOKE-TODO'))
+      fail('to-dos did not survive the round trip')
+    if (!skillsSvc.listSkills().some((k) => k.name === 'transfer-smoke-skill'))
+      fail('skills did not survive the round trip')
+    if (!memorySvc.listFacts().some((f) => f.text.includes('TRANSFER-SMOKE-FACT')))
+      fail('shared memory did not survive the round trip')
+    // Importing twice must not duplicate anything.
+    transfer.importFromZip(zipPath)
+    const dupes = todosSvc.listTodos().filter((t) => t.text === 'TRANSFER-SMOKE-TODO').length
+    if (dupes !== 1) fail(`importing twice duplicated a to-do (${dupes} copies)`)
+    console.log('[transfer-smoke] to-dos, skills and memory transfer, and re-import is idempotent ✓')
 
     const restored = tasks
       .listTasks()

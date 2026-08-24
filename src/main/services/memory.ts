@@ -29,7 +29,8 @@ export interface MemoryFact {
   at: string
 }
 
-function memoryPath(): string {
+/** Exported so a backup can carry the shared facts to another machine. */
+export function memoryPath(): string {
   return join(app.getPath('documents'), 'ASIT', 'memory.md')
 }
 

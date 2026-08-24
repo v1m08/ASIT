@@ -1,6 +1,8 @@
 # ASIT — architecture notes for Claude Code
 
-Electron (electron-vite + React + TS) study app. Windows-first.
+Electron (electron-vite + React + TS) study app. Windows and macOS.
+
+**Platform rule:** anything OS-specific goes behind a `process.platform` check with a working path for both, or degrades to a clear "not available here" — never a crash. Windows-only by nature: embedded native windows (`appwindows.ts`, Win32 `SetParent`) and auto-update (macOS needs a signed app). `npm run smoke` is the cross-platform gate and runs on both in CI.
 
 ## Structure
 

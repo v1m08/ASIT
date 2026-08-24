@@ -1,18 +1,34 @@
 # ASIT — A Study Tool
 
-**A local-first study & work companion for Windows.** One click on a *workspace* reopens everything that work needs — course sites, Overleaf, PDFs, your notes — exactly where you left them, then a focus timer locks you in. An AI that already knows your context (because every workspace *is* a folder it works inside) can read your material, answer questions, generate recall questions, and even drive the app for you. It runs on your existing [Claude Code](https://claude.com/claude-code) subscription — **no API keys, no cloud, nothing leaves your machine.**
+**A local-first study & work companion for Windows and macOS.** One click on a *workspace* reopens everything that work needs — course sites, Overleaf, PDFs, your notes — exactly where you left them, then a focus timer locks you in. An AI that already knows your context (because every workspace *is* a folder it works inside) can read your material, answer questions, generate recall questions, and even drive the app for you. It runs on your existing [Claude Code](https://claude.com/claude-code) subscription — **no API keys, no cloud, nothing leaves your machine.**
 
 ---
 
 ## Install
 
-**[⬇ Download ASIT for Windows](https://github.com/v1m08/ASIT/releases/latest)** — grab
-`ASIT-Setup-*.exe`, double-click, done. No wizard, no options, and it opens
-itself when it finishes.
+**[⬇ Download ASIT](https://github.com/v1m08/ASIT/releases/latest)**
 
-Windows will show a blue *"Windows protected your PC"* box, because the app
-isn't code-signed (a certificate costs a few hundred dollars a year). Click
-**More info → Run anyway**. You only see it once.
+**Windows** — grab `ASIT-Setup-*.exe`, double-click, done. No wizard, no
+options, and it opens itself when it finishes. Windows shows a blue *"Windows
+protected your PC"* box because the app isn't code-signed (a certificate costs
+a few hundred dollars a year): **More info → Run anyway**. Once only.
+
+**macOS** — grab the `.dmg` for your chip (`arm64` for Apple silicon, `x64` for
+Intel) and drag ASIT to Applications. It is unsigned, so the first launch needs
+**right-click → Open** rather than a double-click, or macOS refuses it. If it
+still complains that the app "is damaged", clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/ASIT.app
+```
+
+*What differs on macOS:* embedded native app windows (the Win32 reparenting
+trick) are Windows-only and the tab is hidden. Auto-update needs a signed app,
+so on macOS you update by downloading a new `.dmg`. Everything else —
+workspaces, panes, the agent, terminals, dictation, the phone companion — works
+the same. **Honest caveat: the macOS build is verified by CI (it builds, boots,
+and passes the full smoke suite on a real Mac runner) but has not been used by
+a human. Report anything odd.**
 
 **It updates itself from then on.** New versions download quietly in the
 background; a small *Update ready — restart* button appears in the header when
@@ -196,7 +212,7 @@ npm run icon       # regenerate build/icon.ico from the app's own logo mark
 npm run dist       # Windows installer → dist/  (nothing published)
 ```
 
-**Requirements:** Windows, Node 22+.
+**Requirements:** Windows or macOS, Node 22+. `npm run smoke` runs every test that doesn't need a logged-in CLI — that is what CI runs on both platforms.
 
 **Shipping a version.** Tag it and push — CI builds the installer, attaches it
 to a GitHub Release, and that release *is* the update feed every installed copy

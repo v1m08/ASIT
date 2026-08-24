@@ -4,7 +4,14 @@ import { getDb } from '../db'
 import type { Settings } from '@shared/types'
 
 const DEFAULTS: Settings = {
-  claudePath: join(homedir(), '.local', 'bin', 'claude.exe'),
+  // Resolved properly at runtime (services/claude.ts tries every install
+  // location); this is only the value shown in Settings before then.
+  claudePath: join(
+    homedir(),
+    '.local',
+    'bin',
+    process.platform === 'win32' ? 'claude.exe' : 'claude'
+  ),
   workMin: 25,
   breakMin: 5,
   escapePhrase: 'I am choosing to stop studying and I accept that this was my decision',
