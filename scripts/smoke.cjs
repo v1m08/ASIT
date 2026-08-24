@@ -13,14 +13,20 @@ const { join } = require('path')
 // Each mode gets a timeout: a hung test must fail the run, not stall CI
 // forever. (The terminal smoke spawns a real pty and has been known not to
 // exit on its own once it passes.)
+// Generous: a cold CI runner downloading nothing is still far slower than a
+// warm dev machine, and a timeout that fires there looks identical to a real
+// failure while telling you nothing.
 const MODES = [
-  ['ASIT_SMOKE', 180],
-  ['ASIT_SMOKE_UI', 180],
-  ['ASIT_SMOKE_PANES', 180],
-  ['ASIT_SMOKE_SECURITY', 240],
-  ['ASIT_SMOKE_TRANSFER', 180],
-  ['ASIT_SMOKE_TERMINAL', 120]
+  ['ASIT_SMOKE', 300],
+  ['ASIT_SMOKE_UI', 300],
+  ['ASIT_SMOKE_PANES', 300],
+  ['ASIT_SMOKE_SECURITY', 360],
+  ['ASIT_SMOKE_TRANSFER', 300],
+  ['ASIT_SMOKE_TERMINAL', 240]
 ]
+
+const { appendFileSync } = require('fs')
+const failureDetail = []
 
 const electron = require('electron') // resolves to the binary path string
 const entry = join(__dirname, '..', 'out', 'main', 'index.js')
@@ -54,7 +60,15 @@ function run(mode, timeoutSec) {
         .slice(-3)
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${mode}${why ? '  (' + why + ')' : ''}`)
       for (const l of lines) console.log(`        ${l.trim()}`)
-      if (!ok && lines.length === 0) console.log(out.split(/\r?\n/).slice(-15).join('\n'))
+      // On failure print the RAW tail too. CI logs need admin rights to read
+      // through the API, so if this does not say what broke, nobody can find
+      // out without opening a browser.
+      if (!ok) {
+        const tail = out.split(/\r?\n/).filter(Boolean).slice(-40)
+        console.log('        ---- last output ----')
+        for (const l of tail) console.log(`        ${l}`)
+        failureDetail.push(`### ${mode}${why ? ` (${why})` : ''}\n\n\`\`\`\n${tail.join('\n')}\n\`\`\``)
+      }
       resolve(ok)
     }
 
@@ -87,6 +101,21 @@ function run(mode, timeoutSec) {
     if (!ok) failed.push(mode)
   }
   console.log()
+  // GitHub renders this on the run page, which needs no special access —
+  // unlike the logs.
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        `## Smoke suite — ${process.platform} ${process.arch}\n\n` +
+          (failed.length === 0
+            ? `All ${MODES.length} modes passed.\n`
+            : `**Failed: ${failed.join(', ')}**\n\n${failureDetail.join('\n\n')}\n`)
+      )
+    } catch {
+      // a summary we cannot write is not worth failing over
+    }
+  }
   if (failed.length > 0) {
     console.error(`${failed.length} smoke mode(s) failed: ${failed.join(', ')}`)
     process.exit(1)
