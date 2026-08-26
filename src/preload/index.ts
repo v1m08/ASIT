@@ -40,8 +40,11 @@ const api = {
       ipcRenderer.invoke(IPC.RESOURCES_REORDER, taskId, orderedIds)
   },
   panes: {
-    open: (paneId: string, target: { url?: string; filePath?: string }, ownerId: string) =>
-      ipcRenderer.invoke(IPC.PANES_OPEN, paneId, target, ownerId),
+    open: (
+      paneId: string,
+      target: { url?: string; filePath?: string; fresh?: boolean },
+      ownerId: string
+    ) => ipcRenderer.invoke(IPC.PANES_OPEN, paneId, target, ownerId),
     insertText: (text: string) => ipcRenderer.invoke(IPC.PANES_INSERT_TEXT, text),
     setBounds: (paneId: string, bounds: { x: number; y: number; width: number; height: number }) =>
       ipcRenderer.invoke(IPC.PANES_SET_BOUNDS, paneId, bounds),

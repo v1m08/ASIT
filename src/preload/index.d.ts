@@ -48,7 +48,7 @@ declare global {
         insertText: (text: string) => Promise<boolean>
         open: (
           paneId: string,
-          target: { url?: string; filePath?: string },
+          target: { url?: string; filePath?: string; fresh?: boolean },
           ownerId: string
         ) => Promise<void>
         setBounds: (

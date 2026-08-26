@@ -111,7 +111,9 @@ export default function ScratchBrowser({
       openTab(HOME_URL)
     } else {
       const created: BrowserTab[] = stored.map((t) => {
-        window.asit.panes.open(t.id, { url: t.url }, ownerId) // no-op if the pane is parked
+        // fresh: this is a RESTORE, so the page must revalidate rather than
+        // redraw whatever it looked like when the app last closed.
+        window.asit.panes.open(t.id, { url: t.url, fresh: true }, ownerId) // no-op if parked
         return { id: t.id, url: t.url, title: t.title || hostOf(t.url) }
       })
       setTabs(created)

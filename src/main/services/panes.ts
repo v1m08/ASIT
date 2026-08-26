@@ -29,6 +29,15 @@ const BROWSE_PARTITION = 'persist:asit-browse'
 export interface PaneTarget {
   url?: string
   filePath?: string
+  /**
+   * Skip the HTTP cache for this load. Used when RESTORING a tab at startup:
+   * a page whose signed-in state is baked into its HTML (google.com is the
+   * one that keeps catching us out) comes back from cache showing whatever it
+   * showed last time, so a perfectly valid session renders as "Sign in" and
+   * the app looks broken. One revalidating request per restored tab, once per
+   * launch, is a cheap price for the page telling the truth.
+   */
+  fresh?: boolean
 }
 
 export interface PaneBounds {
@@ -395,7 +404,12 @@ class PaneManager {
     view.webContents.on('page-title-updated', pushNavState)
 
     if (target.url) {
-      view.webContents.loadURL(target.url)
+      view.webContents.loadURL(
+        target.url,
+        target.fresh
+          ? { extraHeaders: 'Cache-Control: no-cache\nPragma: no-cache' }
+          : undefined
+      )
     } else if (target.filePath) {
       view.webContents.loadURL(pathToFileURL(target.filePath).href)
     }
