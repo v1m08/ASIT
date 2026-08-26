@@ -5,6 +5,7 @@ import { join } from 'path'
 import { getDb, closeDb } from './db'
 import { registerIpc } from './ipc'
 import { errorLogPath, logError } from './log'
+import { applyBrowserIdentity, browserUserAgent } from './services/useragent'
 import { initUpdater } from './services/updater'
 import { paneManager } from './services/panes'
 import { initBrowserFilters, loadExtensions } from './services/browser'
@@ -38,8 +39,10 @@ let mainWindow: BrowserWindow | null = null
 // reject exactly that string — the ENGINE is fine, the label isn't. This is
 // the standard fix used by Electron-based clients; it affects both request
 // headers and navigator.userAgent.
-app.userAgentFallback =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36'
+// Identify as the Chromium we actually are, consistently in every channel.
+// A hard-coded string here claimed Chrome 139 on an engine that was 130, and
+// claimed Windows on macOS — see services/useragent.ts.
+app.userAgentFallback = browserUserAgent()
 
 // Last-resort net: an uncaught main-process exception must not take down the
 // user's whole session (timers, agents, panes) with a modal crash dialog.
@@ -208,6 +211,9 @@ app.whenReady().then(() => {
 
   // Ad/tracker blocking installs on the browse partition before any pane
   // exists; saved extensions load in the background.
+  // Before any pane loads: the browse partition must present a consistent
+  // browser identity or sign-in flows refuse it.
+  applyBrowserIdentity('persist:asit-browse')
   initBrowserFilters()
   void loadExtensions()
   initScheduler() // time-based agent runs
