@@ -50,17 +50,35 @@ export function reviveDeadEnd(url: string): string {
 }
 
 /**
- * Google refuses to run the sign-in CEREMONY (password entry) inside an
- * embedded pane — that is the "this browser may not be secure" wall, and it is
- * a deliberate account-security control, not something to defeat. But ASIT's
- * dedicated login window is a real top-level browser window on the SAME cookie
- * partition as every pane, so a session obtained there is live in the tabs
- * immediately. When a tab hits the wall, offer that door instead of a dead end.
+ * Google refuses to run its sign-in CEREMONY inside any embedded browser (the
+ * "this browser or app may not be secure" wall). This is a deliberate
+ * account-security control and it applies to every Electron app, not just this
+ * one — there is no user-agent or window trick that legitimately clears it.
+ *
+ * And it cannot be worked around by cookie transfer: the browsers Google
+ * TRUSTS (real Chrome) encrypt their cookies against every other app, so ASIT
+ * can never read them; the only cookie jar ASIT can read is its own. Those two
+ * sets do not overlap, by design.
+ *
+ * So the honest path for Google specifically is the one the user actually
+ * wants: open it in their REAL browser, where they are already trusted and
+ * signed in. ASIT keeps hosting everything that does not block.
  */
 function isGoogleSigninWall(url: string): boolean {
   return /accounts\.google\.com\/(v3\/signin|signin\/(rejected|identifier)|ServiceLogin)/i.test(
     url
   )
+}
+
+/** Where the user was actually trying to go, if the wall URL carries it. */
+function signinDestination(wallUrl: string): string {
+  try {
+    const cont = new URL(wallUrl).searchParams.get('continue')
+    if (cont && /^https?:\/\//i.test(cont)) return cont
+  } catch {
+    // fall through
+  }
+  return 'https://www.google.com/'
 }
 
 export default function ScratchBrowser({
@@ -522,22 +540,28 @@ export default function ScratchBrowser({
       {(() => {
         const activeUrl = (activeId && (navStates[activeId]?.url ?? tabs.find((t) => t.id === activeId)?.url)) || ''
         if (!isGoogleSigninWall(activeUrl)) return null
+        const dest = signinDestination(activeUrl)
         return (
           <div className="signin-handoff">
             <span>
-              Google blocks sign-in inside embedded browsers. Sign in through a dedicated window —
-              it shares this profile, so you land back here signed in.
+              Google won\u2019t let you sign in inside an app \u2014 it blocks every embedded
+              browser. Open it in your real browser, where you\u2019re already trusted.
             </span>
             <button
               className="btn btn-primary"
+              onClick={() => void window.asit.resources.openExternal({ url: dest })}
+            >
+              Open in my browser \u2197
+            </button>
+            <button
+              className="btn btn-ghost"
+              title="Try ASIT\u2019s own sign-in window (shares this profile, but Google may still refuse it)"
               onClick={async () => {
                 await window.asit.accounts.openLogin('google')
-                // The login window shares the partition, so the cookie is now
-                // live; reload the tab from the network to pick it up.
                 if (activeId) window.asit.panes.navigate(activeId, { nav: 'reload' })
               }}
             >
-              Sign in to Google
+              Try in-app window
             </button>
           </div>
         )
