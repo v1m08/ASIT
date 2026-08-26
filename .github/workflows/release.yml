@@ -45,8 +45,9 @@ jobs:
       # rights to read through the API, so without this a broken install is
       # just "npm ci: failure" with no cause. --foreground-scripts makes the
       # postinstall (native rebuild) output inline instead of being swallowed.
-      - name: Install
-        run: npm ci --foreground-scripts
+      # Exactly as the last green build (1.0.14) ran it. --foreground-scripts
+      # broke the Windows runner; the failure diagnostics below still fire.
+      - run: npm ci
       - name: Collect npm logs on failure
         if: failure()
         shell: bash
