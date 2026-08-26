@@ -47,17 +47,22 @@ jobs:
       # postinstall (native rebuild) output inline instead of being swallowed.
       - name: Install
         run: npm ci --foreground-scripts
-      - name: Show npm error on failure
+      - name: Collect npm logs on failure
         if: failure()
         shell: bash
         run: |
-          echo "## npm ci failed on ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
-          for f in ~/.npm/_logs/*.log; do
-            echo "### $f" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            tail -80 "$f" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-          done
+          mkdir -p npm-debug
+          cp -r ~/.npm/_logs/. npm-debug/ 2>/dev/null || true
+          node -v > npm-debug/versions.txt 2>&1 || true
+          npm -v >> npm-debug/versions.txt 2>&1 || true
+          npx electron-builder --version >> npm-debug/versions.txt 2>&1 || true
+      - name: Upload npm logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-debug-${{ matrix.name }}
+          path: npm-debug/
+          if-no-files-found: warn
 
       - run: npm run typecheck
 
