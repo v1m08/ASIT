@@ -24,6 +24,31 @@ const STORE_KEY = 'asit-scratch-tabs'
 
 let tabCounter = 0
 
+/**
+ * A tab must never restore onto a terminal error page.
+ *
+ * Google's "Couldn't sign you in" lives at a real URL, so it got saved like
+ * any other page and reloaded on every launch — reproducing the same dead end
+ * forever and making the whole app look broken, when in fact the session was
+ * fine the entire time. Reloading a rejection can only ever produce the
+ * rejection again.
+ *
+ * These pages carry where you were actually going in `continue`, so send the
+ * tab there instead; failing that, start it somewhere neutral.
+ */
+export function reviveDeadEnd(url: string): string {
+  if (!/\/signin\/rejected|\/sorry\/index|accounts\.google\.com\/.*rejected/i.test(url)) {
+    return url
+  }
+  try {
+    const target = new URL(url).searchParams.get('continue')
+    if (target && /^https?:\/\//i.test(target)) return target
+  } catch {
+    // malformed — fall through
+  }
+  return HOME_URL
+}
+
 export default function ScratchBrowser({
   ownerId,
   onPin,
@@ -79,7 +104,9 @@ export default function ScratchBrowser({
     } catch {
       restored = null
     }
-    const stored = (restored?.tabs ?? []).filter((t) => t.id && /^https?:/i.test(t.url))
+    const stored = (restored?.tabs ?? [])
+      .filter((t) => t.id && /^https?:/i.test(t.url))
+      .map((t) => ({ ...t, url: reviveDeadEnd(t.url) }))
     if (stored.length === 0) {
       openTab(HOME_URL)
     } else {
