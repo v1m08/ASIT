@@ -49,6 +49,20 @@ export function reviveDeadEnd(url: string): string {
   return HOME_URL
 }
 
+/**
+ * Google refuses to run the sign-in CEREMONY (password entry) inside an
+ * embedded pane — that is the "this browser may not be secure" wall, and it is
+ * a deliberate account-security control, not something to defeat. But ASIT's
+ * dedicated login window is a real top-level browser window on the SAME cookie
+ * partition as every pane, so a session obtained there is live in the tabs
+ * immediately. When a tab hits the wall, offer that door instead of a dead end.
+ */
+function isGoogleSigninWall(url: string): boolean {
+  return /accounts\.google\.com\/(v3\/signin|signin\/(rejected|identifier)|ServiceLogin)/i.test(
+    url
+  )
+}
+
 export default function ScratchBrowser({
   ownerId,
   onPin,
@@ -505,6 +519,29 @@ export default function ScratchBrowser({
         </div>
       )}
 
+      {(() => {
+        const activeUrl = (activeId && (navStates[activeId]?.url ?? tabs.find((t) => t.id === activeId)?.url)) || ''
+        if (!isGoogleSigninWall(activeUrl)) return null
+        return (
+          <div className="signin-handoff">
+            <span>
+              Google blocks sign-in inside embedded browsers. Sign in through a dedicated window —
+              it shares this profile, so you land back here signed in.
+            </span>
+            <button
+              className="btn btn-primary"
+              onClick={async () => {
+                await window.asit.accounts.openLogin('google')
+                // The login window shares the partition, so the cookie is now
+                // live; reload the tab from the network to pick it up.
+                if (activeId) window.asit.panes.navigate(activeId, { nav: 'reload' })
+              }}
+            >
+              Sign in to Google
+            </button>
+          </div>
+        )
+      })()}
       <div className="browser-content" ref={contentRef} />
     </div>
   )

@@ -4020,3 +4020,20 @@ code {
   opacity: 0.6;
   cursor: default;
 }
+
+/* Google blocks the sign-in ceremony inside embedded panes; this offers the
+   dedicated top-level login window (shared cookie partition) instead of a
+   dead end. */
+.signin-handoff {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
+  border-top: 1px solid var(--accent);
+  border-bottom: 1px solid var(--accent);
+  font-size: 0.82rem;
+  color: var(--text);
+}
+.signin-handoff span { flex: 1; min-width: 0; }
+.signin-handoff .btn { flex-shrink: 0; white-space: nowrap; }
