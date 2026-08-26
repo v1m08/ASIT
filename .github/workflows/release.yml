@@ -41,7 +41,23 @@ jobs:
 
       # `npm ci` runs the postinstall that rebuilds better-sqlite3 and friends
       # against Electron's ABI — the packaged app is unusable without it.
-      - run: npm ci
+      # On failure, surface the real npm error: the run logs need repo-admin
+      # rights to read through the API, so without this a broken install is
+      # just "npm ci: failure" with no cause. --foreground-scripts makes the
+      # postinstall (native rebuild) output inline instead of being swallowed.
+      - name: Install
+        run: npm ci --foreground-scripts
+      - name: Show npm error on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "## npm ci failed on ${{ matrix.os }}" >> "$GITHUB_STEP_SUMMARY"
+          for f in ~/.npm/_logs/*.log; do
+            echo "### $f" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -80 "$f" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - run: npm run typecheck
 
