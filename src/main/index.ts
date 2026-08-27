@@ -14,6 +14,8 @@ import { lockdown } from './services/lockdown'
 import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
 import { initActions, watchJarvisActions } from './services/actions'
+import { initWorkflows, sweepInterruptedRuns } from './services/workflows'
+import { bus } from './services/bus'
 import { initUsage } from './services/usage'
 import { initActivity } from './services/activity'
 import { initWatchers } from './services/watchers'
@@ -208,6 +210,10 @@ app.whenReady().then(() => {
     runTerminalSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_WORKFLOWS === '1') {
+    runWorkflowsSmokeTest()
+    return
+  }
 
   // Ad/tracker blocking installs on the browse partition before any pane
   // exists; saved extensions load in the background.
@@ -227,6 +233,20 @@ app.whenReady().then(() => {
     ['timer', () => timer.init(() => mainWindow)],
     ['questions', () => initQuestions(() => mainWindow)],
     ['actions', () => initActions(() => mainWindow)],
+    [
+      'workflows',
+      () => {
+        initWorkflows(() => mainWindow)
+        // Anything still "running" died with the previous process — panes
+        // did too, so resuming would be fake safety. Mark and move on.
+        sweepInterruptedRuns()
+        // Schedules finally have a UI; tell it when they change (fires,
+        // agent-created schedules, roll-forwards).
+        bus.on('changed', (what: string) => {
+          if (what === 'schedules') mainWindow?.webContents.send(IPC.SCHEDULES_CHANGED)
+        })
+      }
+    ],
     ['usage', () => initUsage(() => mainWindow)],
     ['activity', () => initActivity(() => mainWindow)],
     ['watchers', () => initWatchers(() => mainWindow)],
@@ -681,6 +701,132 @@ async function runSecuritySmokeTest(): Promise<void> {
     if (guard.sendAuthorized('whatsapp') || guard.sendAuthorized('email'))
       fail('a scheduled run left send authority open')
     console.log('[security-smoke] schedules parse, fire, roll forward, and cannot send')
+
+    // --- workflows keep every wall -----------------------------------------
+    const wf = await import('./services/workflows')
+
+    // Forbidden verbs and re-targeting are refused at SAVE time…
+    const badVerb = wf.saveWorkflow({
+      name: 'smoke-bad-verb',
+      taskId: task.id,
+      steps: [{ kind: 'action', action: { action: 'send_whatsapp', target: 'x', value: 'y' } }]
+    })
+    if (badVerb.ok) fail('saveWorkflow accepted send_whatsapp')
+    const badTarget = wf.saveWorkflow({
+      name: 'smoke-bad-target',
+      taskId: task.id,
+      steps: [{ kind: 'action', action: { action: 'add_todo', value: 'x', workspace: 'Other' } }]
+    })
+    if (badTarget.ok) fail('saveWorkflow accepted a workspace-targeted step')
+
+    // …and a hand-edited row is STILL refused at run time (belt and braces).
+    const { getDb: getDbW } = await import('./db')
+    getDbW()
+      .prepare(
+        'INSERT INTO workflows (id, name, description, task_id, params_json, steps_json, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        'smoke-tampered-id',
+        'smoke-tampered',
+        '',
+        task.id,
+        '[]',
+        JSON.stringify([{ kind: 'action', action: { action: 'start_focus' } }]),
+        'ui',
+        new Date().toISOString(),
+        new Date().toISOString()
+      )
+    const tampered = await wf.runWorkflow('smoke-tampered', {})
+    if (tampered.started) fail('a hand-tampered workflow row was allowed to run')
+
+    // {{param}} substitution can never smuggle a VERB — only value fields.
+    const paramWf = wf.saveWorkflow({
+      name: 'smoke-param-verb',
+      taskId: task.id,
+      params: [{ name: 'p', required: true }],
+      steps: [{ kind: 'action', action: { action: '{{p}}', value: '{{p}}' } }]
+    })
+    if (!paramWf.ok) fail(`param workflow refused: ${(paramWf as { reason: string }).reason}`)
+    const paramRun = await wf.runWorkflow('smoke-param-verb', { params: { p: 'send_whatsapp' } })
+    if (!paramRun.started) fail('param workflow did not start')
+    {
+      const deadline = Date.now() + 30_000
+      for (;;) {
+        const r = wf.getRun(paramRun.runId!)
+        if (r && r.status !== 'running') {
+          if (r.status !== 'failed') fail(`param-smuggle run ended ${r.status}, expected failed`)
+          if (!r.stepResults[0].outcome.includes('unknown action'))
+            fail(`the verb field was substituted: ${r.stepResults[0].outcome}`)
+          break
+        }
+        if (Date.now() > deadline) fail('param-smuggle run never finished')
+        await new Promise((res) => setTimeout(res, 200))
+      }
+    }
+
+    // Global workflows: no model steps (unattended universal-agent surface).
+    const globalModel = wf.saveWorkflow({
+      name: 'smoke-global-model',
+      taskId: null,
+      steps: [{ kind: 'prompt', prompt: 'do something' }]
+    })
+    if (globalModel.ok) fail('a GLOBAL workflow accepted a model step')
+
+    // Private workspaces can neither own nor run workflows.
+    const privWf = wf.saveWorkflow({
+      name: 'smoke-priv-wf',
+      taskId: priv.id,
+      steps: [{ kind: 'action', action: { action: 'list_todos' } }]
+    })
+    if (privWf.ok) fail('a private workspace was allowed to own a workflow')
+
+    // Unattended containment: while flagged, the flow-forbidden verbs and
+    // re-targeting are refused on the normal action channel.
+    actions.beginUnattended(task.id)
+    const unatFocus = await actions.executeAction(task.id, { action: 'start_focus' })
+    if (!unatFocus.startsWith('refused')) fail(`unattended start_focus not refused: ${unatFocus}`)
+    const unatDel = await actions.executeAction(task.id, { action: 'delete_workspace', target: 'x' })
+    if (!unatDel.startsWith('refused')) fail(`unattended delete_workspace not refused: ${unatDel}`)
+    const unatWs = await actions.executeAction(task.id, {
+      action: 'add_todo',
+      value: 'x',
+      workspace: 'Other'
+    })
+    if (!unatWs.startsWith('refused')) fail(`unattended re-targeting not refused: ${unatWs}`)
+    actions.endUnattended(task.id)
+
+    // NO approval verb exists — a confirm gate can only be cleared by a user
+    // click in the renderer (absence, not permission).
+    for (const verb of ['approve_workflow', 'confirm_workflow', 'resume_workflow', 'confirm']) {
+      const res = await actions.executeAction(task.id, { action: verb })
+      if (!/unknown action/.test(res)) fail(`an approval-shaped verb exists: "${verb}" → ${res}`)
+    }
+
+    // A schedule can target a workflow; it fires, rolls forward, and leaves
+    // no send authority behind.
+    const benign = wf.saveWorkflow({
+      name: 'smoke-sched-wf',
+      taskId: task.id,
+      steps: [{ kind: 'action', action: { action: 'list_todos' } }]
+    })
+    if (!benign.ok) fail('benign workflow refused')
+    const benignId = benign.ok ? benign.workflow.id : ''
+    const schedAdd = sched.addSchedule({ when: 'in 1m', workflowId: benignId })
+    if (!schedAdd.ok) fail(`workflow schedule refused: ${(schedAdd as { ok: false; reason: string }).reason}`)
+    const schedId = schedAdd.ok ? schedAdd.schedule.id : ''
+    const firedWf = await sched.tick(new Date(Date.now() + 120_000))
+    if (!firedWf.includes(schedId)) fail('a due workflow schedule did not fire')
+    {
+      const deadline = Date.now() + 30_000
+      while (wf.activeRunState() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200))
+    }
+    if (guard.sendAuthorized('whatsapp') || guard.sendAuthorized('email'))
+      fail('a scheduled workflow run left send authority open')
+    const schedRun = wf.listRuns().find((r) => r.trigger === 'schedule')
+    if (!schedRun) fail('the scheduled workflow left no run row')
+    console.log(
+      '[security-smoke] workflows: forbidden verbs walled at save+run, params cannot smuggle verbs, unattended runs are contained, no approval verb exists, scheduled runs cannot send'
+    )
 
     // --- shared memory crosses workspaces, but never private ones ---
     const memory = await import('./services/memory')
@@ -1339,7 +1485,8 @@ async function runUiSmokeTest(): Promise<void> {
   try {
     // Skip first-run onboarding: its modal covers the whole window, and a
     // test that trips over it tells you nothing about the control underneath.
-    ;(await import('./services/settings')).setSettings({ onboarded: true })
+    const settingsSvc = await import('./services/settings')
+    settingsSvc.setSettings({ onboarded: true })
 
     const task = tasks.createTask({ title: 'UI Smoke Workspace' })
     const { addUrlResource } = await import('./services/resources')
@@ -1378,6 +1525,82 @@ async function runUiSmokeTest(): Promise<void> {
 
     // Open the workspace the way a click would.
     await waitFor(`document.querySelector('.task-card, .task-row, [data-focus-zone]')`, 'home to render')
+
+    // Home's browser must render the SHARED tab strip (the scratch browser
+    // and the workspace grid used to carry two divergent copies of this
+    // chrome), and its find bar must open — Ctrl+F was once dead on Home.
+    await waitFor(`document.querySelector('.browser .tab-strip .tab')`, 'the shared tab strip on Home')
+    await evalIn(`window.__asitStore.getState().tabSurface.find()`)
+    await waitFor(`document.querySelector('.browser .find-bar')`, 'the find bar on Home')
+    await evalIn(`(() => {
+      const el = document.querySelector('.browser .find-bar input')
+      el && el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })()`)
+    console.log('[ui-smoke] Home renders the shared tab strip and its find bar opens')
+
+    // Scratch tabs persist in the scratch task's layout_json — the same shape
+    // a workspace stores, which is what lets "save session" hand tabs over.
+    const tabCountBefore = await evalIn<number>(
+      `document.querySelectorAll('.browser .tab-strip .tab').length`
+    )
+    await evalIn(`window.__asitStore.getState().tabSurface.newTab()`)
+    await waitFor(
+      `document.querySelectorAll('.browser .tab-strip .tab').length === ${tabCountBefore + 1}`,
+      'the new Home tab'
+    )
+    {
+      // waitFor wraps in !!(...) which is truthy for a bare Promise, so poll
+      // the async check directly (executeJavaScript awaits returned promises).
+      const deadline = Date.now() + 8000
+      for (;;) {
+        const ok = await evalIn<boolean>(`(async () => {
+          const s = await window.asit.tasks.scratchGet()
+          const layout = JSON.parse(s.task.layoutJson || 'null')
+          return !!layout && Object.keys(layout.webTabs || {}).length >= ${tabCountBefore + 1}
+        })()`)
+        if (ok) break
+        if (Date.now() > deadline) fail('the scratch layout_json never held the new tab')
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    console.log('[ui-smoke] a new Home tab lands in the scratch layout_json')
+
+    // The new tab IS the new-tab page: plain DOM, and — the invariant-2 part —
+    // no pane may be visible while it shows (an NTP tab has no pane at all,
+    // and its siblings must be hidden or they'd paint over it).
+    await waitFor(`document.querySelector('.ntp')`, 'the new-tab page')
+    if (paneManager.boundsForSmoke().length !== 0)
+      fail('a pane is still visible while the new-tab page is showing')
+    console.log('[ui-smoke] the NTP renders with every pane hidden and none opened for it')
+
+    // Typing in the NTP's box converts the tab in place into a real page.
+    await evalIn(`(() => {
+      const el = document.querySelector('.ntp .browser-address')
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(el, 'https://example.com')
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })()`)
+    await waitFor(`!document.querySelector('.ntp')`, 'the NTP to convert into a page')
+    console.log('[ui-smoke] NTP conversion: typing an address turns the tab into a page')
+
+    // Ctrl+D's path: bookmark the (converted) active page, end to end.
+    await evalIn(`window.__asitStore.getState().tabSurface.bookmarkPage()`)
+    {
+      const deadline = Date.now() + 8000
+      for (;;) {
+        const ok = await evalIn<boolean>(`(async () => {
+          const list = await window.asit.bookmarks.list()
+          return list.some((b) => b.url.startsWith('https://example.com'))
+        })()`)
+        if (ok) break
+        if (Date.now() > deadline) fail('bookmarkPage never stored the page')
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    await waitFor(`document.querySelector('.bookmark-star-on')`, 'the filled bookmark star')
+    console.log('[ui-smoke] bookmark round-trip: Ctrl+D stores the page and fills the star')
+
     await evalIn(`window.__asitStore.getState().openTask(${JSON.stringify(task.id)})`)
     await waitFor(`document.querySelector('.pane-grid')`, 'the workspace')
 
@@ -1519,6 +1742,24 @@ async function runUiSmokeTest(): Promise<void> {
     if (bridge.length > 0)
       fail(`these bridge calls failed:\n  ${bridge.map((b) => `${b.name}: ${b.error}`).join('\n  ')}`)
     console.log('[ui-smoke] every read-only bridge call the screens make succeeds')
+
+    // Study-tools master switch: flipping it off must hide every study
+    // launcher — the workspace timer, the Review rail item — live, no restart.
+    if (!(await evalIn<boolean>(`!!document.querySelector('.timer-bar')`)))
+      fail('the timer bar is missing with study tools ON')
+    settingsSvc.setSettings({ studyEnabled: false })
+    await evalIn(`window.__asitStore.getState().loadSettings()`)
+    await waitFor(`!document.querySelector('.timer-bar')`, 'the timer bar to hide')
+    if (
+      await evalIn<boolean>(
+        `[...document.querySelectorAll('.rail-item .rail-title')].some(e => e.textContent === 'Review')`
+      )
+    )
+      fail('the Review rail item is still shown with study tools OFF')
+    settingsSvc.setSettings({ studyEnabled: true })
+    await evalIn(`window.__asitStore.getState().loadSettings()`)
+    await waitFor(`document.querySelector('.timer-bar')`, 'the timer bar to return')
+    console.log('[ui-smoke] the study-tools switch hides/restores timer + review live')
 
     tasks.deleteTask(task.id)
     console.log('[ui-smoke] ALL PASS')
@@ -1738,11 +1979,180 @@ async function runPanesSmokeTest(): Promise<void> {
       `[panes-smoke] eviction is announced (${20 - survivors.length} panes retired, renderer told)`
     )
 
+    // --- the context header is owner-scoped too ---------------------------
+    // buildPaneContext feeds every agent turn; it must be as blind to other
+    // workspaces' tabs as snapshotAll is, and say NOTHING for private tasks.
+    {
+      const tasksSvc = await import('./services/tasks')
+      const { buildPaneContext } = await import('./services/context')
+      const ctxA = tasksSvc.createTask({ title: 'Ctx A' })
+      const ctxB = tasksSvc.createTask({ title: 'Ctx B' })
+      const ctxP = tasksSvc.createTask({ title: 'Ctx Private', aiDisabled: true })
+      paneManager.open('ctx-pane-a', { url: `http://127.0.0.1:${port}/a` }, ctxA.id)
+      paneManager.open('ctx-pane-b', { url: `http://127.0.0.1:${port}/b` }, ctxB.id)
+      paneManager.open('ctx-pane-p', { url: `http://127.0.0.1:${port}/a` }, ctxP.id)
+      await new Promise((r) => setTimeout(r, 800))
+      const headerA = buildPaneContext(ctxA.id)
+      if (!headerA.includes('ctx-pane') && !headerA.includes(`/a`))
+        fail(`context header for A missed its own pane: "${headerA}"`)
+      if (headerA.includes('/b')) fail("context header for A leaked task B's pane")
+      if (buildPaneContext(ctxP.id) !== '')
+        fail('context header exists for a PRIVATE task')
+      paneManager.close('ctx-pane-a')
+      paneManager.close('ctx-pane-b')
+      paneManager.close('ctx-pane-p')
+      tasksSvc.deleteTask(ctxA.id)
+      tasksSvc.deleteTask(ctxB.id)
+      tasksSvc.deleteTask(ctxP.id)
+      console.log('[panes-smoke] the context header is owner-scoped and silent for private tasks')
+    }
+
     server.close()
     console.log('[panes-smoke] ALL PASS')
     app.exit(0)
   } catch (err) {
     console.error('[panes-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless workflow-engine check: ASIT_SMOKE_WORKFLOWS=1 electron out/main/index.js
+// CLI-free: proves the runner end to end — param substitution, per-step
+// outcomes, on_failure continue vs stop, wait_for timeout against a live
+// pane, the confirm pause/resume, run-row persistence, and the startup
+// interrupted sweep.
+async function runWorkflowsSmokeTest(): Promise<void> {
+  const { createServer } = await import('http')
+  const wf = await import('./services/workflows')
+  const tasksSvc = await import('./services/tasks')
+  const todos = await import('./services/todos')
+  const { getDb: db } = await import('./db')
+
+  const fail = (msg: string): never => {
+    console.error('[workflows-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+  const waitRun = async (runId: string, want: string, ms = 60_000): Promise<void> => {
+    const deadline = Date.now() + ms
+    for (;;) {
+      const run = wf.getRun(runId)
+      if (run?.status === want) return
+      if (
+        run &&
+        ['succeeded', 'failed', 'cancelled', 'interrupted'].includes(run.status) &&
+        run.status !== want
+      )
+        fail(`run finished as ${run.status}, wanted ${want}`)
+      if (Date.now() > deadline) fail(`run never reached ${want} (at ${wf.getRun(runId)?.status})`)
+      await new Promise((r) => setTimeout(r, 200))
+    }
+  }
+
+  try {
+    const server = createServer((_req, res) => {
+      res.setHeader('content-type', 'text/html')
+      res.end('<title>WF</title><button aria-label="Alpha Button">Alpha Button</button>')
+    })
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve((server.address() as { port: number }).port))
+    })
+    const win = new BrowserWindow({ show: false, width: 900, height: 600, x: -3000, y: -3000 })
+    paneManager.attach(win)
+    win.showInactive()
+
+    const task = tasksSvc.createTask({ title: 'Workflow Smoke' })
+    paneManager.open('wf-pane', { url: `http://127.0.0.1:${port}/` }, task.id)
+    paneManager.setBounds('wf-pane', { x: 0, y: 0, width: 900, height: 600 })
+    paneManager.setVisible('wf-pane', true)
+    // Let the page load so assert/wait_for see real content.
+    for (let i = 0; i < 20; i++) {
+      if (await paneManager.existsCondition(task.id, { text: 'Alpha Button' })) break
+      await new Promise((r) => setTimeout(r, 300))
+    }
+
+    // The full mixed run: params, live-pane assert, continue-on-fail,
+    // wait_for timeout, confirm gate, and a final action.
+    const saved = wf.saveWorkflow({
+      name: 'smoke-mixed',
+      taskId: task.id,
+      params: [{ name: 'item', required: true }],
+      steps: [
+        { kind: 'action', action: { action: 'add_todo', value: 'wf {{item}}' } },
+        { kind: 'assert', text: 'Alpha Button' },
+        { kind: 'action', action: { action: 'add_todo' }, on_failure: 'continue' },
+        { kind: 'wait_for', text: 'never-appears-xyz', timeout_min: 0.1, on_failure: 'continue' },
+        { kind: 'confirm', message: 'Carry on?' },
+        { kind: 'action', action: { action: 'list_todos' } }
+      ]
+    })
+    if (!saved.ok) fail(`save failed: ${saved.reason}`)
+
+    const missing = await wf.runWorkflow('smoke-mixed', { params: {} })
+    if (missing.started) fail('run started without a required param')
+
+    const started = await wf.runWorkflow('smoke-mixed', { params: { item: 'alpha' } })
+    if (!started.started || !started.runId) fail(`run did not start: ${started.reason}`)
+    const runId = started.runId!
+
+    await waitRun(runId, 'waiting_confirm', 90_000)
+    const paused = wf.getRun(runId)!
+    if (!paused.confirmMessage?.includes('Carry on'))
+      fail('waiting_confirm run has no confirm message')
+    const results = paused.stepResults
+    if (!results[0]?.ok) fail(`param step failed: ${results[0]?.outcome}`)
+    if (!todos.listTodos().some((t) => t.text === 'wf alpha'))
+      fail('{{param}} was not substituted into the action value')
+    if (!results[1]?.ok) fail(`live-pane assert failed: ${results[1]?.outcome}`)
+    if (results[2]?.ok) fail('an argless add_todo was reported ok')
+    if (results[3]?.ok) fail('wait_for on absent text did not time out')
+    console.log('[workflows-smoke] params, live-pane assert, continue-on-fail, wait_for timeout ✓')
+
+    if (wf.confirmRun('not-the-run', true) === 'approved') fail('confirm accepted a wrong run id')
+    wf.confirmRun(runId, true)
+    await waitRun(runId, 'succeeded', 60_000)
+    const done = wf.getRun(runId)!
+    if (done.stepResults.length !== 6) fail(`expected 6 step results, got ${done.stepResults.length}`)
+    if (!done.stepResults[4].ok) fail('approved confirm step not recorded ok')
+    console.log('[workflows-smoke] confirm paused the run and a user click resumed it ✓')
+
+    // Default on_failure is STOP: the second step must never run.
+    wf.saveWorkflow({
+      name: 'smoke-stop',
+      taskId: task.id,
+      steps: [
+        { kind: 'assert', text: 'never-appears-xyz' },
+        { kind: 'action', action: { action: 'add_todo', value: 'must-not-exist' } }
+      ]
+    })
+    const stopRun = await wf.runWorkflow('smoke-stop', {})
+    if (!stopRun.started) fail('stop-run did not start')
+    await waitRun(stopRun.runId!, 'failed', 60_000)
+    if (wf.getRun(stopRun.runId!)!.stepResults.length !== 1)
+      fail('a failing step did not stop the run')
+    if (todos.listTodos().some((t) => t.text === 'must-not-exist'))
+      fail('a step after a failure still executed')
+    console.log('[workflows-smoke] a failed step stops the run by default ✓')
+
+    // Runs persist; a row left "running" by a dead process sweeps to interrupted.
+    if (wf.listRuns().length < 2) fail('run history missing rows')
+    db()
+      .prepare(
+        "INSERT INTO workflow_runs (id, workflow_id, task_id, status, trigger, current_step, step_results_json, cost_usd, started_at) VALUES ('dead-run', 'x', NULL, 'running', 'manual', 0, '[]', 0, ?)"
+      )
+      .run(new Date().toISOString())
+    if (wf.sweepInterruptedRuns() < 1) fail('sweep found nothing to interrupt')
+    const sweptRow = db()
+      .prepare("SELECT status FROM workflow_runs WHERE id = 'dead-run'")
+      .get() as { status: string }
+    if (sweptRow.status !== 'interrupted') fail('dead run not marked interrupted')
+    console.log('[workflows-smoke] run history persists; dead runs sweep to interrupted ✓')
+
+    server.close()
+    console.log('[workflows-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[workflows-smoke] FAIL:', err)
     app.exit(1)
   }
 }
@@ -2172,6 +2582,43 @@ async function runSmokeTest(): Promise<void> {
 
     const s = settings.getSettings()
     console.log('[smoke] settings defaults ok, claudePath =', s.claudePath)
+
+    // Search-engine setting must actually steer search URL building.
+    if (s.searchEngine !== 'google') throw new Error('searchEngine default is not google')
+    const search = await import('./services/search')
+    if (!search.searchUrlFor('smoke query').includes('google.com'))
+      throw new Error('default search URL is not Google')
+    settings.setSettings({ searchEngine: 'duckduckgo' })
+    if (!search.searchUrlFor('smoke query').includes('duckduckgo.com'))
+      throw new Error('search URL ignored the engine setting')
+    settings.setSettings({ searchEngine: 'custom', searchUrlCustom: 'https://x.example/s?q={q}' })
+    if (search.searchUrlFor('a b') !== 'https://x.example/s?q=a%20b')
+      throw new Error('custom search template not applied')
+    settings.setSettings({ searchEngine: 'google', searchUrlCustom: '' })
+    console.log('[smoke] search engine setting steers searchUrlFor')
+
+    // Global bookmarks: CRUD round-trip and the UNIQUE-url upsert (starring
+    // twice must refresh, never duplicate).
+    const bookmarks = await import('./services/bookmarks')
+    const bm = bookmarks.addBookmark('https://example.com/a', 'Example A')
+    bookmarks.addBookmark('https://example.com/a', 'Example A (renamed)')
+    const listed1 = bookmarks.listBookmarks().filter((b) => b.url === 'https://example.com/a')
+    if (listed1.length !== 1) throw new Error('bookmark upsert duplicated the row')
+    if (listed1[0].title !== 'Example A (renamed)')
+      throw new Error('bookmark upsert did not refresh the title')
+    if (!bookmarks.isBookmarked('https://example.com/a'))
+      throw new Error('isBookmarked missed a stored URL')
+    bookmarks.updateBookmark(bm.id, { folder: 'work' })
+    if (bookmarks.listBookmarks()[0]?.folder !== 'work')
+      throw new Error('bookmark folder update lost')
+    bookmarks.removeBookmark(bm.id)
+    if (bookmarks.isBookmarked('https://example.com/a'))
+      throw new Error('bookmark not removed')
+    const { MIGRATION_COUNT } = await import('./db/migrations')
+    const version = (await import('./db')).getDb().pragma('user_version', { simple: true })
+    if (version !== MIGRATION_COUNT)
+      throw new Error(`user_version ${version} != MIGRATION_COUNT ${MIGRATION_COUNT}`)
+    console.log('[smoke] bookmarks CRUD + upsert ok, schema at version', version)
 
     // PDF text extraction (pure-JS, no CLI involved) using a sample PDF
     const samplePdf = join(process.cwd(), 'node_modules', 'pdf-parse', 'test', 'data', '05-versions-space.pdf')

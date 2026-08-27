@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { Settings } from '@shared/types'
-import { SHORTCUTS } from '@shared/shortcuts'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
 import AccountsModal from './AccountsModal'
@@ -258,20 +257,6 @@ function VaultSection(): JSX.Element {
   )
 }
 
-// Read from the SAME table the keys are bound from — a listed shortcut that
-// isn't actually wired (or vice versa) is now impossible.
-function accelLabel(accel: string): string {
-  return accel.replace('CommandOrControl', 'Ctrl').replace(/\+/g, '+')
-}
-const SHORTCUT_ROWS: [string, string][] = [
-  ...SHORTCUTS.filter((d) => d.label).map(
-    (d) => [accelLabel(d.accel), d.label] as [string, string]
-  ),
-  ['Ctrl+1…9', 'Jump to panel'],
-  ['Tab / Shift+Tab', 'Move between panels'],
-  ['Ctrl+E', 'Notes: live preview ↔ raw']
-]
-
 function BrowserSection({
   settings,
   setSettings
@@ -282,7 +267,8 @@ function BrowserSection({
   const [blocked, setBlocked] = useState(0)
   const [exts, setExts] = useState<{ name: string; id: string; path: string }[]>([])
   const [extMsg, setExtMsg] = useState<string | null>(null)
-  const [showKeys, setShowKeys] = useState(false)
+  const setShortcutsOpen = useStore((s) => s.setShortcutsOpen)
+  const setSettingsOpen = useStore((s) => s.setSettingsOpen)
 
   const refreshExts = async (): Promise<void> => setExts(await window.asit.browser.extList())
 
@@ -305,6 +291,34 @@ function BrowserSection({
   return (
     <div className="snippets-section">
       <div className="rail-header">Browser</div>
+
+      <label className="settings-field">
+        <span>Search engine</span>
+        <select
+          value={settings.searchEngine ?? 'google'}
+          onChange={(e) =>
+            setSettings({ ...settings, searchEngine: e.target.value as Settings['searchEngine'] })
+          }
+        >
+          <option value="google">Google</option>
+          <option value="duckduckgo">DuckDuckGo</option>
+          <option value="bing">Bing</option>
+          <option value="brave">Brave Search</option>
+          <option value="custom">Custom…</option>
+        </select>
+      </label>
+      {settings.searchEngine === 'custom' && (
+        <label className="settings-field">
+          <span>Custom search URL</span>
+          <input
+            spellCheck={false}
+            placeholder="https://example.com/search?q={q}"
+            value={settings.searchUrlCustom ?? ''}
+            onChange={(e) => setSettings({ ...settings, searchUrlCustom: e.target.value })}
+          />
+          <span className="field-hint">{'{q}'} is replaced with what you type.</span>
+        </label>
+      )}
 
       {toggle('adBlock', `Block ads & trackers${blocked ? ` — ${blocked} blocked so far` : ''}`,
         'Blocks known ad and tracking domains in every embedded page.')}
@@ -387,19 +401,18 @@ function BrowserSection({
       </button>
       {extMsg && <p className="transfer-note">{extMsg}</p>}
 
-      <button className="btn btn-ghost" style={{ marginTop: 12 }} onClick={() => setShowKeys((v) => !v)}>
-        ⌗ {showKeys ? 'Hide' : 'Show'} keyboard shortcuts
+      <button
+        className="btn btn-ghost"
+        style={{ marginTop: 12 }}
+        onClick={() => {
+          // One source of truth: the shortcuts sheet is built from the live
+          // binding table, so it can never drift the way a copy here did.
+          setSettingsOpen(false)
+          setShortcutsOpen(true)
+        }}
+      >
+        ⌗ Keyboard shortcuts
       </button>
-      {showKeys && (
-        <div className="shortcut-table">
-          {SHORTCUT_ROWS.map(([keys, what]) => (
-            <div key={keys} className="shortcut-row">
-              <code>{keys}</code>
-              <span>{what}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -690,6 +703,9 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
       return
     }
     setSaveError(null)
+    // The store's copy drives live gates (hide switches, study tools, search
+    // engine) — refresh it now or the change waits for the next app launch.
+    await useStore.getState().loadSettings()
     setSaved(true)
     setTimeout(onClose, 600)
   }
@@ -722,25 +738,43 @@ export default function SettingsModal({ onClose }: { onClose: () => void }): JSX
           ⚿ Connected accounts…
         </button>
 
-        <label className="settings-field"> Work minutes
-          <input
-            type="number"
-            min={5}
-            max={120}
-            value={settings.workMin}
-            onChange={(e) => setSettings({ ...settings, workMin: Number(e.target.value) })}
-          />
-        </label>
+        <div className="snippets-section">
+          <div className="rail-header">Study tools</div>
+          <label
+            className="settings-check"
+            title="Focus timer, lockdown, spaced-review questions, and question generation. Turning this off only hides the tools — nothing is deleted, and your review history stays."
+          >
+            <input
+              type="checkbox"
+              checked={settings.studyEnabled ?? true}
+              onChange={(e) => setSettings({ ...settings, studyEnabled: e.target.checked })}
+            />
+            Show study tools (timer, lockdown, review questions)
+          </label>
+          {(settings.studyEnabled ?? true) && (
+            <>
+              <label className="settings-field"> Work minutes
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={settings.workMin}
+                  onChange={(e) => setSettings({ ...settings, workMin: Number(e.target.value) })}
+                />
+              </label>
 
-        <label className="settings-field"> Break minutes
-          <input
-            type="number"
-            min={1}
-            max={60}
-            value={settings.breakMin}
-            onChange={(e) => setSettings({ ...settings, breakMin: Number(e.target.value) })}
-          />
-        </label>
+              <label className="settings-field"> Break minutes
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={settings.breakMin}
+                  onChange={(e) => setSettings({ ...settings, breakMin: Number(e.target.value) })}
+                />
+              </label>
+            </>
+          )}
+        </div>
 
         <BrowserSection settings={settings} setSettings={setSettings} />
 

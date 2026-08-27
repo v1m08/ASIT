@@ -146,9 +146,11 @@ export default function ResourceRail({
         <div className="rail-item rail-item-mini" title="Notes" onClick={() => onOpen(BUILTIN_NOTES)}>
           ✎
         </div>
-        <div className="rail-item rail-item-mini" title="Review questions" onClick={() => onOpen(BUILTIN_REVIEW)}>
-          ◎
-        </div>
+        {(settings?.studyEnabled ?? true) && !settings?.hideReview && (
+          <div className="rail-item rail-item-mini" title="Review questions" onClick={() => onOpen(BUILTIN_REVIEW)}>
+            ◎
+          </div>
+        )}
         <div className="rail-item rail-item-mini" title="Terminal" onClick={() => onOpen(BUILTIN_TERMINAL)}>
           ▶_
         </div>
@@ -188,7 +190,7 @@ export default function ResourceRail({
           <span className="rail-icon">✎</span>
           <span className="rail-title">Notes</span>
         </div>
-        {!settings?.hideReview && (
+        {(settings?.studyEnabled ?? true) && !settings?.hideReview && (
           <div className="rail-item" onClick={() => onOpen(BUILTIN_REVIEW)}>
             <span className="rail-icon">◎</span>
             <span className="rail-title">Review</span>
@@ -256,7 +258,7 @@ export default function ResourceRail({
             >
               ✏
             </button>
-            {r.kind === 'pdf' && !task.aiDisabled && (
+            {r.kind === 'pdf' && !task.aiDisabled && (settings?.studyEnabled ?? true) && (
               <span className="ai-menu-anchor">
                 <button
                   className="rail-btn"

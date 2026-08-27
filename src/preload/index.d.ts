@@ -1,4 +1,5 @@
 import type {
+  Bookmark,
   ChatMessage,
   ChatSession,
   CreateTaskInput,
@@ -9,7 +10,11 @@ import type {
   Settings,
   Task,
   TimerState,
-  UpdateTaskInput
+  UpdateTaskInput,
+  Workflow,
+  WorkflowParam,
+  WorkflowRun,
+  WorkflowStep
 } from '../shared/types'
 
 declare global {
@@ -151,6 +156,55 @@ declare global {
         run: (taskId: string, name: string) => Promise<{ ran: boolean; log: string[] }>
         delete: (name: string) => Promise<void>
       }
+      workflows: {
+        list: () => Promise<Workflow[]>
+        get: (idOrName: string) => Promise<Workflow | null>
+        save: (input: {
+          name: string
+          description?: string
+          taskId?: string | null
+          params?: WorkflowParam[]
+          steps: WorkflowStep[]
+        }) => Promise<
+          { ok: true; workflow: Workflow; overwrote: boolean } | { ok: false; reason: string }
+        >
+        delete: (id: string) => Promise<void>
+        run: (
+          idOrName: string,
+          params?: Record<string, string>
+        ) => Promise<{ started: boolean; runId?: string; reason?: string }>
+        cancel: (runId: string) => Promise<string>
+        confirm: (runId: string, approved: boolean) => Promise<string>
+        runs: (limit?: number) => Promise<WorkflowRun[]>
+        runState: () => Promise<WorkflowRun | null>
+        importSkill: (name: string) => Promise<{ ok: boolean; reason?: string }>
+      }
+      schedules: {
+        list: () => Promise<
+          {
+            id: string
+            prompt: string
+            taskId: string | null
+            workflowId: string | null
+            workflowParams: Record<string, string> | null
+            repeat: 'once' | 'hourly' | 'daily' | 'weekdays'
+            nextAt: string
+            enabled: boolean
+            lastRunAt: string | null
+            lastResult: string | null
+            createdAt: string
+          }[]
+        >
+        add: (input: {
+          prompt?: string
+          when: string
+          taskId?: string | null
+          workflowId?: string | null
+          workflowParams?: Record<string, string> | null
+        }) => Promise<{ ok: boolean; reason?: string }>
+        remove: (id: string) => Promise<void>
+        setEnabled: (id: string, enabled: boolean) => Promise<void>
+      }
       files: {
         pathFor: (file: File) => string
       }
@@ -173,6 +227,16 @@ declare global {
         recent: (limit?: number) => Promise<HistoryEntry[]>
         remove: (id: string) => Promise<void>
         clear: () => Promise<void>
+      }
+      bookmarks: {
+        list: () => Promise<Bookmark[]>
+        add: (url: string, title: string, favicon?: string | null) => Promise<Bookmark>
+        remove: (id: string) => Promise<void>
+        update: (
+          id: string,
+          patch: { title?: string; folder?: string | null; position?: number }
+        ) => Promise<void>
+        status: (url: string) => Promise<Bookmark | null>
       }
       library: {
         list: () => Promise<{ name: string; sizeBytes: number; modifiedAt: string }[]>

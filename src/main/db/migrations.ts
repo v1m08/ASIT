@@ -224,6 +224,54 @@ const migrations: string[] = [
     last_visited_at TEXT NOT NULL
   );
   CREATE INDEX idx_history_recent ON history(last_visited_at DESC);
+  `,
+  // 14: global bookmarks — task-independent, unlike pinned resources. The
+  // browser-first shell needs a "keep this page" that survives outside any
+  // workspace; pin-to-rail stays as the workspace-scoped cousin. No agent
+  // verb or agent-facing IPC ever reads this table (see services/bookmarks.ts).
+  `
+  CREATE TABLE bookmarks (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL DEFAULT '',
+    favicon TEXT,
+    folder TEXT,                            -- flat folders; NULL = unfiled
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  `,
+  // 15: first-class workflows. Replaces "flow = a fenced block in a skill
+  // file" with real entities: params, mixed action/model/confirm steps,
+  // durable run history. A schedule can now target a workflow instead of a
+  // prompt (two nullable columns; exactly one is used per schedule).
+  `
+  CREATE TABLE workflows (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,              -- slug; ./name invocable from chat
+    description TEXT NOT NULL DEFAULT '',
+    task_id TEXT,                           -- owning workspace; NULL = global
+    params_json TEXT NOT NULL DEFAULT '[]',
+    steps_json TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'ui',      -- ui | chat | import
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE workflow_runs (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    task_id TEXT,                           -- identity resolved at start
+    status TEXT NOT NULL,                   -- running|waiting_confirm|succeeded|failed|cancelled|interrupted
+    trigger TEXT NOT NULL,                  -- manual|chat|schedule|watch|phone
+    params_json TEXT,
+    current_step INTEGER NOT NULL DEFAULT 0,
+    step_results_json TEXT NOT NULL DEFAULT '[]',
+    cost_usd REAL NOT NULL DEFAULT 0,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+  );
+  CREATE INDEX idx_workflow_runs_recent ON workflow_runs(started_at DESC);
+  ALTER TABLE schedules ADD COLUMN workflow_id TEXT;
+  ALTER TABLE schedules ADD COLUMN params_json TEXT;
   `
 ]
 

@@ -7,6 +7,7 @@ import ChatPanel from '../components/ChatPanel'
 import TimerBar, { useTimerState } from '../components/TimerBar'
 import BreakReview from '../components/BreakReview'
 import StatusCluster from '../components/StatusCluster'
+import WorkspaceSwitcher from '../components/WorkspaceSwitcher'
 
 export default function Workspace(): JSX.Element {
   const task = useStore((s) => s.activeTask)
@@ -15,6 +16,7 @@ export default function Workspace(): JSX.Element {
   const goHome = useStore((s) => s.goHome)
   const gridApi = useRef<PaneGridApi | null>(null)
   const chatOpen = useStore((s) => s.chatOpen)
+  const studyEnabled = useStore((s) => s.settings?.studyEnabled ?? true)
   const setChatOpen = (v: boolean | ((p: boolean) => boolean)): void =>
     useStore.setState((st) => ({ chatOpen: typeof v === 'function' ? v(st.chatOpen) : v }))
   // Chat can never starve the pane area: cap at what the window affords
@@ -95,18 +97,11 @@ export default function Workspace(): JSX.Element {
   return (
     <div className="workspace">
       <header className="workspace-header">
-        <button className="btn btn-ghost" onClick={handleGoHome}>
-          ← Home
+        <button className="btn btn-ghost" title="Back to browsing (Alt+Home)" onClick={handleGoHome}>
+          ←
         </button>
-        <span className="workspace-title">
-          {task.aiDisabled && (
-            <span title="Private — AI disabled for this task" className="private-lock">
-              ⚿{' '}
-            </span>
-          )}
-          {task.title}
-        </span>
-        <TimerBar task={task} />
+        <WorkspaceSwitcher />
+        {studyEnabled && <TimerBar task={task} />}
         <StatusCluster />
         {!task.aiDisabled && (
           <button
@@ -179,7 +174,7 @@ export default function Workspace(): JSX.Element {
           </>
         )}
       </div>
-      <BreakReviewGate taskId={task.id} />
+      {studyEnabled && <BreakReviewGate taskId={task.id} />}
     </div>
   )
 }

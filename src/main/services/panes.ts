@@ -21,6 +21,7 @@ import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 import { applyDeclutter } from './declutter'
 import { recordVisit } from './history'
+import { searchUrlFor } from './search'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -636,11 +637,11 @@ class PaneManager {
     if (params.selectionText && !params.isEditable) {
       const q = params.selectionText.trim().slice(0, 100)
       add({
-        label: `Search Google for “${q.length > 30 ? q.slice(0, 30) + '…' : q}”`,
+        label: `Search for “${q.length > 30 ? q.slice(0, 30) + '…' : q}”`,
         click: () =>
           this.sendAppEvent({
             type: 'open-url-tab',
-            url: `https://www.google.com/search?q=${encodeURIComponent(q)}`,
+            url: searchUrlFor(q),
             owner
           })
       })
@@ -804,6 +805,35 @@ class PaneManager {
         omitted
       }
     })()`
+  }
+
+  /**
+   * Owner-filtered read model for the context header (services/context.ts):
+   * which pages a task has open, without capturing any content. Same
+   * ownership rule as every other AI-facing method (invariant 6).
+   */
+  listForOwner(owner: string): { paneId: string; url: string; title: string; visible: boolean }[] {
+    const out: { paneId: string; url: string; title: string; visible: boolean }[] = []
+    for (const [paneId, pane] of this.panes) {
+      if (pane.owner !== owner) continue
+      const url = pane.view.webContents.getURL()
+      if (!/^https?:/i.test(url)) continue
+      out.push({
+        paneId,
+        url,
+        title: pane.view.webContents.getTitle(),
+        visible: pane.desiredVisible
+      })
+    }
+    return out
+  }
+
+  /** The task whose panes are on screen right now (null = none visible). */
+  visibleOwner(): string | null {
+    for (const [, pane] of this.panes) {
+      if (pane.desiredVisible) return pane.owner
+    }
+    return null
   }
 
   async snapshotAll(taskFolder: string, owner: string): Promise<number> {

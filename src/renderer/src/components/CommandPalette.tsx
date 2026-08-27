@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { HistoryEntry } from '@shared/types'
+import type { Bookmark, HistoryEntry } from '@shared/types'
 import { SHORTCUTS } from '@shared/shortcuts'
 import { useStore } from '../store/useStore'
 import { useOverlay } from '../hooks/useOverlay'
@@ -64,6 +64,7 @@ export default function CommandPalette(): JSX.Element | null {
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
   const [pages, setPages] = useState<HistoryEntry[]>([])
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const listRef = useRef<HTMLDivElement>(null)
 
   useOverlay(open)
@@ -87,6 +88,16 @@ export default function CommandPalette(): JSX.Element | null {
     }
   }, [open, query])
 
+  // Bookmarks are small — load once per open, score locally like everything.
+  useEffect(() => {
+    if (!open) return
+    let live = true
+    void window.asit.bookmarks.list().then((r) => live && setBookmarks(r))
+    return () => {
+      live = false
+    }
+  }, [open])
+
   const items = useMemo((): Item[] => {
     const out: Item[] = []
     const store = useStore.getState()
@@ -109,6 +120,16 @@ export default function CommandPalette(): JSX.Element | null {
         label: r.title,
         hint: r.kind,
         run: () => void store.openTaskAndResource(activeTask!.id, r.id)
+      })
+    }
+
+    for (const b of bookmarks) {
+      out.push({
+        id: `bm-${b.id}`,
+        group: 'Bookmarks',
+        label: b.title || hostOf(b.url),
+        hint: hostOf(b.url),
+        run: () => store.openUrlInWorkspace(b.url)
       })
     }
 
@@ -140,7 +161,7 @@ export default function CommandPalette(): JSX.Element | null {
     }
 
     return out
-  }, [tasks, activeTask, activeResources, pages])
+  }, [tasks, activeTask, activeResources, pages, bookmarks])
 
   const results = useMemo(() => {
     if (!query.trim()) {

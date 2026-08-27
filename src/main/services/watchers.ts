@@ -166,6 +166,15 @@ export async function startWatch(taskId: string, opts: WatchOpts): Promise<strin
     stopWatch(id)
     appendResultNote(taskId, `WATCH FIRED: ${describe}.`)
     if (opts.skill) {
+      // Workflows resolve first for ./name — same rule as chat invocation.
+      const { getWorkflow, runWorkflow } = await import('./workflows')
+      if (getWorkflow(opts.skill)) {
+        toast(`👁 ${describe} — running workflow ./${opts.skill}`)
+        const r = await runWorkflow(opts.skill, { trigger: 'watch' })
+        if (!r.started)
+          appendResultNote(taskId, `WATCH: workflow "./${opts.skill}" didn't start: ${r.reason}`)
+        return
+      }
       const skill = listSkills().find((s) => s.name === opts.skill)
       const flow = skill ? extractFlow(skill.content) : null
       if (flow) {

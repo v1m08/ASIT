@@ -12,6 +12,7 @@ const DEFAULTS: Settings = {
     'bin',
     process.platform === 'win32' ? 'claude.exe' : 'claude'
   ),
+  studyEnabled: true, // existing users keep their tools; the shell is the pivot
   workMin: 25,
   breakMin: 5,
   escapePhrase: 'I am choosing to stop studying and I accept that this was my decision',
@@ -19,6 +20,8 @@ const DEFAULTS: Settings = {
   chatModel: 'default',
   codingModel: 'claude-fable-5',
   jarvisModel: 'default',
+  searchEngine: 'google',
+  searchUrlCustom: '',
   adBlock: true, // the user asked for ads filtered by default
   blockedDomains: [],
   declutter: true,

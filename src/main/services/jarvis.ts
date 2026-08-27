@@ -3,7 +3,9 @@ import { join } from 'path'
 import { appendFileSync, mkdirSync } from 'fs'
 import { IPC } from '@shared/ipc-contract'
 import { getSettings } from './settings'
-import { getOrCreateJarvis, tasksRoot, writeTasksIndex } from './tasks'
+import { getOrCreateJarvis, getTask, tasksRoot, writeTasksIndex } from './tasks'
+import { paneManager } from './panes'
+import { buildPaneContext } from './context'
 import { runClaudeStream, type ClaudeStreamHandle } from './claude'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
@@ -119,6 +121,7 @@ function briefing(): string {
     'App command (only you have the cross-workspace ones): {"action":"list_workspaces"} · {"action":"open_workspace","target":"<name>"} brings a workspace on screen · {"action":"delete_workspace","target":"<name>"} (files go to trash, recoverable — only when the user asks) · {"action":"add_note","workspace":"<name>","title":"…","content":"…"} creates a pinned note · to-dos: {"action":"add_todo","value":"…","due_date?":"…","priority?":1} / complete_todo / delete_todo / list_todos · {"action":"start_focus","workspace":"<name>","mode":"stopwatch|pomodoro"} starts a locked focus session (only when asked; you can never STOP a session — that is the user\'s escape ritual alone).',
     'So "set me up for the physics exam" is: create_workspace → add_url/add_note into it → add_todo the steps → maybe schedule a reminder — all in one turn, then report what you built.',
     'Scheduling: {"action":"schedule","prompt":"<what to do>","target":"08:00 | weekdays 7:30 | in 30m | hourly"} makes something happen LATER without being asked again — a morning briefing, an hourly check. `list_schedules` and {"action":"unschedule","ref":"<id>"} manage them. Scheduled runs still cannot SEND anything; they draft.',
+    'Workflows: {"action":"save_workflow","name":"kebab-name","steps":[{"kind":"action","action":{…}},{"kind":"confirm","message":"…"},{"kind":"prompt","prompt":"…"}],"params":[{"name":"q"}]} saves a repeatable automation with parameters ({{q}}), retries, approval gates and bounded model steps. Yours save as GLOBAL (no model steps allowed there); the user runs them from Automations, ./name, or a schedule.',
     'Reading the user\'s email/logged-in sites: {"action":"fetch","query":"<keywords>"} greps their OWN signed-in Gmail (and other configured sources) in the background and returns matching lines in your result file. Use THIS to read email — do NOT ask for Gmail OAuth or use any external connector; you act as the ASIT agent inside the user\'s own sessions. For a login code specifically, query includes "otp"/"code".',
     'Some topics are PROTECTED (passwords, tax, medical, financial…): those searches are refused by the app and matching lines are stripped before you see them. That is expected — do not try to work around it with synonyms, and tell the user the topic is protected.',
     '',
@@ -165,25 +168,48 @@ export function resetJarvisSession(): void {
   sessionId = undefined
 }
 
-export function askJarvis(prompt: string, cb: JarvisCallbacks): void {
+export async function askJarvis(prompt: string, cb: JarvisCallbacks): Promise<void> {
   if (running) {
     cb.onError('Jarvis is mid-task — stop it first.')
     return
   }
+  // Claim the slot BEFORE any await — two rapid asks must not both pass the
+  // guard and spawn two competing CLI processes.
+  running = { cancel: () => undefined }
+  live = { prompt, reply: '', status: null, running: true, error: null, startedAt: Date.now() }
+  publishLive(true)
+  reportActivity('jarvis', { kind: 'jarvis', label: 'Jarvis', detail: prompt.slice(0, 120) })
+
   getOrCreateJarvis() // folder + watcher target exist before the model acts
   writeTasksIndex()
   // The ONLY thing that can authorize a send this turn: the user's own words,
   // parsed here — never the model's claim that it was asked.
   authorizeSendsFromUserMessage(prompt)
 
+  // Page-aware: snapshot whatever workspace is ON SCREEN (as that workspace —
+  // ownership preserved; Jarvis can read every AI-enabled folder anyway) and
+  // tell the model what's open. Private workspaces are skipped entirely:
+  // buildPaneContext returns nothing for them and no snapshot is written.
+  let paneContext = ''
+  const onScreen = paneManager.visibleOwner()
+  const onScreenTask = onScreen ? getTask(onScreen) : null
+  if (onScreenTask && !onScreenTask.aiDisabled) {
+    try {
+      await paneManager.snapshotAll(onScreenTask.folderPath, onScreenTask.id)
+    } catch {
+      // best-effort; the header still names the open pages
+    }
+    paneContext = buildPaneContext(onScreenTask.id)
+  }
+  if (!running) {
+    // Cancelled during the snapshot — don't spawn.
+    return
+  }
+
   const fresh = !sessionId || Date.now() - lastTurnAt > SESSION_IDLE_MS
   if (fresh) sessionId = undefined
-  const fullPrompt = fresh ? `${briefing()}\n\n---\n\n${prompt}` : prompt
-
-  running = { cancel: () => undefined }
-  live = { prompt, reply: '', status: null, running: true, error: null, startedAt: Date.now() }
-  publishLive(true)
-  reportActivity('jarvis', { kind: 'jarvis', label: 'Jarvis', detail: prompt.slice(0, 120) })
+  const parts = [fresh ? briefing() : '', paneContext, prompt].filter(Boolean)
+  const fullPrompt = parts.join('\n\n---\n\n')
 
   const handle = runClaudeStream(
     {
@@ -254,7 +280,7 @@ export function askJarvisIpc(prompt: string, sender: WebContents): void {
   const send = (ch: string, payload: unknown): void => {
     if (!sender.isDestroyed()) sender.send(ch, payload)
   }
-  askJarvis(prompt, {
+  void askJarvis(prompt, {
     onDelta: (delta) => send(IPC.JARVIS_STREAM, { delta }),
     onStatus: (status) => send(IPC.JARVIS_STATUS, { status }),
     onDone: (text, costUsd) => {
@@ -268,7 +294,7 @@ export function askJarvisIpc(prompt: string, sender: WebContents): void {
 // Promise surface for the phone (and, later, voice).
 export function askJarvisText(prompt: string): Promise<string> {
   return new Promise((resolve) => {
-    askJarvis(prompt, {
+    void askJarvis(prompt, {
       onDelta: () => undefined,
       onStatus: () => undefined,
       onDone: (text) => resolve(text),
@@ -293,7 +319,7 @@ export function startJarvisTurn(prompt: string): {
     publishLive(true)
     return { started: true, queued: true }
   }
-  askJarvis(prompt, {
+  void askJarvis(prompt, {
     onDelta: () => undefined,
     onStatus: () => undefined,
     onDone: () => undefined,

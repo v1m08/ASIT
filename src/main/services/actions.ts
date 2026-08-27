@@ -320,6 +320,15 @@ export function watchJarvisActions(taskId: string): void {
 }
 
 export async function executeAction(taskId: string, action: AppAction): Promise<string> {
+  // Unattended runs (workflow model steps) lose the verbs that need a present
+  // user — same list a replayed flow is denied, plus any re-targeting.
+  if (unattendedTasks.has(taskId)) {
+    if (action.workspace !== undefined)
+      return 'refused: workspace targeting is not available to an unattended run'
+    if (FLOW_FORBIDDEN.has(action.action))
+      return `refused: "${action.action}" is not allowed in an unattended run`
+  }
+
   // `workspace` re-targeting: Jarvis names a workspace and the action executes
   // exactly as if that workspace's own agent issued it — same pane-ownership
   // scope, same folder, no special powers. Every other agent is refused: a
@@ -776,6 +785,14 @@ export async function executeAction(taskId: string, action: AppAction): Promise<
       if (res.lines.length === 0) return `fetch: no matches in ${res.source || 'sources'}`
       return `fetched from ${res.source}:\n${res.lines.map((l) => `  ${l}`).join('\n')}`
     }
+    // Save the current procedure as a first-class workflow. Loud on
+    // overwrite for the same reason save_skill is: a quietly replaced
+    // automation is how persistent injection would hide.
+    case 'save_workflow': {
+      const { saveWorkflowFromAgent } = await import('./workflows')
+      return saveWorkflowFromAgent(taskId, action as unknown as Record<string, unknown>)
+    }
+
     case 'watch': {
       const { startWatch } = await import('./watchers')
       return startWatch(taskId, {
@@ -819,12 +836,35 @@ export function appendResultNote(taskId: string, note: string): void {
 // automation flows are for, and each navigate is toasted.)
 // delete_workspace and start_focus join the list: a replayed flow could
 // otherwise silently trash a workspace or trap the user in a locked session.
-const FLOW_FORBIDDEN = new Set([
+// Exported: the workflow engine refuses the same verbs at save time AND run
+// time, and its unattended model steps are gated below.
+export const FLOW_FORBIDDEN = new Set([
   'send_whatsapp',
   'read_terminal',
   'delete_workspace',
   'start_focus'
 ])
+
+// ---- Unattended containment -----------------------------------------------
+// A workflow's MODEL step dispatches actions through the normal watcher path,
+// which live chat allows more than an unattended run should: no user is
+// present to notice a start_focus or a workspace deletion. While a task is
+// flagged unattended, executeAction refuses the flow-forbidden verbs and the
+// `workspace` field for that task. Enforced here in main, keyed by data the
+// model never controls (invariant 13/19).
+const unattendedTasks = new Set<string>()
+
+export function beginUnattended(taskId: string): void {
+  unattendedTasks.add(taskId)
+}
+
+export function endUnattended(taskId: string): void {
+  unattendedTasks.delete(taskId)
+}
+
+export function isUnattended(taskId: string): boolean {
+  return unattendedTasks.has(taskId)
+}
 
 export async function runFlow(taskId: string, steps: AppAction[]): Promise<string[]> {
   const log: string[] = []

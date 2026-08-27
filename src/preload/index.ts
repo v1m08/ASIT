@@ -158,6 +158,27 @@ const api = {
     run: (taskId: string, name: string) => ipcRenderer.invoke(IPC.SKILLS_RUN, taskId, name),
     delete: (name: string) => ipcRenderer.invoke(IPC.SKILLS_DELETE, name)
   },
+  workflows: {
+    list: () => ipcRenderer.invoke(IPC.WORKFLOWS_LIST),
+    get: (idOrName: string) => ipcRenderer.invoke(IPC.WORKFLOWS_GET, idOrName),
+    save: (input: unknown) => ipcRenderer.invoke(IPC.WORKFLOWS_SAVE, input),
+    delete: (id: string) => ipcRenderer.invoke(IPC.WORKFLOWS_DELETE, id),
+    run: (idOrName: string, params?: Record<string, string>) =>
+      ipcRenderer.invoke(IPC.WORKFLOWS_RUN, idOrName, params),
+    cancel: (runId: string) => ipcRenderer.invoke(IPC.WORKFLOWS_CANCEL, runId),
+    confirm: (runId: string, approved: boolean) =>
+      ipcRenderer.invoke(IPC.WORKFLOWS_CONFIRM, runId, approved),
+    runs: (limit?: number) => ipcRenderer.invoke(IPC.WORKFLOWS_RUNS, limit),
+    runState: () => ipcRenderer.invoke(IPC.WORKFLOWS_RUN_STATE),
+    importSkill: (name: string) => ipcRenderer.invoke(IPC.WORKFLOWS_IMPORT_SKILL, name)
+  },
+  schedules: {
+    list: () => ipcRenderer.invoke(IPC.SCHEDULES_LIST),
+    add: (input: unknown) => ipcRenderer.invoke(IPC.SCHEDULES_ADD, input),
+    remove: (id: string) => ipcRenderer.invoke(IPC.SCHEDULES_REMOVE, id),
+    setEnabled: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke(IPC.SCHEDULES_SET_ENABLED, id, enabled)
+  },
   // Drag-and-drop from Explorer. Electron 32 removed File.path, so the ONLY
   // way to learn where a dropped file lives is webUtils in the preload —
   // the renderer holds a File object it cannot resolve on its own.
@@ -189,6 +210,15 @@ const api = {
     recent: (limit?: number) => ipcRenderer.invoke(IPC.HISTORY_RECENT, limit),
     remove: (id: string) => ipcRenderer.invoke(IPC.HISTORY_REMOVE, id),
     clear: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR)
+  },
+  bookmarks: {
+    list: () => ipcRenderer.invoke(IPC.BOOKMARKS_LIST),
+    add: (url: string, title: string, favicon?: string | null) =>
+      ipcRenderer.invoke(IPC.BOOKMARKS_ADD, url, title, favicon),
+    remove: (id: string) => ipcRenderer.invoke(IPC.BOOKMARKS_REMOVE, id),
+    update: (id: string, patch: { title?: string; folder?: string | null; position?: number }) =>
+      ipcRenderer.invoke(IPC.BOOKMARKS_UPDATE, id, patch),
+    status: (url: string) => ipcRenderer.invoke(IPC.BOOKMARKS_STATUS, url)
   },
   library: {
     list: () => ipcRenderer.invoke(IPC.LIBRARY_LIST),

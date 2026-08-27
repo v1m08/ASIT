@@ -31,7 +31,7 @@ interface FileRef {
 }
 
 interface Chip {
-  kind: 'file' | 'skill'
+  kind: 'file' | 'skill' | 'workflow'
   label: string
   line?: string
   content?: string
@@ -118,6 +118,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   const [liveTokens, setLiveTokens] = useState(0)
   const [taskFiles, setTaskFiles] = useState<FileRef[]>([])
   const [skillList, setSkillList] = useState<{ name: string; content: string }[]>([])
+  const [workflowList, setWorkflowList] = useState<{ name: string }[]>([])
   const [refs, setRefs] = useState<Chip[]>([])
   const [mentionFilter, setMentionFilter] = useState<string | null>(null)
   const [mentionKind, setMentionKind] = useState<'file' | 'skill'>('file')
@@ -224,10 +225,20 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
     mentionFilter === null
       ? []
       : mentionKind === 'skill'
-        ? skillList
-            .filter((s) => s.name.toLowerCase().includes(mentionFilter.toLowerCase()))
-            .slice(0, 6)
-            .map((s) => ({ kind: 'skill' as const, label: s.name, content: s.content }))
+        ? [
+            // Workflows resolve FIRST for ./name — they're the executable
+            // upgrade of the same idea; a same-named skill is shadowed.
+            ...workflowList
+              .filter((w) => w.name.toLowerCase().includes(mentionFilter.toLowerCase()))
+              .map((w) => ({ kind: 'workflow' as const, label: w.name })),
+            ...skillList
+              .filter(
+                (s) =>
+                  s.name.toLowerCase().includes(mentionFilter.toLowerCase()) &&
+                  !workflowList.some((w) => w.name === s.name)
+              )
+              .map((s) => ({ kind: 'skill' as const, label: s.name, content: s.content }))
+          ].slice(0, 6)
         : taskFiles
             .filter((f) => f.label.toLowerCase().includes(mentionFilter.toLowerCase()))
             .slice(0, 6)
@@ -239,7 +250,10 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
       const kind = m[1] === './' ? 'skill' : 'file'
       setMentionKind(kind)
       setMentionFilter(m[2])
-      if (kind === 'skill') window.asit.skills.list().then(setSkillList) // always fresh
+      if (kind === 'skill') {
+        window.asit.skills.list().then(setSkillList) // always fresh
+        window.asit.workflows.list().then((ws) => setWorkflowList(ws.map((w) => ({ name: w.name }))))
+      }
     } else {
       setMentionFilter(null)
     }
@@ -430,6 +444,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
     const busyAtEntry = busyRef.current
     const fileChips = refs.filter((r) => r.kind === 'file')
     const skillChips = refs.filter((r) => r.kind === 'skill')
+    const workflowChips = refs.filter((r) => r.kind === 'workflow')
     // Auto-flow skills replay INSTANTLY in the app — no model, no tokens.
     const autoSkills = skillChips.filter((s) => s.content?.includes('```asit-flow'))
     const narrativeSkills = skillChips.filter((s) => !s.content?.includes('```asit-flow'))
@@ -437,6 +452,24 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
     setRefs([])
     setMentionFilter(null)
     setInput('')
+
+    // Workflows are first-class runs with their own progress surface — start
+    // them and point the user at it.
+    for (const w of workflowChips) {
+      const res = await window.asit.workflows.run(w.label, {})
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `local-wf-${Date.now()}-${w.label}`,
+          chatSessionId: sessionId ?? 'local',
+          role: 'assistant',
+          content: res.started
+            ? `⚙ Started workflow **./${w.label}** — watch it in Automations (Ctrl+Shift+A).`
+            : `⚙ Couldn't start **./${w.label}**: ${res.reason}`,
+          createdAt: new Date().toISOString()
+        }
+      ])
+    }
 
     // Auto-skills execute immediately, even while a reply is streaming — they
     // drive the panes, not the conversation.
@@ -648,12 +681,8 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
                   selectMention(c)
                 }}
               >
-                {c.kind === 'skill'
-                  ? c.content?.includes('```asit-flow')
-                    ? ''
-                    : ''
-                  : '▤'}{' '}
-                {c.label}
+                {c.kind === 'workflow' ? '⚙' : c.kind === 'skill' ? '' : '▤'} {c.label}
+                {c.kind === 'workflow' && <span className="mention-tag">workflow</span>}
                 {c.kind === 'skill' && !c.content?.includes('```asit-flow') && (
                   <span className="mention-tag">agent-run</span>
                 )}
@@ -687,8 +716,7 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
                     : undefined
                 }
               >
-                {r.kind === 'skill' ? (r.content?.includes('```asit-flow') ? '' : '') : '▥'}{' '}
-                {r.label}
+                {r.kind === 'workflow' ? '⚙' : r.kind === 'skill' ? '' : '▥'} {r.label}
                 <button
                   onClick={() =>
                     setRefs((prev) => prev.filter((x) => !(x.label === r.label && x.kind === r.kind)))

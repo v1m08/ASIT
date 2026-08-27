@@ -90,8 +90,14 @@ export interface ChatMessage {
   steps?: string[]
 }
 
+export type SearchEngine = 'google' | 'duckduckgo' | 'bing' | 'brave' | 'custom'
+
 export interface Settings {
   claudePath: string
+  // Master switch for the study surfaces (timer, lockdown launchers, spaced
+  // review, question generation). Off hides launchers only — no data is
+  // touched, and main-side timer/lockdown machinery is untouched.
+  studyEnabled: boolean
   workMin: number
   breakMin: number
   escapePhrase: string
@@ -102,6 +108,8 @@ export interface Settings {
   // Guardrails: terms the agent's mail/web search may never query or read
   // (empty = built-in defaults), and an optional recipient allowlist for sends.
   // Browser behaviour the user controls.
+  searchEngine: SearchEngine
+  searchUrlCustom: string // used when searchEngine === 'custom'; {q} = query
   adBlock: boolean
   blockedDomains: string[]
   // Cosmetic decluttering of embedded pages (consent walls, chat bubbles,
@@ -169,6 +177,116 @@ export interface WorkspaceLayout {
   // pinned to the rail — they're ordinary tabs, and persisting their URLs is
   // what lets a workspace reopen with yesterday's pages still there.
   webTabs?: Record<string, string>
+}
+
+// ---- Workflows: first-class, executable automations -----------------------
+// A workflow is a saved sequence of steps a user (or chat, via save_workflow)
+// authored: deterministic app actions for cheap replay, bounded model steps
+// for the parts needing judgment, confirm gates for the irreversible bits.
+// Deliberately NOT a DAG: branching's escape hatch is a prompt step.
+
+export type WorkflowStepFailure = 'stop' | 'continue' | { retry: number; delay_ms?: number }
+
+export type WorkflowStep =
+  | {
+      kind: 'action'
+      /** One app-action object, same shape as an actions.ndjson line. */
+      action: { action: string } & Record<string, unknown>
+      on_failure?: WorkflowStepFailure
+    }
+  | {
+      kind: 'prompt'
+      /** A bounded model turn: one CLI spawn as the owning workspace's agent
+       *  (never Bash, never send authority — see services/workflows.ts). */
+      prompt: string
+      timeout_min?: number
+      on_failure?: WorkflowStepFailure
+    }
+  | {
+      kind: 'confirm'
+      /** Pauses the run until the user clicks Approve/Reject in the UI. */
+      message: string
+    }
+  | {
+      kind: 'wait_for'
+      label?: string
+      text?: string
+      gone_label?: string
+      gone_text?: string
+      page?: number
+      timeout_min?: number
+      on_failure?: WorkflowStepFailure
+    }
+  | {
+      kind: 'assert'
+      label?: string
+      text?: string
+      /** true = assert the condition is ABSENT. */
+      invert?: boolean
+      on_failure?: WorkflowStepFailure
+    }
+
+export interface WorkflowParam {
+  name: string
+  label?: string
+  default?: string
+  required?: boolean
+}
+
+export interface Workflow {
+  id: string
+  name: string // slug; ./name invocable from chat
+  description: string
+  taskId: string | null // owning workspace; null = global (runs as the universal agent)
+  params: WorkflowParam[]
+  steps: WorkflowStep[]
+  source: 'ui' | 'chat' | 'import'
+  createdAt: string
+  updatedAt: string
+}
+
+export type WorkflowRunStatus =
+  | 'running'
+  | 'waiting_confirm'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
+
+export interface WorkflowStepResult {
+  index: number
+  kind: string
+  outcome: string
+  ok: boolean
+  ms: number
+}
+
+export interface WorkflowRun {
+  id: string
+  workflowId: string
+  workflowName: string
+  taskId: string | null
+  status: WorkflowRunStatus
+  trigger: string // manual | chat | schedule | watch | phone
+  params: Record<string, string> | null
+  currentStep: number
+  totalSteps: number
+  stepResults: WorkflowStepResult[]
+  costUsd: number
+  startedAt: string
+  finishedAt: string | null
+  /** Set while status === 'waiting_confirm'. */
+  confirmMessage: string | null
+}
+
+export interface Bookmark {
+  id: string
+  url: string
+  title: string
+  favicon: string | null
+  folder: string | null // flat folders; null = unfiled
+  position: number
+  createdAt: string
 }
 
 export interface PaneNavState {

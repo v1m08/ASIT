@@ -22,7 +22,8 @@ const MODES = [
   ['ASIT_SMOKE_PANES', 300],
   ['ASIT_SMOKE_SECURITY', 360],
   ['ASIT_SMOKE_TRANSFER', 300],
-  ['ASIT_SMOKE_TERMINAL', 240]
+  ['ASIT_SMOKE_TERMINAL', 240],
+  ['ASIT_SMOKE_WORKFLOWS', 300]
 ]
 
 const { appendFileSync } = require('fs')

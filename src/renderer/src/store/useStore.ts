@@ -15,21 +15,25 @@ export interface ActivityItem {
 
 let noticeCounter = 0
 
-/** What a tab-owning screen can do. Every field optional — a surface
- *  implements what makes sense for it. */
+/** What a tab-owning screen can do. Core browser verbs are REQUIRED — a
+ *  surface that skipped one left its shortcut silently dead (Ctrl+D and
+ *  Ctrl+\ did nothing on Home while the cheat sheet advertised them). Only
+ *  genuinely workspace-only ops stay optional; the shortcut dispatcher shows
+ *  a notice for those instead of no-oping. */
 export interface TabSurface {
-  newTab?: () => void
-  closeTab?: () => void
-  reopenTab?: () => void
-  nextTab?: () => void
-  prevTab?: () => void
-  reload?: () => void
-  back?: () => void
-  forward?: () => void
-  zoom?: (delta: number) => void
-  find?: () => void
-  pinPage?: () => void
-  copyAddress?: () => void
+  newTab: () => void
+  closeTab: () => void
+  reopenTab: () => void
+  nextTab: () => void
+  prevTab: () => void
+  reload: () => void
+  back: () => void
+  forward: () => void
+  zoom: (delta: number) => void
+  find: () => void
+  copyAddress: () => void
+  /** Ctrl+D: star the active page into the global bookmarks. */
+  bookmarkPage: () => void
   addFile?: () => void
   toggleSplit?: () => void
   toggleDirection?: () => void
@@ -43,14 +47,12 @@ interface AsitState {
   activeTask: Task | null
   activeResources: Resource[]
   settings: Settings | null
-  assistantRecall: { prompt: string; reply: string } | null
-  setAssistantRecall: (r: { prompt: string; reply: string } | null) => void
-  // Quick assistant is a launcher in the header + a panel that opens on demand;
-  // nothing is docked permanently, so no screen space is reserved for it.
+  // ONE assistant panel with routed views (agent = Jarvis, quick = the haiku
+  // read-only lane); nothing is docked while it's closed.
   assistantOpen: boolean
   setAssistantOpen: (open: boolean) => void
-  jarvisOpen: boolean
-  setJarvisOpen: (open: boolean) => void
+  assistantScope: 'agent' | 'quick'
+  setAssistantScope: (scope: 'agent' | 'quick') => void
   // Ctrl+Space (from anywhere, including inside a page) bumps this; the
   // Jarvis panel reacts by toggling the mic.
   voiceTick: number
@@ -99,6 +101,8 @@ interface AsitState {
   setSettingsOpen: (open: boolean) => void
   historyOpen: boolean
   setHistoryOpen: (open: boolean) => void
+  automationsOpen: boolean
+  setAutomationsOpen: (open: boolean) => void
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
   shortcutsOpen: boolean
@@ -126,16 +130,15 @@ export const useStore = create<AsitState>((set, get) => ({
   activeTask: null,
   activeResources: [],
   settings: null,
-  assistantRecall: null,
-  setAssistantRecall: (r) => set({ assistantRecall: r }),
   // The two right-docked panels share the same reserved column — opening one
   // closes the other.
   assistantOpen: false,
-  setAssistantOpen: (open) => set({ assistantOpen: open, ...(open ? { jarvisOpen: false } : {}) }),
-  jarvisOpen: false,
-  setJarvisOpen: (open) => set({ jarvisOpen: open, ...(open ? { assistantOpen: false } : {}) }),
+  setAssistantOpen: (open) => set({ assistantOpen: open }),
+  assistantScope: 'agent',
+  setAssistantScope: (assistantScope) => set({ assistantScope }),
   voiceTick: 0,
-  bumpVoice: () => set((s) => ({ voiceTick: s.voiceTick + 1, jarvisOpen: true, assistantOpen: false })),
+  bumpVoice: () =>
+    set((s) => ({ voiceTick: s.voiceTick + 1, assistantOpen: true, assistantScope: 'agent' })),
   dictateTick: 0,
   // Dictation deliberately does NOT open a panel: the point is that the
   // words go where you are already looking.
@@ -188,6 +191,8 @@ export const useStore = create<AsitState>((set, get) => ({
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
   historyOpen: false,
   setHistoryOpen: (historyOpen) => set({ historyOpen }),
+  automationsOpen: false,
+  setAutomationsOpen: (automationsOpen) => set({ automationsOpen }),
   paletteOpen: false,
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   shortcutsOpen: false,

@@ -13,7 +13,14 @@ export function initUsage(getWin: () => BrowserWindow | null): void {
   getWindow = getWin
 }
 
-export type UsageKind = 'chat' | 'generate' | 'extract' | 'grade' | 'assistant' | 'jarvis'
+export type UsageKind =
+  | 'chat'
+  | 'generate'
+  | 'extract'
+  | 'grade'
+  | 'assistant'
+  | 'jarvis'
+  | 'workflow'
 
 export function logUsage(taskId: string | null, kind: UsageKind, usage: ClaudeUsage): void {
   getDb()

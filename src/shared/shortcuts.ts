@@ -125,11 +125,26 @@ export const SHORTCUTS: ShortcutDef[] = [
     label: ''
   },
   { id: 'open-settings', accel: 'CommandOrControl+,', key: ',', ctrl: true, label: 'Settings' },
+  {
+    id: 'open-automations',
+    accel: 'CommandOrControl+Shift+A',
+    key: 'a',
+    ctrl: true,
+    shift: true,
+    label: 'Automations (workflows & schedules)'
+  },
 
   // --- doing things that used to need the mouse
-  // Ctrl+D is "bookmark this" everywhere; here the bookmark is a pin on the
-  // workspace, which is the same idea with a folder behind it.
-  { id: 'pin-page', accel: 'CommandOrControl+D', key: 'd', ctrl: true, label: 'Pin this page' },
+  // Ctrl+D is "bookmark this" everywhere — a real, global bookmark since the
+  // bookmarks store landed. Pinning to a workspace rail stays as the ⌾
+  // button and tab menu; it's the workspace-scoped cousin.
+  {
+    id: 'bookmark-page',
+    accel: 'CommandOrControl+D',
+    key: 'd',
+    ctrl: true,
+    label: 'Bookmark this page'
+  },
   {
     id: 'copy-address',
     accel: 'CommandOrControl+Shift+C',
@@ -238,7 +253,7 @@ export const SHORTCUT_GROUPS: { title: string; ids: string[] }[] = [
   {
     title: 'This workspace',
     ids: [
-      'pin-page',
+      'bookmark-page',
       'copy-address',
       'add-file',
       'toggle-split',
@@ -255,7 +270,7 @@ export const SHORTCUT_GROUPS: { title: string; ids: string[] }[] = [
   },
   {
     title: 'Getting around',
-    ids: ['cycle-zone', 'cycle-zone-back', 'focus-zone', 'go-home', 'open-settings']
+    ids: ['cycle-zone', 'cycle-zone-back', 'focus-zone', 'go-home', 'open-settings', 'open-automations']
   }
 ]
 

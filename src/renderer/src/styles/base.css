@@ -552,15 +552,6 @@ select:focus {
   cursor: default;
 }
 
-.pane-url {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  padding: 0 8px;
-}
 
 .slot-content {
   flex: 1;
@@ -2617,7 +2608,7 @@ body.assistant-open:has(.jarvis-panel) .home-main {
    it where it matters (caret, :focus-within borders); an extra outline there
    just draws a box around the chat. */
 .slot[data-focus-pane][data-focus-active] .tab-strip,
-.browser[data-focus-active] .browser-tabstrip {
+.browser[data-focus-active] .tab-strip {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
@@ -2797,61 +2788,38 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   gap: 10px;
 }
 
-.browser-tabstrip {
-  display: flex;
+/* The shared TabStrip renders the same markup everywhere; the scratchpad
+   browser keeps its roomier full-window look via these scoped overrides. */
+.browser .tab-strip {
   align-items: flex-end;
-  gap: 2px;
   padding: 6px 8px 0;
-  background: var(--bg);
-  overflow-x: auto;
-  flex-shrink: 0;
 }
 
-.browser-tabstrip::-webkit-scrollbar {
-  height: 4px;
-}
-
-.browser-tab {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.browser .tab {
   padding: 7px 6px 7px 12px;
   border-radius: 10px 10px 0 0;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-bottom: none;
-  cursor: pointer;
   min-width: 110px;
   max-width: 200px;
-  flex-shrink: 0;
 }
 
-.browser-tab-active {
+.browser .tab-active {
   background: var(--bg-hover);
   border-color: var(--accent-dim);
 }
 
-.browser-tab-title {
+.browser .tab .tab-title {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: none;
   font-size: 0.8rem;
 }
 
-.browser-newtab {
-  background: none;
-  border: none;
-  color: var(--text-dim);
-  cursor: pointer;
+.browser .tab-new {
   font-size: 1.1rem;
   padding: 4px 10px;
-  align-self: center;
-}
-
-.browser-newtab:hover {
-  color: var(--text);
 }
 
 .browser-toolbar {
@@ -2881,6 +2849,298 @@ body.assistant-open:has(.jarvis-panel) .home-main {
 .browser-content {
   flex: 1;
   min-height: 0;
+}
+
+/* ---- New-tab page ----
+   Plain DOM: an NTP tab has no WebContentsView, so nothing paints over this
+   (invariant 2 by construction). Lives inside its slot's content area. */
+.ntp {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.ntp-inner {
+  width: min(620px, 90%);
+  margin-top: clamp(24px, 14vh, 140px);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.ntp-address .browser-address {
+  font-size: 1rem;
+  padding: 11px 20px;
+}
+
+.ntp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ntp-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.ntp-favicon {
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+}
+
+.bookmark-star-on {
+  color: var(--accent);
+}
+
+/* ---- Automations (workflows + schedules) ---- */
+.automations-modal {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.automations-body {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.workflow-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.workflow-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.workflow-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.workflow-meta {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-steps-preview {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+.workflow-run {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workflow-run-live {
+  border-color: var(--accent-dim);
+}
+
+.workflow-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workflow-run-name {
+  font-weight: 600;
+}
+
+.workflow-run-meta {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
+.workflow-run-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.workflow-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
+
+.workflow-confirm span {
+  flex: 1;
+}
+
+.badge.run-succeeded {
+  color: var(--ok, #3fb950);
+}
+
+.badge.run-failed,
+.badge.run-interrupted {
+  color: var(--danger);
+}
+
+.badge.run-waiting_confirm {
+  color: var(--accent);
+}
+
+.schedule-paused {
+  opacity: 0.55;
+}
+
+/* Assistant panel scope switch (Agent | Quick). */
+.assistant-scope {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.scope-btn {
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.scope-btn-on {
+  background: var(--bg-hover);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Tab-group switcher at the left of every header. */
+.shell-switcher {
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+}
+
+.shell-switcher-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* History modal's History / Bookmarks tab toggle. */
+.history-tab {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 8px 0 0;
+}
+
+.history-tab-on {
+  color: var(--text);
+}
+
+.ntp-sites {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.ntp-site {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.ntp-site:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-dim);
+}
+
+.ntp-site-host {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntp-site-title {
+  font-size: 0.85rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntp-empty {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  text-align: center;
 }
 
 .side-panel {

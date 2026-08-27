@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { HistoryEntry } from '@shared/types'
 import { useOverlay } from '../hooks/useOverlay'
+import { searchUrl } from '../lib/search'
 
 // The address bar, for every surface that shows a web page.
 //
@@ -23,7 +24,7 @@ export function toNavUrl(v: string): string {
   const t = v.trim()
   if (/^(https?|file):/i.test(t)) return t
   if (looksLikeUrl(t)) return `https://${t}`
-  return `https://www.google.com/search?q=${encodeURIComponent(t)}`
+  return searchUrl(t)
 }
 
 export function hostOf(url: string): string {
@@ -38,13 +39,16 @@ export default function AddressBar({
   url,
   onNavigate,
   className = '',
-  placeholder = 'Search or enter address'
+  placeholder = 'Search or enter address',
+  autoFocus = false
 }: {
   /** The page currently shown; displayed whenever the user isn't typing. */
   url: string
   onNavigate: (target: string) => void
   className?: string
   placeholder?: string
+  /** New-tab page: land the caret in the box, like every browser. */
+  autoFocus?: boolean
 }): JSX.Element {
   // null means "not editing" — show the live URL. A plain value-state would
   // freeze the bar on whatever was last typed while the page navigates on.
@@ -110,6 +114,7 @@ export default function AddressBar({
       <input
         ref={inputRef}
         className="browser-address"
+        autoFocus={autoFocus}
         placeholder={placeholder}
         spellCheck={false}
         value={draft ?? url ?? ''}

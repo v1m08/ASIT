@@ -581,6 +581,7 @@ export function writeClaudeMd(task: Task, resources: Resource[]): void {
     '  ```',
     '  Before saving an auto-flow, TEST each step live via actions.ndjson; only record steps that worked. Add prose above the block explaining what it does and any preconditions (which panes must be open, logged-in state).',
     '  (b) NARRATIVE: terse imperative steps with concrete URLs/labels/commands, for flows needing judgment mid-way.',
+    '- `{"action":"save_workflow","name":"kebab-name","description":"…","params":[{"name":"query","required":true}],"steps":[…]}` — save a FIRST-CLASS WORKFLOW: like an auto-flow skill but with parameters ({{query}} substitutes into string values), retries (`"on_failure":"continue"|{"retry":2}`), bounded model steps (`{"kind":"prompt","prompt":"…"}` — runs unattended, cannot send or use forbidden verbs), user-approval gates (`{"kind":"confirm","message":"…"}`), and page conditions (`{"kind":"wait_for","text":"…"}` / `{"kind":"assert","label":"…"}`). Deterministic steps are `{"kind":"action","action":{…}}`. The user runs it from Automations, ./name in chat, or on a schedule. Prefer this over save_skill when the flow needs params, checks, or a mid-run OK.',
     '',
     '### Interacting with the open web pages',
     '',

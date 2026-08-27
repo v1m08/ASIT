@@ -143,6 +143,9 @@ function bestSentence(
 // "?g <query>": instant Google — hidden window loads the results page and we
 // distill a DIRECT answer locally (answer box, else best-sentence heuristic),
 // with a compact "More" line of links. No tabs, no model.
+// Deliberately NOT wired to Settings.searchEngine: the extraction script
+// below is written against Google's result DOM, so pointing it at another
+// engine would silently return nothing. Tab searches follow the setting.
 async function googleSearch(q: string): Promise<QuickFetchResult> {
   const win = getFetchWindow()
   let broken = false

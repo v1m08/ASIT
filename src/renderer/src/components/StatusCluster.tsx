@@ -108,8 +108,8 @@ export default function StatusCluster(): JSX.Element {
   const notice = useStore((s) => s.notice)
   const loadError = useStore((s) => s.loadError)
   const retryLoad = useStore((s) => s.retryLoad)
-  const jarvisOpen = useStore((s) => s.jarvisOpen)
-  const setJarvisOpen = useStore((s) => s.setJarvisOpen)
+  const assistantOpen = useStore((s) => s.assistantOpen)
+  const setAssistantOpen = useStore((s) => s.setAssistantOpen)
   const openTask = useStore((s) => s.openTask)
   const activeTaskId = useStore((s) => s.activeTask?.id)
   const [now, setNow] = useState(Date.now())
@@ -275,12 +275,11 @@ export default function StatusCluster(): JSX.Element {
           )}
         </button>
       ))}
-      {/* One assistant button. Jarvis does everything the quick bar did — the
-           launcher was a second door to a subset of the same thing. */}
+      {/* One assistant button, one panel (agent + quick scopes inside). */}
       <button
-        className={`assistant-launcher ${jarvisOpen ? 'active' : ''}`}
-        title="Assistant (Ctrl+J)"
-        onClick={() => setJarvisOpen(!jarvisOpen)}
+        className={`assistant-launcher ${assistantOpen ? 'active' : ''}`}
+        title="Assistant (Ctrl+J agent · Ctrl+K quick)"
+        onClick={() => setAssistantOpen(!assistantOpen)}
       > Ask
       </button>
     </div>

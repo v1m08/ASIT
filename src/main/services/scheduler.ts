@@ -27,6 +27,11 @@ export interface Schedule {
   id: string
   prompt: string
   taskId: string | null
+  // A schedule fires EITHER a prompt turn or a saved workflow — workflow_id
+  // wins when set. Workflow runs inherit the workflow engine's containment
+  // (no sends, no forbidden verbs); prompt turns inherit the agent's.
+  workflowId: string | null
+  workflowParams: Record<string, string> | null
   repeat: RepeatKind
   nextAt: string
   enabled: boolean
@@ -40,6 +45,10 @@ function rowTo(row: Record<string, unknown>): Schedule {
     id: row.id as string,
     prompt: row.prompt as string,
     taskId: (row.task_id as string) ?? null,
+    workflowId: (row.workflow_id as string) ?? null,
+    workflowParams: row.params_json
+      ? (JSON.parse(row.params_json as string) as Record<string, string>)
+      : null,
     repeat: row.repeat as RepeatKind,
     nextAt: row.next_at as string,
     enabled: (row.enabled as number) === 1,
@@ -113,9 +122,11 @@ function advanceForWeekdays(at: Date, repeat: RepeatKind): Date {
 }
 
 export function addSchedule(input: {
-  prompt: string
+  prompt?: string
   when: string
   taskId?: string | null
+  workflowId?: string | null
+  workflowParams?: Record<string, string> | null
 }): { ok: true; schedule: Schedule } | { ok: false; reason: string } {
   const parsed = parseWhen(input.when)
   if (!parsed) {
@@ -124,13 +135,17 @@ export function addSchedule(input: {
       reason: `couldn't understand "${input.when}" — try "08:00", "weekdays 7:30", "in 30m", or "hourly"`
     }
   }
-  const prompt = input.prompt.trim()
-  if (!prompt) return { ok: false, reason: 'a schedule needs a prompt to run' }
+  const prompt = (input.prompt ?? '').trim()
+  const workflowId = input.workflowId ?? null
+  if (!prompt && !workflowId)
+    return { ok: false, reason: 'a schedule needs a prompt or a workflow to run' }
 
   const s: Schedule = {
     id: newId(),
     prompt: prompt.slice(0, 2000),
     taskId: input.taskId ?? null,
+    workflowId,
+    workflowParams: input.workflowParams ?? null,
     repeat: parsed.repeat,
     nextAt: parsed.at.toISOString(),
     enabled: true,
@@ -140,9 +155,18 @@ export function addSchedule(input: {
   }
   getDb()
     .prepare(
-      'INSERT INTO schedules (id, prompt, task_id, repeat, next_at, enabled, last_run_at, last_result, created_at) VALUES (?, ?, ?, ?, ?, 1, NULL, NULL, ?)'
+      'INSERT INTO schedules (id, prompt, task_id, workflow_id, params_json, repeat, next_at, enabled, last_run_at, last_result, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?)'
     )
-    .run(s.id, s.prompt, s.taskId, s.repeat, s.nextAt, s.createdAt)
+    .run(
+      s.id,
+      s.prompt,
+      s.taskId,
+      s.workflowId,
+      s.workflowParams ? JSON.stringify(s.workflowParams) : null,
+      s.repeat,
+      s.nextAt,
+      s.createdAt
+    )
   bus.emit('changed', 'schedules')
   return { ok: true, schedule: s }
 }
@@ -229,6 +253,18 @@ async function runSchedule(s: Schedule): Promise<void> {
   getDb()
     .prepare('UPDATE schedules SET last_run_at = ?, last_result = ? WHERE id = ?')
     .run(nowIso(), 'running', s.id)
+
+  // A workflow target wins. The run inherits the workflow engine's
+  // containment wholesale — critically, runWorkflow never calls
+  // authorizeSendsFromUserMessage, so the no-send property holds here too.
+  if (s.workflowId) {
+    const { runWorkflow } = await import('./workflows')
+    const r = await runWorkflow(s.workflowId, { params: s.workflowParams ?? {}, trigger: 'schedule' })
+    getDb()
+      .prepare('UPDATE schedules SET last_result = ? WHERE id = ?')
+      .run(r.started ? 'started workflow' : `skipped: ${r.reason ?? 'busy'}`, s.id)
+    return
+  }
 
   // Dynamic import: chat/jarvis reach into panes and Electron, and this file
   // must stay loadable from a headless test.

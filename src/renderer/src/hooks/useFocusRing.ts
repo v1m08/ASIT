@@ -115,37 +115,27 @@ function focusProgrammatically(el: HTMLElement): void {
   }
 }
 
-// Ctrl+K toggles: open with the cursor ready, or close and hand focus back
-// to wherever the user was. (The panel may not be mounted yet when opening.)
-function toggleAssistant(): void {
+// Ctrl+J opens the assistant panel in agent scope; Ctrl+K in quick scope.
+// Pressing the shortcut for the scope that's already showing closes the panel
+// and hands focus back; pressing the OTHER scope's shortcut just switches
+// scope in place. (The panel may not be mounted yet when opening.)
+function toggleAssistantScope(scope: 'agent' | 'quick'): void {
   const store = useStore.getState()
-  if (store.assistantOpen) {
+  if (store.assistantOpen && store.assistantScope === scope) {
     store.setAssistantOpen(false)
     if (returnZone?.isConnected) focusZone(returnZone)
     returnZone = null
     return
   }
-  returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
+  if (!store.assistantOpen) {
+    returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
+  }
+  store.setAssistantScope(scope)
   store.setAssistantOpen(true)
   requestAnimationFrame(() => {
-    const el = document.querySelector<HTMLInputElement>('.assistant-panel input')
+    const el = document.querySelector<HTMLInputElement>('.assistant-panel .assistant-bar input')
     el?.focus()
     el?.select()
-  })
-}
-
-function toggleJarvis(): void {
-  const store = useStore.getState()
-  if (store.jarvisOpen) {
-    store.setJarvisOpen(false)
-    if (returnZone?.isConnected) focusZone(returnZone)
-    returnZone = null
-    return
-  }
-  returnZone = document.querySelector<HTMLElement>('[data-focus-active]')
-  store.setJarvisOpen(true)
-  requestAnimationFrame(() => {
-    document.querySelector<HTMLInputElement>('.jarvis-panel input')?.focus()
   })
 }
 
@@ -241,9 +231,9 @@ export function installFocusRing(): () => void {
       case 'zoom-reset':
         return tabs?.zoom?.(0)
       case 'focus-jarvis':
-        return toggleJarvis()
+        return toggleAssistantScope('agent')
       case 'focus-assistant':
-        return toggleAssistant()
+        return toggleAssistantScope('quick')
       case 'focus-address':
         // A split workspace has TWO address bars. Plain querySelector always
         // grabs the left one, so Ctrl+L in the right pane retyped the left
@@ -261,19 +251,24 @@ export function installFocusRing(): () => void {
         return store.toggleScratchNotes()
       case 'open-settings':
         return store.setSettingsOpen(true)
+      case 'open-automations':
+        return store.setAutomationsOpen(true)
       case 'open-history':
         return store.setHistoryOpen(true)
       case 'open-shortcuts':
         return store.setShortcutsOpen(true)
-      case 'pin-page':
-        return tabs?.pinPage?.()
+      case 'bookmark-page':
+        return tabs?.bookmarkPage()
       case 'copy-address':
         return tabs?.copyAddress?.()
       case 'add-file':
+        if (tabs && !tabs.addFile) return store.pushNotice('Adding files works inside a workspace.', 'info')
         return tabs?.addFile?.()
       case 'toggle-split':
+        if (tabs && !tabs.toggleSplit) return store.pushNotice('Splits work inside a workspace.', 'info')
         return tabs?.toggleSplit?.()
       case 'toggle-direction':
+        if (tabs && !tabs.toggleDirection) return store.pushNotice('Splits work inside a workspace.', 'info')
         return tabs?.toggleDirection?.()
       case 'focus-todo': {
         // The field only exists once the list is in "adding" mode, so press
@@ -288,6 +283,8 @@ export function installFocusRing(): () => void {
         // Same key starts and ends it, so there is one thing to remember.
         // Ending while locked down is REFUSED by main (the 30s hold or the
         // escape phrase are the only ways out) — this key cannot bypass that.
+        if (!(store.settings?.studyEnabled ?? true))
+          return store.pushNotice('Study tools are off — enable them in Settings.', 'info')
         const task = store.activeTask
         void window.asit.session.state().then(async (st) => {
           if (st && st.phase !== 'idle') {

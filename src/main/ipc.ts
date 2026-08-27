@@ -16,8 +16,11 @@ import * as transfer from './services/transfer'
 import * as assistant from './services/assistant'
 import * as library from './services/library'
 import * as history from './services/history'
+import * as bookmarks from './services/bookmarks'
 import * as updater from './services/updater'
 import * as skills from './services/skills'
+import * as workflows from './services/workflows'
+import * as scheduler from './services/scheduler'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
@@ -239,6 +242,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   handle(IPC.HISTORY_RECENT, (_e, limit?: number) => history.recentHistory(limit))
   handle(IPC.HISTORY_REMOVE, (_e, id: string) => history.removeHistory(id))
   handle(IPC.HISTORY_CLEAR, () => history.clearHistory())
+
+  // --- global bookmarks (user-facing only; no agent verb reaches this) ---
+  handle(IPC.BOOKMARKS_LIST, () => bookmarks.listBookmarks())
+  handle(IPC.BOOKMARKS_ADD, (_e, url: string, title: string, favicon?: string | null) =>
+    bookmarks.addBookmark(url, title, favicon)
+  )
+  handle(IPC.BOOKMARKS_REMOVE, (_e, id: string) => bookmarks.removeBookmark(id))
+  handle(
+    IPC.BOOKMARKS_UPDATE,
+    (_e, id: string, patch: { title?: string; folder?: string | null; position?: number }) =>
+      bookmarks.updateBookmark(id, patch)
+  )
+  handle(IPC.BOOKMARKS_STATUS, (_e, url: string) => bookmarks.isBookmarked(url))
 
   handle(IPC.RESOURCES_RENAME, (_e, id: string, taskId: string, title: string) => {
     resources.renameResource(id, title)
@@ -645,6 +661,56 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const log = await runFlow(taskId, flow as never)
     return { ran: true, log }
   })
+
+  // --- workflows ---
+  handle(IPC.WORKFLOWS_LIST, () => workflows.listWorkflows())
+  handle(IPC.WORKFLOWS_GET, (_e, idOrName: string) => workflows.getWorkflow(idOrName))
+  handle(
+    IPC.WORKFLOWS_SAVE,
+    (
+      _e,
+      input: {
+        name: string
+        description?: string
+        taskId?: string | null
+        params?: import('@shared/types').WorkflowParam[]
+        steps: import('@shared/types').WorkflowStep[]
+      }
+    ) => workflows.saveWorkflow(input)
+  )
+  handle(IPC.WORKFLOWS_DELETE, (_e, id: string) => workflows.deleteWorkflow(id))
+  handle(IPC.WORKFLOWS_RUN, (_e, idOrName: string, params?: Record<string, string>) =>
+    workflows.runWorkflow(idOrName, { params, trigger: 'manual' })
+  )
+  handle(IPC.WORKFLOWS_CANCEL, (_e, runId: string) => workflows.cancelRun(runId))
+  // The ONLY path that can approve a confirm gate: a user click in the
+  // renderer. No action verb exists for this — absence, not permission.
+  handle(IPC.WORKFLOWS_CONFIRM, (_e, runId: string, approved: boolean) =>
+    workflows.confirmRun(runId, approved)
+  )
+  handle(IPC.WORKFLOWS_RUNS, (_e, limit?: number) => workflows.listRuns(limit))
+  handle(IPC.WORKFLOWS_RUN_STATE, () => workflows.activeRunState())
+  handle(IPC.WORKFLOWS_IMPORT_SKILL, (_e, name: string) => workflows.importSkillAsWorkflow(name))
+
+  // --- schedules (user-visible management; agents keep their action verbs) ---
+  handle(IPC.SCHEDULES_LIST, () => scheduler.listSchedules())
+  handle(
+    IPC.SCHEDULES_ADD,
+    (
+      _e,
+      input: {
+        prompt?: string
+        when: string
+        taskId?: string | null
+        workflowId?: string | null
+        workflowParams?: Record<string, string> | null
+      }
+    ) => scheduler.addSchedule(input)
+  )
+  handle(IPC.SCHEDULES_REMOVE, (_e, id: string) => scheduler.removeSchedule(id))
+  handle(IPC.SCHEDULES_SET_ENABLED, (_e, id: string, enabled: boolean) =>
+    scheduler.setScheduleEnabled(id, enabled)
+  )
 
   // --- global file library ---
   handle(IPC.LIBRARY_LIST, () => library.listLibrary())

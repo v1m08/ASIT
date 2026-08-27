@@ -13,6 +13,7 @@ import { clearActivity, reportActivity } from './activity'
 import { bus } from './bus'
 import { watchTaskActions } from './actions'
 import { authorizeSendsFromUserMessage } from './guardrails'
+import { buildPaneContext } from './context'
 
 // Rolling cross-chat memory: every completed turn is appended here, and each
 // task's CLAUDE.md tells the model to read it — so a brand-new chat knows what
@@ -394,13 +395,19 @@ export async function sendChat(
     )
   }
 
+  // Page-aware by default: the model KNOWS what's open and where the fresh
+  // snapshots are, instead of having to think to ask. The stored user message
+  // stays clean — only the spawned prompt carries the header.
+  const paneContext = buildPaneContext(task.id)
+  const spawnPrompt = paneContext ? `${paneContext}\n\n---\n\n${text}` : text
+
   // Coding tasks get the coding agent: Fable 5, command execution, and a
   // longer leash (installs/tests take time). Normal tasks stay read+write
   // scoped to the folder with no command execution.
   const handle = runClaudeStream(
     {
       cwd: task.folderPath,
-      prompt: text,
+      prompt: spawnPrompt,
       resumeSessionId: session.claudeSessionId,
       model: task.coding ? getSettings().codingModel : getSettings().chatModel,
       // ALL file access scoped to the task folder (cwd-relative ** patterns,

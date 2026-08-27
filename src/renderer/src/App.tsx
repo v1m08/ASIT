@@ -4,12 +4,12 @@ import { useStore } from './store/useStore'
 import Home from './screens/Home'
 import Workspace from './screens/Workspace'
 import AccountsModal from './components/AccountsModal'
-import AssistantBar from './components/AssistantBar'
-import JarvisPanel from './components/JarvisPanel'
+import AssistantPanel from './components/AssistantPanel'
 import StatusListener from './components/StatusListener'
 import { useFocusRing } from './hooks/useFocusRing'
 import { useFileDropGuard } from './hooks/useFileDrop'
 import HistoryModal from './components/HistoryModal'
+import AutomationsModal from './components/AutomationsModal'
 import CommandPalette from './components/CommandPalette'
 import ShortcutsModal from './components/ShortcutsModal'
 import SettingsModal from './components/SettingsModal'
@@ -33,16 +33,13 @@ export default function App(): JSX.Element {
   // the window to it, replacing the entire app with a PDF viewer.
   useFileDropGuard()
 
-  // ONE owner for the right-column reservation. When both panels toggled the
-  // body class themselves, switching Jarvis→assistant ran the effects in tree
-  // order and the loser REMOVED the class — panes then painted over the open
-  // panel (invariant 2).
+  // ONE owner for the right-column reservation (invariant 2: the docked panel
+  // needs real layout space or panes paint over it).
   const assistantOpen = useStore((s) => s.assistantOpen)
-  const jarvisOpen = useStore((s) => s.jarvisOpen)
   useEffect(() => {
-    document.body.classList.toggle('assistant-open', assistantOpen || jarvisOpen)
+    document.body.classList.toggle('assistant-open', assistantOpen)
     return () => document.body.classList.remove('assistant-open')
-  }, [assistantOpen, jarvisOpen])
+  }, [assistantOpen])
 
   // The phone can drive the desktop: "open this workspace" arrives as an app
   // event and switches the real app, optionally straight to a resource.
@@ -72,11 +69,11 @@ export default function App(): JSX.Element {
   return (
     <>
       {view === 'home' ? <Home /> : <Workspace />}
-      <AssistantBar />
-      <JarvisPanel />
+      <AssistantPanel />
       <StatusListener />
       {/* Mounted at the top so Ctrl+H reaches it from Home and a workspace. */}
       <HistoryModal />
+      <AutomationsModal />
       <CommandPalette />
       <ShortcutsModal />
       {/* Same reason: Ctrl+, used to set settingsOpen from a workspace, but

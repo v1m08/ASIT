@@ -575,7 +575,7 @@ async function handleUtterance(samples: Float32Array): Promise<void> {
     }
     const win = getWindow?.()
     if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_TRANSCRIPT, { text })
-    askJarvis(text, {
+    void askJarvis(text, {
       onDelta: () => undefined,
       onStatus: (status) => {
         if (live()) pushState('thinking', status)

@@ -10,6 +10,7 @@ import { IPC } from '@shared/ipc-contract'
 import ScratchBrowser, { type ScratchBrowserApi } from '../components/ScratchBrowser'
 import NotesEditor from '../components/NotesEditor'
 import ChatPanel from '../components/ChatPanel'
+import WorkspaceSwitcher from '../components/WorkspaceSwitcher'
 import { useOverlay } from '../hooks/useOverlay'
 import { fmtCost } from '../utils/fmt'
 import { reliablyInto } from '../lib/reliably'
@@ -97,7 +98,7 @@ export default function Home(): JSX.Element {
   const loadTasks = useStore((s) => s.loadTasks)
   const openTask = useStore((s) => s.openTask)
   const startFocus = useStore((s) => s.startFocus)
-  const setAssistantRecall = useStore((s) => s.setAssistantRecall)
+  const studyEnabled = useStore((s) => s.settings?.studyEnabled ?? true)
   const [showTodos, setShowTodos] = useState(true)
 
   const [sideCollapsed, setSideCollapsed] = useState(
@@ -159,8 +160,14 @@ export default function Home(): JSX.Element {
   useEffect(() => {
     reliablyInto('stats', () => window.asit.tasks.stats(), setStats)
     reliablyInto('usage', () => window.asit.usage.summary(), setAiUsage)
-    reliablyInto('review queue', () => window.asit.questions.due(50), (due) => setDueCount(due.length))
-  }, [tasks])
+    // Study tools off ⇒ dueCount stays 0, which hides every review surface
+    // (banner, mini button, badges) without touching any data.
+    if (studyEnabled) {
+      reliablyInto('review queue', () => window.asit.questions.due(50), (due) => setDueCount(due.length))
+    } else {
+      setDueCount(0)
+    }
+  }, [tasks, studyEnabled])
 
   const refreshScratchResources = useCallback(async (): Promise<void> => {
     if (!scratch) return
@@ -194,7 +201,7 @@ export default function Home(): JSX.Element {
     })
   }, [refreshScratchResources, loadTasks, scratchResources, scratch?.id])
 
-  const dueByTask = stats?.dueByTask ?? {}
+  const dueByTask = studyEnabled ? (stats?.dueByTask ?? {}) : {}
   const active = tasks
     .filter((t) => t.status === 'active')
     .sort((a, b) => score(b, dueByTask[b.id] ?? 0) - score(a, dueByTask[a.id] ?? 0))
@@ -257,7 +264,9 @@ export default function Home(): JSX.Element {
     e.preventDefault()
     const name = sessionName.trim()
     if (!name || !scratch) return
-    // Open browser tabs become the session's resources.
+    // Open browser tabs become the session's resources (rail visibility);
+    // the tabs THEMSELVES travel via the scratch layout_json handoff in
+    // scratchSave — flush the debounced layout write first or it reads stale.
     const tabs = browserApi.current?.currentTabs() ?? []
     const existingUrls = new Set(scratchResources.map((r) => r.url))
     for (const tab of tabs) {
@@ -265,8 +274,8 @@ export default function Home(): JSX.Element {
         await window.asit.resources.addUrl(scratch.id, tab.title.slice(0, 60), tab.url)
       }
     }
+    await browserApi.current?.flushLayout()
     await window.asit.panes.closeAll()
-    localStorage.removeItem('asit-scratch-tabs')
     await window.asit.tasks.scratchSave(name)
     setSessionName('')
     setSaving(false)
@@ -327,25 +336,31 @@ export default function Home(): JSX.Element {
           <div className="task-menu" onClick={(e) => e.stopPropagation()}>
             {task.status === 'active' && (
               <>
-                <button onClick={() => { setMenuTaskId(null); startFocus(task.id) }}>
-                  ▶ Focus (stopwatch)
-                </button>
-                <button
-                  onClick={async () => {
-                    setMenuTaskId(null)
-                    await openTask(task.id)
-                    await window.asit.session.start(task.id, 'pomodoro')
-                  }}
-                >
-                  ⏱ Focus with timer
-                </button>
+                {studyEnabled && (
+                  <>
+                    <button onClick={() => { setMenuTaskId(null); startFocus(task.id) }}>
+                      ▶ Focus (stopwatch)
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setMenuTaskId(null)
+                        await openTask(task.id)
+                        await window.asit.session.start(task.id, 'pomodoro')
+                      }}
+                    >
+                      ⏱ Focus with timer
+                    </button>
+                  </>
+                )}
                 <button onClick={() => { setMenuTaskId(null); openTask(task.id) }}> Open workspace
                 </button>
               </>
             )}
-            <button onClick={() => { setMenuTaskId(null); setQuestionsTask(task) }}>
-              ❓ Manage questions
-            </button>
+            {studyEnabled && (
+              <button onClick={() => { setMenuTaskId(null); setQuestionsTask(task) }}>
+                ❓ Manage questions
+              </button>
+            )}
             <button
               onClick={() => {
                 setMenuTaskId(null)
@@ -376,7 +391,7 @@ export default function Home(): JSX.Element {
                   await loadTasks()
                 }}
               >
-                {task.coding ? '📖 Switch to study mode' : '⌗ Make coding workspace'}
+                {task.coding ? '📖 Switch to standard mode' : '⌗ Make coding workspace'}
               </button>
             )}
             {!task.aiDisabled && (
@@ -409,6 +424,7 @@ export default function Home(): JSX.Element {
   const renderMain = (): JSX.Element => (
     <main className="home-main">
       <header className="workspace-header browser-header">
+        <WorkspaceSwitcher />
         {saving ? (
           <form className="save-session-form" onSubmit={handleSaveSession}>
             <input
@@ -455,7 +471,7 @@ export default function Home(): JSX.Element {
         {scratch && (
           <>
             <ScratchBrowser
-              ownerId={scratch.id}
+              task={scratch}
               onApi={(api) => {
                 browserApi.current = api
               }}
@@ -528,6 +544,13 @@ export default function Home(): JSX.Element {
             <span className="logo-text">asit</span>
           </span>
           <span className="side-header-actions">
+            <button
+              className="btn btn-ghost"
+              title="Automations — workflows & schedules (Ctrl+Shift+A)"
+              onClick={() => useStore.getState().setAutomationsOpen(true)}
+            >
+              ⚡
+            </button>
             <button className="btn btn-ghost" title="Activity & usage" onClick={() => setShowActivity(true)}>
               ▦
             </button>

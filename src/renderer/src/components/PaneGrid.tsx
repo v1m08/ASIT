@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState, Resource, Task, WorkspaceLayout } from '@shared/types'
 import NotesEditor from './NotesEditor'
@@ -7,10 +7,29 @@ import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import AddressBar, { hostOf } from './AddressBar'
+import { hostOf, toNavUrl } from './AddressBar'
 import { useOverlay } from '../hooks/useOverlay'
+import { searchUrl } from '../lib/search'
+import TabStrip, { type TabDescriptor } from '../browser/TabStrip'
+import {
+  WEBTAB_PREFIX,
+  newWebTabId,
+  reviveDeadEnd,
+  isNewTabUrl,
+  NEW_TAB_URL
+} from '../browser/useTabs'
+import NewTabPage from '../browser/NewTabPage'
+import BrowserToolbar from '../browser/BrowserToolbar'
+import FindBar from '../browser/FindBar'
+import { useFindInPage } from '../browser/useFindInPage'
+import { usePaneGeometry } from '../browser/usePaneGeometry'
+import { useClosedTabs } from '../browser/useClosedTabs'
+import { showTabMenu } from '../browser/tabContextMenu'
+import BookmarkStar, { toggleBookmark } from '../browser/BookmarkStar'
 
 export const BUILTIN_NOTES = 'builtin-notes'
+// Retired id, kept ONLY so old saved layouts migrate (see the layout parser
+// below) — the single search pane it named no longer exists.
 export const BUILTIN_SEARCH = 'builtin-search'
 export const BUILTIN_REVIEW = 'builtin-review'
 export const BUILTIN_TERMINAL = 'builtin-terminal'
@@ -19,10 +38,8 @@ export const BUILTIN_APP = 'builtin-app'
 // Ad-hoc browser tabs. The workspace used to have exactly ONE web surface
 // (the search pane): Ctrl+T and "open link in new tab" both navigated it,
 // clobbering whatever page was showing. Web tabs are real tabs — as many as
-// you like, URLs persisted in the layout so they survive a restart.
-const WEBTAB_PREFIX = 'webtab-'
-let webTabCounter = 0
-const newWebTabId = (): string => `${WEBTAB_PREFIX}${Date.now().toString(36)}-${++webTabCounter}`
+// you like, URLs persisted in the layout so they survive a restart. Ids come
+// from the shared mint in browser/useTabs so scratch tabs hand over cleanly.
 
 const DEFAULT_LAYOUT: WorkspaceLayout = {
   slots: [[], []],
@@ -38,6 +55,7 @@ interface TabInfo {
   title: string
   kind:
     | 'url'
+    | 'ntp'
     | 'pdf'
     | 'note'
     | 'file'
@@ -66,9 +84,17 @@ export function tabInfoFor(
   if (id.startsWith(WEBTAB_PREFIX)) {
     const url = webTabs?.[id]
     if (!url) return null
+    if (isNewTabUrl(url)) {
+      // The new-tab page: DOM, no pane — the pane appears when the user
+      // navigates and the stored URL stops being the sentinel.
+      return { id, title: 'New tab', kind: 'ntp', viewBacked: false, resource: null }
+    }
     return { id, title: hostOf(url), kind: 'url', viewBacked: true, resource: null }
   }
   if (id === BUILTIN_REVIEW) {
+    // Study tools off ⇒ the review tab simply doesn't exist; validLayout
+    // prunes it from stored layouts (reopen it from the rail if re-enabled).
+    if (!(useStore.getState().settings?.studyEnabled ?? true)) return null
     return { id, title: 'Review', kind: 'builtin-review', viewBacked: false, resource: null }
   }
   if (id === BUILTIN_TERMINAL) {
@@ -126,11 +152,16 @@ export default function PaneGrid({
         // tabs existed may still hold a `builtin-search` id. It becomes an
         // ordinary web tab, and the special case disappears from the rest of
         // the component.
-        const webTabs: Record<string, string> = { ...(parsed.webTabs ?? {}) }
+        const webTabs: Record<string, string> = {}
+        for (const [id, url] of Object.entries(parsed.webTabs ?? {})) {
+          // Never restore onto a sign-in dead end (see reviveDeadEnd) — the
+          // scratchpad learned this the hard way; workspaces get it too.
+          webTabs[id] = reviveDeadEnd(url, () => NEW_TAB_URL)
+        }
         const migrate = (id: string): string => {
           if (id !== BUILTIN_SEARCH) return id
           const fresh = newWebTabId()
-          webTabs[fresh] = 'https://www.google.com'
+          webTabs[fresh] = NEW_TAB_URL
           return fresh
         }
         const slots: [string[], string[]] = [
@@ -160,18 +191,12 @@ export default function PaneGrid({
   const dragItem = useStore((st) => st.dragItem)
   const setDragItem = useStore((st) => st.setDragItem)
   const [dropTarget, setDropTarget] = useState<0 | 1 | null>(null)
-  // Find-in-page + zoom: the browser basics panes were missing.
-  const [findFor, setFindFor] = useState<string | null>(null)
-  const [findText, setFindText] = useState('')
-  const [findResult, setFindResult] = useState<{ activeMatch: number; matches: number } | null>(null)
-  const findInputRef = useRef<HTMLInputElement>(null)
   const [zoomLabel, setZoomLabel] = useState<number | null>(null)
   // Ctrl+Shift+T: recently closed tabs. Resources reopen by id; web tabs by
   // the URL they were on when closed (the id's pane is gone for good).
-  const closedTabs = useRef<{ id?: string; url?: string }[]>([])
-  // Which tab each slot last auto-scrolled to (see the tab ref callback).
-  const scrolledTo = useRef<Record<number, string>>({})
+  const closedTabs = useClosedTabs<{ id?: string; url?: string }>()
   const hidePin = useStore((st) => st.settings?.hidePin ?? false)
+  const studyEnabled = useStore((st) => st.settings?.studyEnabled ?? true)
   // A page painted over the slot would eat every drag event, so the views go
   // away for the duration of the drag — same rule as any overlay (invariant 2).
   useOverlay(dragItem !== null)
@@ -228,7 +253,9 @@ export default function PaneGrid({
       direction: layout.direction ?? 'row',
       webTabs
     }
-  }, [layout, task, resources])
+    // studyEnabled: tabInfoFor consults it (review tab existence).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, task, resources, studyEnabled])
 
   // The valid layout, reachable from stable callbacks without a stale closure.
   const layoutRef = useRef(validLayout)
@@ -305,24 +332,11 @@ export default function PaneGrid({
     }
   }, [validLayout])
 
-  // What was last sent to main, so re-measuring on every render is cheap.
-  const sentGeometry = useRef<Record<string, string>>({})
-
   // Visibility + bounds: for each slot, only the active view-backed tab shows.
-  //
-  // This runs after EVERY render rather than on a dependency list, and that is
-  // the point. A pane is positioned from a DOM rect, so anything that changes
-  // the layout has to re-measure — and the list of such things is not
-  // knowable in advance. It already included the page toolbar (which appears
-  // only once a page reports its URL) and the find bar, neither of which was
-  // in the old dependency list; the pane kept its pre-toolbar bounds and sat
-  // on top of the toolbar, so every click on the address bar, back, or reload
-  // went to the WEBSITE instead. Nothing looked wrong on screen, because a
-  // WebContentsView draws over app DOM without disturbing it.
-  //
-  // Cheap because it dedupes: measuring is a couple of getBoundingClientRect
-  // calls and the IPC only fires when a number actually changed.
-  const syncPanes = useCallback((): void => {
+  // The re-measure-every-render machinery (and the reasoning for it) lives in
+  // usePaneGeometry; this just describes what should be where.
+  const geometry = usePaneGeometry(() => {
+    const entries: { id: string; active: boolean; el: HTMLElement | null }[] = []
     validLayout.slots.forEach((slot, i) => {
       const activeId = validLayout.active[i]
       const slotCollapsed = validLayout.collapsed?.[i] ?? false
@@ -330,46 +344,11 @@ export default function PaneGrid({
         const tab = tabInfoFor(id, task, resources, validLayout.webTabs)
         if (!tab?.viewBacked) continue
         const isActive = id === activeId && !slotCollapsed
-        const el = isActive ? slotContentRefs[i].current : null
-        const rect = el?.getBoundingClientRect()
-        const key = rect
-          ? `${isActive}:${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`
-          : `${isActive}`
-        if (sentGeometry.current[id] === key) continue
-        sentGeometry.current[id] = key
-        window.asit.panes.setVisible(id, isActive)
-        if (rect) {
-          window.asit.panes.setBounds(id, {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height
-          })
-        }
+        entries.push({ id, active: isActive, el: isActive ? slotContentRefs[i].current : null })
       }
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [validLayout, task, resources])
-
-  // No dependency array on purpose — see above. useLayoutEffect so the pane
-  // moves in the same frame the layout changed, instead of one frame late.
-  useLayoutEffect(() => {
-    syncPanes()
+    return entries
   })
-
-  // Track slot geometry changes (window resize, split drag, header changes).
-  useEffect(() => {
-    const observers = slotContentRefs.map((ref) => {
-      const obs = new ResizeObserver(() => syncPanes())
-      if (ref.current) obs.observe(ref.current)
-      return obs
-    })
-    window.addEventListener('resize', syncPanes)
-    return () => {
-      observers.forEach((o) => o.disconnect())
-      window.removeEventListener('resize', syncPanes)
-    }
-  }, [syncPanes])
 
   // Pane navigation state pushes (title, url, back/forward).
   useEffect(() => {
@@ -395,7 +374,7 @@ export default function PaneGrid({
       const { paneId } = args[0] as { paneId: string }
       if (!openedPanes.current.delete(paneId)) return
       // The replacement view starts with no bounds, so forget what we sent.
-      delete sentGeometry.current[paneId]
+      geometry.forget(paneId)
       setNavStates((prev) => {
         const next = { ...prev }
         delete next[paneId]
@@ -496,43 +475,16 @@ export default function PaneGrid({
     [onAttachLibrary, openResourceInSlot, setDragItem]
   )
 
+  // Zoom-level toast (Ctrl+± replayed from a focused page).
   useEffect(() => {
-    const offFind = window.asit.on(IPC.PANES_FIND_RESULT, (...args: unknown[]) => {
-      const r = args[0] as { paneId: string; activeMatch: number; matches: number }
-      setFindResult({ activeMatch: r.activeMatch, matches: r.matches })
-    })
-    const offApp = window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
-      const e = args[0] as { type: string; paneId?: string; zoom?: number; url?: string }
-      if (e.type === 'find-in-page') {
-        setFindFor(e.paneId ?? null)
-        setTimeout(() => findInputRef.current?.select(), 40)
-      } else if (e.type === 'pane-zoom' && typeof e.zoom === 'number') {
+    return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
+      const e = args[0] as { type: string; zoom?: number }
+      if (e.type === 'pane-zoom' && typeof e.zoom === 'number') {
         setZoomLabel(Math.round(100 * Math.pow(1.2, e.zoom)))
         setTimeout(() => setZoomLabel(null), 1400)
       }
     })
-    return () => {
-      offFind()
-      offApp()
-    }
   }, [])
-
-  const runFind = useCallback(
-    (text: string, findNext: boolean, forward = true): void => {
-      if (!findFor) return
-      setFindText(text)
-      if (!text) setFindResult(null)
-      void window.asit.panes.find(findFor, text, forward, findNext)
-    },
-    [findFor]
-  )
-
-  const closeFind = useCallback((): void => {
-    if (findFor) void window.asit.panes.findStop(findFor)
-    setFindFor(null)
-    setFindText('')
-    setFindResult(null)
-  }, [findFor])
 
   // The slot the user last interacted with (clicked a tab, focused a pane).
   // Every keyboard shortcut and new-tab action acts HERE — they used to
@@ -552,6 +504,14 @@ export default function PaneGrid({
       if (at === 0 || at === 1) focusedSlotRef.current = at
     })
   }, [])
+
+  // Find-in-page + zoom: the browser basics panes were missing. Only one
+  // browsing surface is mounted at a time, so any find event that reaches us
+  // is ours.
+  const find = useFindInPage({
+    ownsPane: () => true,
+    activePaneId: () => layoutRef.current.active[focusSlot()]
+  })
 
   /**
    * A NEW browser tab, in the slot the user is browsing in. This is what
@@ -589,15 +549,23 @@ export default function PaneGrid({
 
   const openSearch = useCallback(
     (query: string): void => {
-      const url = query.trim()
-        ? `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`
-        : 'https://www.google.com'
+      if (!query.trim()) {
+        openWebTab(NEW_TAB_URL)
+        return
+      }
+      const url = searchUrl(query.trim())
       // Like a browser's address bar: searching reuses the tab you're on if
       // it's a web tab; otherwise (notes, a PDF) the results open beside it.
       // "The tab you're on" = the FOCUSED slot's active tab, not slot 0's —
       // in a split that distinction is the whole point (see focusSlot).
       const activeId = layoutRef.current.active[focusSlot()]
       if (activeId && activeId.startsWith(WEBTAB_PREFIX)) {
+        if (isNewTabUrl(layoutRef.current.webTabs?.[activeId] ?? '')) {
+          // The NTP has no pane yet — updating the stored URL converts it,
+          // and the open-effect creates the pane.
+          setLayout((prev) => ({ ...prev, webTabs: { ...prev.webTabs, [activeId]: url } }))
+          return
+        }
         window.asit.panes.navigate(activeId, { url })
         setLayout((prev) => ({ ...prev, webTabs: { ...prev.webTabs, [activeId]: url } }))
         return
@@ -635,30 +603,22 @@ export default function PaneGrid({
     onApi?.({ openResource, openSearch, openUrl })
   }, [onApi, openResource, openSearch, openUrl])
 
-  /**
-   * Right-click a tab. A NATIVE menu, not an HTML dropdown: WebContentsViews
-   * paint above every bit of app DOM, so a menu anchored to the tab strip
-   * would open underneath the page it belongs to (invariant 2).
-   */
+  // Right-click a tab; the shared builder keeps the two surfaces' menus in
+  // sync (and native, per invariant 2).
   const tabMenu = useCallback(
     async (slotIndex: 0 | 1, tab: TabInfo): Promise<void> => {
       const ids = validLayout.slots[slotIndex]
       const at = ids.indexOf(tab.id)
-      const url =
+      const rawUrl =
         navStates[tab.id]?.url ?? tab.resource?.url ?? validLayout.webTabs?.[tab.id] ?? ''
-      const picked = await window.asit.ui.contextMenu([
-        { id: 'reload', label: 'Reload', enabled: tab.viewBacked },
-        { id: 'duplicate', label: 'Duplicate tab', enabled: !!url },
-        { separator: true },
-        { id: 'copy', label: 'Copy address', enabled: !!url },
-        { id: 'external', label: 'Open in your default browser', enabled: !!url },
-        { separator: true },
-        { id: 'move', label: 'Move to other side' },
-        { separator: true },
-        { id: 'close', label: 'Close tab' },
-        { id: 'others', label: 'Close other tabs', enabled: ids.length > 1 },
-        { id: 'right', label: 'Close tabs to the right', enabled: at < ids.length - 1 }
-      ])
+      const url = isNewTabUrl(rawUrl) ? '' : rawUrl
+      const picked = await showTabMenu({
+        url,
+        canReload: tab.viewBacked,
+        count: ids.length,
+        index: at,
+        canMove: true
+      })
       if (!picked) return
       if (picked === 'reload') window.asit.panes.navigate(tab.id, { nav: 'reload' })
       else if (picked === 'copy') void navigator.clipboard.writeText(url)
@@ -686,10 +646,10 @@ export default function PaneGrid({
       return id && tabInfoFor(id, task, resources, validLayout.webTabs)?.viewBacked ? id : null
     }
     setTabSurface({
-      newTab: () => openWebTabRef.current?.('https://www.google.com'),
+      newTab: () => openWebTabRef.current?.(NEW_TAB_URL),
       closeTab: () => closeActiveTabRef.current?.(),
       reopenTab: () => {
-        const gone = closedTabs.current.pop()
+        const gone = closedTabs.pop()
         if (gone?.url) openWebTabRef.current?.(gone.url)
         else if (gone?.id) openResourceRef.current?.(gone.id)
       },
@@ -716,16 +676,14 @@ export default function PaneGrid({
       },
       find: () => {
         const id = validLayout.active[focusSlot()]
-        if (id) {
-          setFindFor(id)
-          setTimeout(() => findInputRef.current?.select(), 40)
-        }
+        if (id) find.openFind(id)
       },
       // Everything below used to need a mouse.
-      pinPage: () => {
+      bookmarkPage: () => {
         const id = activePaneId()
         const nav = id ? navStates[id] : null
-        if (nav?.url) void onPin?.(nav.title || nav.url, nav.url)
+        if (nav?.url && /^https?:/i.test(nav.url))
+          void toggleBookmark(nav.url, nav.title || nav.url, nav.favicon)
       },
       copyAddress: () => {
         const id = activePaneId()
@@ -781,9 +739,9 @@ export default function PaneGrid({
       // or an error page reopens from the last good URL the layout recorded.
       const live = navStates[id]?.url
       const url = /^https?:/i.test(live ?? '') ? live : layoutRef.current.webTabs?.[id]
-      if (url) closedTabs.current = [...closedTabs.current, { url }].slice(-10)
+      if (url) closedTabs.push({ url })
     } else if (!id.startsWith('builtin-')) {
-      closedTabs.current = [...closedTabs.current.filter((t) => t.id !== id), { id }].slice(-10)
+      closedTabs.push({ id }, (t) => t.id === id)
     }
     setLayout((prev) => {
       const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
@@ -886,158 +844,88 @@ export default function PaneGrid({
         data-focus-pane={activeTab?.viewBacked ? activeTab.id : undefined}
       >
         {tabs.length > 0 && (
-          <div
-            className={`tab-strip ${slotFileDrop.over ? 'drop-target-over' : ''}`}
-            {...slotFileDrop.handlers}
-          >
-            {slotFileDrop.over && <span className="tab-drop-hint">Drop to open here</span>}
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                className={`tab ${tab.id === activeId ? 'tab-active' : ''}`}
-                // Ctrl+Tab can activate a tab that's scrolled out of the
-                // strip; bring it into view or it looks like nothing
-                // happened. ONCE per activation — inline refs re-run every
-                // render, and nav-state pushes would otherwise yank the strip
-                // back while the user is scrolling it.
-                ref={(el) => {
-                  if (el && tab.id === activeId && scrolledTo.current[slotIndex] !== tab.id) {
-                    scrolledTo.current[slotIndex] = tab.id
-                    el.scrollIntoView({ inline: 'nearest', block: 'nearest' })
-                  }
-                }}
-                onClick={() => selectTab(slotIndex, tab.id)}
-                // Middle-click closes, like every browser since 2004.
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
-                    e.preventDefault()
-                    closeTab(slotIndex, tab.id)
-                  }
-                }}
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  void tabMenu(slotIndex, tab)
-                }}
-                title={tabLabel(tab)}
-              >
-                <span className="tab-icon">
-                  {navStates[tab.id]?.loading && tab.viewBacked ? (
-                    <span className="tab-spinner" />
-                  ) : navStates[tab.id]?.favicon && tab.viewBacked ? (
-                    <img
-                      className="tab-favicon"
-                      src={navStates[tab.id]!.favicon!}
-                      alt=""
-                      onError={(e) => (e.currentTarget.style.display = 'none')}
-                    />
-                  ) : tab.kind === 'builtin-review'
+          <TabStrip
+            tabs={tabs.map(
+              (tab): TabDescriptor => ({
+                id: tab.id,
+                label: tabLabel(tab),
+                loading: !!navStates[tab.id]?.loading && tab.viewBacked,
+                favicon: tab.viewBacked ? navStates[tab.id]?.favicon : null,
+                glyph:
+                  tab.kind === 'ntp'
+                    ? '＋'
+                    : tab.kind === 'builtin-review'
                       ? '◎'
                       : tab.kind === 'builtin-terminal'
-                      ? '▶_'
-                      : tab.kind === 'builtin-app'
-                      ? '▢'
-                      : tab.kind === 'url'
-                      ? '◍'
-                      : tab.kind === 'pdf'
-                        ? '▤'
-                        : tab.kind === 'file'
-                          ? '▥'
-                          : '✎'}
-                </span>
-                <span className="tab-title">{tabLabel(tab)}</span>
-                <button
-                  className="tab-btn"
-                  title="Move to other side"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    moveTab(slotIndex, tab.id)
-                  }}
-                >
-                  ⇄
-                </button>
-                <button
-                  className="tab-btn"
-                  title="Close tab"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    closeTab(slotIndex, tab.id)
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            <button
-              className="tab-btn tab-new"
-              title="New tab (Ctrl+T)"
-              onClick={() => openWebTab('https://www.google.com', slotIndex)}
-            >
-              +
-            </button>
-            {bothSlotsUsed && (
-              <span className="slot-strip-actions">
-                {slotIndex === 0 && (
+                        ? '▶_'
+                        : tab.kind === 'builtin-app'
+                          ? '▢'
+                          : tab.kind === 'url'
+                            ? '◍'
+                            : tab.kind === 'pdf'
+                              ? '▤'
+                              : tab.kind === 'file'
+                                ? '▥'
+                                : '✎'
+              })
+            )}
+            activeId={activeId}
+            onSelect={(id) => selectTab(slotIndex, id)}
+            onClose={(id) => closeTab(slotIndex, id)}
+            onContextMenu={(id) => {
+              const t = tabs.find((x) => x.id === id)
+              if (t) void tabMenu(slotIndex, t)
+            }}
+            onNewTab={() => openWebTab(NEW_TAB_URL, slotIndex)}
+            onMoveTab={(id) => moveTab(slotIndex, id)}
+            leading={
+              slotFileDrop.over ? <span className="tab-drop-hint">Drop to open here</span> : null
+            }
+            trailing={
+              bothSlotsUsed ? (
+                <span className="slot-strip-actions">
+                  {slotIndex === 0 && (
+                    <button
+                      className="tab-btn"
+                      title={
+                        validLayout.direction === 'column'
+                          ? 'Switch to side-by-side split'
+                          : 'Switch to top/bottom split'
+                      }
+                      onClick={toggleDirection}
+                    >
+                      {validLayout.direction === 'column' ? '◫' : '⬒'}
+                    </button>
+                  )}
                   <button
                     className="tab-btn"
-                    title={
-                      validLayout.direction === 'column'
-                        ? 'Switch to side-by-side split'
-                        : 'Switch to top/bottom split'
-                    }
-                    onClick={toggleDirection}
+                    title="Collapse pane"
+                    onClick={() => toggleCollapse(slotIndex)}
                   >
-                    {validLayout.direction === 'column' ? '◫' : '⬒'}
+                    −
                   </button>
-                )}
-                <button
-                  className="tab-btn"
-                  title="Collapse pane"
-                  onClick={() => toggleCollapse(slotIndex)}
-                >
-                  −
-                </button>
-              </span>
-            )}
-          </div>
+                </span>
+              ) : null
+            }
+            stripProps={{
+              ...slotFileDrop.handlers,
+              className: slotFileDrop.over ? 'drop-target-over' : undefined
+            }}
+          />
         )}
         {nav && activeTab && (
-          <div className="pane-toolbar">
-            <button
-              className="nav-btn"
-              disabled={!nav.canGoBack}
-              onClick={() => window.asit.panes.navigate(activeTab.id, { nav: 'back' })}
-            >
-              ←
-            </button>
-            <button
-              className="nav-btn"
-              disabled={!nav.canGoForward}
-              onClick={() => window.asit.panes.navigate(activeTab.id, { nav: 'forward' })}
-            >
-              →
-            </button>
-            <button
-              className="nav-btn"
-              title={nav.loading ? 'Stop loading' : 'Reload'}
-              onClick={() =>
-                window.asit.panes.navigate(activeTab.id, { nav: nav.loading ? 'stop' : 'reload' })
-              }
-            >
-              {nav.loading ? '✕' : '⟳'}
-            </button>
-            <AddressBar
-              className="pane-address"
-              url={nav.url}
-              onNavigate={(target) => window.asit.panes.navigate(activeTab.id, { url: target })}
-            />
+          <BrowserToolbar
+            paneId={activeTab.id}
+            nav={nav}
+            url={nav.url}
+            addressClassName="pane-address"
+          >
             {zoomLabel !== null && <span className="pane-zoom-label">{zoomLabel}%</span>}
+            <BookmarkStar url={nav.url} title={nav.title || nav.url} favicon={nav.favicon} />
             <button
               className="nav-btn"
               title="Find in page (Ctrl+F)"
-              onClick={() => {
-                setFindFor(activeTab.id)
-                setTimeout(() => findInputRef.current?.select(), 40)
-              }}
+              onClick={() => find.openFind(activeTab.id)}
             >
               ⌕
             </button>
@@ -1050,52 +938,28 @@ export default function PaneGrid({
                 ⌾
               </button>
             )}
-          </div>
+          </BrowserToolbar>
         )}
-        {findFor && findFor === activeTab?.id && (
-          <div className="find-bar">
-            <input
-              ref={findInputRef}
-              autoFocus
-              placeholder="Find in page…"
-              value={findText}
-              onChange={(e) => runFind(e.target.value, false)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  closeFind()
-                } else if (e.key === 'Enter') {
-                  e.preventDefault()
-                  runFind(findText, true, !e.shiftKey)
-                }
+        {find.findFor === activeTab?.id && activeTab && <FindBar find={find} />}
+        <div className="slot-content" ref={slotContentRefs[slotIndex]} data-focus-body>
+          {activeTab?.kind === 'ntp' && (
+            <NewTabPage
+              key={activeTab.id}
+              onNavigate={(value) => {
+                // Converting the NTP is just storing a real URL — the
+                // open-panes effect sees a view-backed tab and creates it.
+                const url = toNavUrl(value)
+                const id = activeTab.id
+                setLayout((prev) => ({ ...prev, webTabs: { ...prev.webTabs, [id]: url } }))
               }}
             />
-            <span className="find-count">
-              {findText
-                ? findResult && findResult.matches > 0
-                  ? `${findResult.activeMatch}/${findResult.matches}`
-                  : findResult
-                    ? 'no matches'
-                    : '…'
-                : ''}
-            </span>
-            <button className="nav-btn" title="Previous (Shift+Enter)" onClick={() => runFind(findText, true, false)}>
-              ↑
-            </button>
-            <button className="nav-btn" title="Next (Enter)" onClick={() => runFind(findText, true, true)}>
-              ↓
-            </button>
-            <button className="nav-btn" title="Close (Esc)" onClick={closeFind}>
-              ✕
-            </button>
-          </div>
-        )}
-        <div className="slot-content" ref={slotContentRefs[slotIndex]} data-focus-body>
+          )}
           {activeTab?.kind === 'builtin-review' && <ReviewPane key={task.id} task={task} />}
           {activeTab?.kind === 'builtin-terminal' && <TerminalPane key={task.id} task={task} />}
           {activeTab?.kind === 'builtin-app' && <AppWindowPane key={task.id} task={task} />}
           {activeTab &&
             !activeTab.viewBacked &&
+            activeTab.kind !== 'ntp' &&
             activeTab.kind !== 'builtin-review' &&
             activeTab.kind !== 'builtin-terminal' &&
             activeTab.kind !== 'builtin-app' && (
@@ -1114,7 +978,7 @@ export default function PaneGrid({
             <div className="slot-empty">
               <button
                 className="btn"
-                onClick={() => openWebTab('https://www.google.com', slotIndex)}
+                onClick={() => openWebTab(NEW_TAB_URL, slotIndex)}
               >
                 + New tab
               </button>

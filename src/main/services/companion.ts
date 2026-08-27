@@ -588,6 +588,14 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, path: string
     if (verb === 'skill') {
       const name = String(b.name ?? '').trim()
       if (!name) return sendJson(res, 400, { error: 'no skill named' })
+      // Workflows resolve first for a name — same rule as chat and watches.
+      const { getWorkflow, runWorkflow } = await import('./workflows')
+      if (getWorkflow(name)) {
+        const r = await runWorkflow(name, { trigger: 'phone' })
+        return r.started
+          ? sendJson(res, 200, { ok: true, runId: r.runId })
+          : sendJson(res, 409, { error: r.reason })
+      }
       const skill = listSkills().find((sk) => sk.name === name)
       if (!skill) return sendJson(res, 404, { error: `no skill "${name}"` })
       const flow = extractFlow(skill.content)

@@ -49,6 +49,13 @@ export const IPC = {
   HISTORY_RECENT: 'history:recent',
   HISTORY_REMOVE: 'history:remove',
   HISTORY_CLEAR: 'history:clear',
+  // Global bookmarks. Renderer-only — deliberately NO agent-facing surface
+  // (cross-workspace user data; see services/bookmarks.ts).
+  BOOKMARKS_LIST: 'bookmarks:list',
+  BOOKMARKS_ADD: 'bookmarks:add',
+  BOOKMARKS_REMOVE: 'bookmarks:remove',
+  BOOKMARKS_UPDATE: 'bookmarks:update',
+  BOOKMARKS_STATUS: 'bookmarks:status', // isBookmarked(url) → star state
   PANES_GONE: 'panes:gone', // push M→R: a pane died (evicted or crashed)
   PANES_DID_NAVIGATE: 'panes:did-navigate', // push M→R
   // Browser basics the panes were missing.
@@ -240,6 +247,26 @@ export const IPC = {
   SKILLS_LIST: 'skills:list',
   SKILLS_RUN: 'skills:run',
   SKILLS_DELETE: 'skills:delete',
+
+  // workflows (first-class automations: params, model steps, confirm gates)
+  WORKFLOWS_LIST: 'workflows:list',
+  WORKFLOWS_GET: 'workflows:get',
+  WORKFLOWS_SAVE: 'workflows:save',
+  WORKFLOWS_DELETE: 'workflows:delete',
+  WORKFLOWS_RUN: 'workflows:run',
+  WORKFLOWS_CANCEL: 'workflows:cancel',
+  WORKFLOWS_CONFIRM: 'workflows:confirm', // the ONLY approval path (user click)
+  WORKFLOWS_RUNS: 'workflows:runs',
+  WORKFLOWS_RUN_STATE: 'workflows:run-state',
+  WORKFLOWS_IMPORT_SKILL: 'workflows:import-skill',
+  WORKFLOWS_EVENT: 'workflows:event', // push M→R: step progress, confirm, done
+
+  // schedules — finally user-visible (they had no renderer surface at all)
+  SCHEDULES_LIST: 'schedules:list',
+  SCHEDULES_ADD: 'schedules:add',
+  SCHEDULES_REMOVE: 'schedules:remove',
+  SCHEDULES_SET_ENABLED: 'schedules:set-enabled',
+  SCHEDULES_CHANGED: 'schedules:changed', // push M→R
 
   // global file library
   RESOURCES_ADD_FILES: 'resources:add-files', // OS drag-and-drop
