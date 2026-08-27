@@ -13,6 +13,7 @@ import ChatPanel from '../components/ChatPanel'
 import WorkspaceSwitcher from '../components/WorkspaceSwitcher'
 import { useOverlay } from '../hooks/useOverlay'
 import { fmtCost } from '../utils/fmt'
+import { childPath } from '../utils/paths'
 import { reliablyInto } from '../lib/reliably'
 
 const PRIORITY_LABEL: Record<number, string> = { 1: 'High', 2: 'Normal', 3: 'Low' }
@@ -483,7 +484,7 @@ export default function Home(): JSX.Element {
             {notesOpen && (
               <div className="side-panel" data-focus-zone="Notes">
                 <NotesEditor
-                  filePath={`${scratch.folderPath}\\notes.md`}
+                  filePath={childPath(scratch.folderPath, 'notes.md')}
                   task={scratch}
                   resources={scratchResources}
                 />

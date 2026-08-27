@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { IPC } from '@shared/ipc-contract'
 import '@xterm/xterm/css/xterm.css'
 import type { Task } from '@shared/types'
+import { baseName } from '../utils/paths'
 
 // The heavy half of the terminal pane (xterm + addon ≈ 300KB). Loaded on
 // demand by TerminalPane.tsx so opening the app never pays for it — same
@@ -121,7 +122,7 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
           ))}
         </select>
         <span className="terminal-cwd" title={task.folderPath}>
-          {task.folderPath.split('\\').slice(-1)[0]}
+          {baseName(task.folderPath)}
         </span>
         {task.terminalAiRead ? (
           <span className="terminal-ai-badge" title="This workspace's agent may READ this output. It can never type here.">

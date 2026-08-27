@@ -10,6 +10,7 @@ import { useFileDrop } from '../hooks/useFileDrop'
 import { hostOf, toNavUrl } from './AddressBar'
 import { useOverlay } from '../hooks/useOverlay'
 import { searchUrl } from '../lib/search'
+import { childPath } from '../utils/paths'
 import TabStrip, { type TabDescriptor } from '../browser/TabStrip'
 import {
   WEBTAB_PREFIX,
@@ -967,7 +968,7 @@ export default function PaneGrid({
               key={activeTab.id}
               filePath={
                 activeTab.id === BUILTIN_NOTES
-                  ? `${task.folderPath}\\notes.md`
+                  ? childPath(task.folderPath, 'notes.md')
                   : (activeTab.resource?.filePath ?? '')
               }
               task={task}
