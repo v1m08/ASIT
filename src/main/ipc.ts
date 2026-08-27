@@ -21,6 +21,7 @@ import * as updater from './services/updater'
 import * as skills from './services/skills'
 import * as workflows from './services/workflows'
 import * as scheduler from './services/scheduler'
+import * as setup from './services/setup'
 import * as activity from './services/activity'
 import * as quickfetch from './services/quickfetch'
 import * as todos from './services/todos'
@@ -745,6 +746,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     invalidateClaudePathCache() // a fresh install should be noticed on re-check
     return { path: resolveClaudePath() }
   })
+  // One-click setup: the official installer + a terminal-hosted sign-in. The
+  // OAuth flow stays in the CLI's own terminal — ASIT never touches creds.
+  handle(IPC.SETUP_INSTALL_CLI, () => setup.installCli())
+  handle(IPC.SETUP_INSTALL_STATE, () => setup.cliInstallState())
+  handle(IPC.SETUP_LOGIN_STATUS, () => setup.cliLoginStatus())
+  handle(IPC.SETUP_OPEN_LOGIN, () => setup.openCliLogin())
   handle(IPC.CLAUDE_CLI_LOCATE, async () => {
     const win = getWindow()
     if (!win) return { path: null }

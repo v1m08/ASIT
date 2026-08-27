@@ -6,7 +6,7 @@ import SavePasswordPrompt from './SavePasswordPrompt'
 import Dictation from './Dictation'
 import UpdatePill from './UpdatePill'
 import { useOverlay } from '../hooks/useOverlay'
-import { CliSetupButtons, useCliStatus } from './CliSetup'
+import { CliSetupButtons, CliSignInButtons, useCliStatus } from './CliSetup'
 
 /**
  * Everything AI in this app runs on the Claude Code CLI, and installing ASIT
@@ -19,40 +19,59 @@ function CliHealth(): JSX.Element | null {
   const status = useCliStatus()
   const [open, setOpen] = useState(false)
   const missing = status.path === null
-  useOverlay(open && missing)
+  const needsLogin = !missing && status.path !== undefined && status.loggedIn === false
+  const unhealthy = missing || needsLogin
+  useOverlay(open && unhealthy)
 
   // The hook re-probes on a timer and when Settings closes, so fixing the
   // CLI anywhere clears this chip on its own; celebrate it once.
-  const wasMissing = useRef(false)
+  const wasUnhealthy = useRef(false)
   useEffect(() => {
-    if (missing) wasMissing.current = true
-    else if (wasMissing.current) {
-      wasMissing.current = false
+    if (unhealthy) wasUnhealthy.current = true
+    else if (wasUnhealthy.current) {
+      wasUnhealthy.current = false
       setOpen(false)
-      useStore.getState().pushNotice('AI is ready — Claude Code found.', 'ok')
+      useStore.getState().pushNotice('AI is ready — Claude Code is set up.', 'ok')
     }
-  }, [missing])
+  }, [unhealthy])
 
-  if (!missing) return null
+  if (!unhealthy) return null
 
   return (
     <>
       <button
         className="status-load-error"
-        title="The AI features need the Claude Code app. Click to set it up."
+        title={
+          missing
+            ? 'The AI features need Claude Code. One click installs it.'
+            : 'Claude Code is installed but not signed in — one click fixes it.'
+        }
         onClick={() => setOpen((v) => !v)}
       >
-        ⚠ AI setup needed
+        {missing ? '⚠ AI setup needed' : '⚠ AI sign-in needed'}
       </button>
       {open && (
         <div className="downloads-popover cli-popover">
-          <p className="cli-popover-text">
-            ASIT&apos;s AI features run on the free <strong>Claude Code</strong> app, which
-            isn&apos;t installed yet. Install it, sign in when it asks, and you&apos;re done.
-          </p>
-          <div className="cli-popover-actions">
-            <CliSetupButtons status={status} />
-          </div>
+          {missing ? (
+            <>
+              <p className="cli-popover-text">
+                ASIT&apos;s AI runs on <strong>Claude Code</strong>, which isn&apos;t installed
+                yet. One click installs it; then sign in and you&apos;re done.
+              </p>
+              <div className="cli-popover-actions">
+                <CliSetupButtons status={status} />
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="cli-popover-text">
+                Claude Code is installed but no account is signed in, so AI replies will fail.
+              </p>
+              <div className="cli-popover-actions">
+                <CliSignInButtons status={status} />
+              </div>
+            </>
+          )}
         </div>
       )}
     </>

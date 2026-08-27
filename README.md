@@ -36,10 +36,12 @@ one is waiting. Nothing is ever installed underneath you mid-task.
 
 ## Then, in 3 minutes
 
-1. **Sign in to the AI.** ASIT uses the [Claude Code CLI](https://claude.com/claude-code) (`claude` → `/login`, once). Everything works without it except the AI features.
+1. **Set up the AI — one click.** On first launch ASIT shows *"Install automatically"*: it fetches the free [Claude Code](https://claude.com/claude-code) engine for you (no separate download, nothing to configure), then a *"Sign in to Claude"* button opens a terminal where you sign in with your Claude account. The app polls in the background, so both steps clear themselves the moment they're done — no "check again". (If you already have Claude Code, ASIT just finds it.) Everything works without the AI except the AI features.
 2. **Open ASIT.** You land on the **scratchpad** — a browser with your workspace sidebar.
 3. **Make your first workspace.** Browse to a course page or open a PDF, then hit **💾 Save session** — or click **+ New workspace** in the sidebar. That folder is now the AI's context; you never paste or explain anything.
 4. **Try the AI.** Open a PDF in the workspace, press **`Ctrl+K`**, and ask a question about it. Or press **`Ctrl+Space`** and just *talk* to it.
+
+> **Google sign-in note:** Google blocks sign-in inside *any* embedded browser (it's their anti-webview policy, not an ASIT limitation), so when you hit a Google login ASIT offers to open it in your real browser. Sites that use "Sign in with Google" are affected the same way; email/password logins and everything else sign in normally and stay signed in forever.
 
 That's the whole loop: **gather → focus → study → ask.** Everything below is detail you can pick up as you go.
 

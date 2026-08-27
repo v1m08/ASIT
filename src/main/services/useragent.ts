@@ -20,9 +20,21 @@ import { app, session } from 'electron'
 // signing into the user's own account, and the credentials and 2FA are
 // entirely theirs. We simply stop describing ourselves inconsistently.
 
-/** Major version of the Chromium we're actually running (e.g. "130"). */
+/**
+ * The Chrome major we CLAIM. Consistency across channels is the load-bearing
+ * part (see above) — but the version must also not be ancient: some sites
+ * hard-refuse "outdated" Chrome (WhatsApp Web's update wall is exactly this
+ * check), and Chromium 130 reads as a year old by late 2026. So claim
+ * max(real, floor) — the SAME number in the UA string and every Sec-CH-UA
+ * header — and raise the floor now and then until an Electron upgrade brings
+ * the real engine current. (Google's sign-in block is NOT a version check —
+ * see the note above browserUserAgent.)
+ */
+const MIN_CLAIMED_CHROME = 140
+
 function chromeMajor(): string {
-  return (process.versions.chrome ?? '130').split('.')[0]
+  const real = Number((process.versions.chrome ?? '130').split('.')[0])
+  return String(Math.max(Number.isFinite(real) ? real : 130, MIN_CLAIMED_CHROME))
 }
 
 /** The platform token a real browser would use here. */
@@ -52,6 +64,17 @@ function platformHint(): string {
 export function browserUserAgent(): string {
   return `Mozilla/5.0 (${platformToken()}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor()}.0.0.0 Safari/537.36`
 }
+
+// NOTE on Google sign-in (probed 2026-08-27, ASIT_SMOKE_GOOGLE=1): Google's
+// "This browser or app may not be secure" wall is embedded-webview DETECTION,
+// not a UA/version check. It appears at the password step regardless of the
+// claimed identity, and spoofing as Firefox (header and/or navigator) did NOT
+// reliably clear it — a single apparent pass turned out to be non-
+// deterministic (cookie/IP/rate dependent), blocking on every repeat. This is
+// Google's documented policy against OAuth in embedded browsers, and there is
+// no reliable client-side bypass. ASIT handles it honestly with a real-
+// browser handoff (ScratchBrowser's signin banner); no UA disguise is worth
+// the fragility. Everything else on the partition stays consistent Chromium.
 
 /**
  * The Sec-CH-UA brand list. Real Chrome sends a deliberately-shuffled trio

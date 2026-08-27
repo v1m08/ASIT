@@ -291,6 +291,12 @@ const api = {
     cliStatus: () => ipcRenderer.invoke(IPC.CLAUDE_CLI_STATUS),
     locateCli: () => ipcRenderer.invoke(IPC.CLAUDE_CLI_LOCATE)
   },
+  setup: {
+    installCli: () => ipcRenderer.invoke(IPC.SETUP_INSTALL_CLI),
+    installState: () => ipcRenderer.invoke(IPC.SETUP_INSTALL_STATE),
+    loginStatus: () => ipcRenderer.invoke(IPC.SETUP_LOGIN_STATUS),
+    openLogin: () => ipcRenderer.invoke(IPC.SETUP_OPEN_LOGIN)
+  },
   on: (channel: string, listener: (...args: unknown[]) => void) => {
     const wrapped = (_event: Electron.IpcRendererEvent, ...args: unknown[]): void =>
       listener(...args)

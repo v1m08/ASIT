@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useOverlay } from '../hooks/useOverlay'
-import { CliSetupButtons, useCliStatus } from './CliSetup'
+import { CliSetupButtons, CliSignInButtons, useCliStatus } from './CliSetup'
 
 interface AccountRow {
   id: string
@@ -80,18 +80,26 @@ export default function AccountsModal({
               <div className="rail-header">1 · The AI engine</div>
               {cli.path === undefined ? (
                 <p className="settings-hint">Checking for Claude Code…</p>
-              ) : cli.path ? (
-                <p className="settings-hint settings-cli-ok" title={cli.path}>
-                  ✓ Claude Code found — the AI is ready to go.
-                </p>
-              ) : (
+              ) : cli.path === null ? (
                 <>
                   <p className="settings-hint">
-                    ASIT&apos;s AI runs on the free <strong>Claude Code</strong> app. Install it,
-                    sign in when it asks, and come back — everything else is automatic.
+                    ASIT&apos;s AI runs on <strong>Claude Code</strong>. One click installs it —
+                    no other downloads, nothing to configure.
                   </p>
                   <CliSetupButtons status={cli} />
                 </>
+              ) : cli.loggedIn === false ? (
+                <>
+                  <p className="settings-hint settings-cli-ok" title={cli.path}>
+                    ✓ Installed. Last step: sign in with your Claude account (free or paid).
+                  </p>
+                  <CliSignInButtons status={cli} />
+                </>
+              ) : (
+                <p className="settings-hint settings-cli-ok" title={cli.path}>
+                  ✓ Claude Code is installed{cli.loggedIn ? ' and signed in' : ''} — the AI is
+                  ready to go.
+                </p>
               )}
             </div>
 

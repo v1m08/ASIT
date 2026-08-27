@@ -4,7 +4,7 @@ import type { Settings } from '@shared/types'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
 import AccountsModal from './AccountsModal'
-import { CliSetupButtons, useCliStatus } from './CliSetup'
+import { CliSetupButtons, CliSignInButtons, useCliStatus } from './CliSetup'
 
 /**
  * The one setting the app cannot work without, promoted out of "Advanced":
@@ -36,8 +36,16 @@ function CliSection({
       ) : status.path ? (
         <>
           <p className="settings-hint settings-cli-ok" title={status.path}>
-            ✓ Claude Code found — AI features are ready.
+            ✓ Claude Code found{status.loggedIn ? ' and signed in' : ''} — AI features are ready.
           </p>
+          {status.loggedIn === false && (
+            <>
+              <p className="settings-hint settings-cli-bad">
+                …but no Claude account is signed in yet, so AI replies will fail.
+              </p>
+              <CliSignInButtons status={status} />
+            </>
+          )}
           <button className="btn btn-ghost" onClick={() => void browse()}>
             Use a different claude.exe…
           </button>

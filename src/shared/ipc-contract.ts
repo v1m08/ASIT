@@ -170,6 +170,11 @@ export const IPC = {
   // without it, so the UI checks proactively instead of failing per-feature.)
   CLAUDE_CLI_STATUS: 'claude:cliStatus',
   CLAUDE_CLI_LOCATE: 'claude:cliLocate',
+  // One-click setup: official installer + terminal-hosted OAuth sign-in.
+  SETUP_INSTALL_CLI: 'setup:install-cli',
+  SETUP_INSTALL_STATE: 'setup:install-state',
+  SETUP_LOGIN_STATUS: 'setup:login-status',
+  SETUP_OPEN_LOGIN: 'setup:open-login',
   SNIPPETS_GET: 'snippets:get', // pane preload fetches snippets (literal string there)
 
   // to-dos

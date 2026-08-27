@@ -391,6 +391,15 @@ declare global {
         /** File picker → saves the chosen path to settings. picked=false on cancel. */
         locateCli: () => Promise<{ path: string | null; picked: boolean }>
       }
+      setup: {
+        /** Runs Anthropic's official native installer; resolves when done. */
+        installCli: () => Promise<{ ok: boolean; path: string | null; detail: string }>
+        installState: () => Promise<{ installing: boolean; log: string }>
+        /** loggedIn null = can't tell (treat as "show the sign-in button"). */
+        loginStatus: () => Promise<{ installed: boolean; loggedIn: boolean | null }>
+        /** Opens a terminal running the CLI's own OAuth sign-in. */
+        openLogin: () => Promise<{ ok: boolean; detail: string }>
+      }
       on: (channel: string, listener: (...args: unknown[]) => void) => () => void
     }
   }

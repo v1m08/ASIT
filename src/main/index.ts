@@ -214,6 +214,10 @@ app.whenReady().then(() => {
     runWorkflowsSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_GOOGLE === '1') {
+    runGoogleSigninProbe()
+    return
+  }
 
   // Ad/tracker blocking installs on the browse partition before any pane
   // exists; saved extensions load in the background.
@@ -2016,6 +2020,108 @@ async function runPanesSmokeTest(): Promise<void> {
   }
 }
 
+// MANUAL network probe (deliberately NOT in scripts/smoke.cjs — it talks to
+// Google): ASIT_SMOKE_GOOGLE=1 electron out/main/index.js
+// Answers "does Google sign-in accept ASIT's browser identity?" by loading
+// the real login page on the browse partition with applyBrowserIdentity
+// applied — the exact code path the accounts modal and every pane use — and
+// classifying what Google serves: the email form (accepted), or the
+// "browser or app may not be secure" wall (rejected). It then submits a
+// probe email to see whether the SECOND step is served too (the wall
+// sometimes appears only after the identifier). No credentials are ever
+// entered.
+async function runGoogleSigninProbe(): Promise<void> {
+  const finish = (verdict: string, ok: boolean): void => {
+    console.log(`[google-probe] VERDICT: ${verdict}`)
+    console.log(ok ? '[google-probe] ALL PASS' : '[google-probe] FAIL: blocked')
+    app.exit(ok ? 0 : 1)
+  }
+  try {
+    const { applyBrowserIdentity, browserUserAgent } = await import('./services/useragent')
+    applyBrowserIdentity('persist:asit-browse')
+    console.log(`[google-probe] identity: ${browserUserAgent()}`)
+
+    // Mirror accounts.openLogin('google') exactly — partition + identity.
+    // Parked off-screen (same trick as the panes smoke): shown for real
+    // layout + input, never on the user's screen.
+    const win = new BrowserWindow({
+      show: false,
+      x: -3000,
+      y: -3000,
+      width: 980,
+      height: 760,
+      webPreferences: { partition: 'persist:asit-browse', sandbox: true, contextIsolation: true }
+    })
+    win.showInactive()
+    await win.loadURL('https://accounts.google.com/')
+    await new Promise((r) => setTimeout(r, 2500))
+
+    const read = (): Promise<{ url: string; text: string; hasEmail: boolean }> =>
+      win.webContents.executeJavaScript(
+        `({
+          url: location.href,
+          text: (document.body?.innerText || '').slice(0, 1500),
+          hasEmail: !!document.querySelector('input[type=email], #identifierId')
+        })`,
+        true
+      ) as Promise<{ url: string; text: string; hasEmail: boolean }>
+
+    const blockedIn = (text: string): boolean =>
+      /may not be secure|couldn.t sign you in|not be secure|use a supported browser|update your browser/i.test(
+        text
+      )
+
+    const first = await read()
+    console.log(`[google-probe] landed on ${first.url}`)
+    if (blockedIn(first.text)) {
+      console.log(`[google-probe] page says: ${first.text.slice(0, 300).replace(/\n+/g, ' | ')}`)
+      finish('BLOCKED at the sign-in page — Google refuses this browser identity', false)
+      return
+    }
+    if (!first.hasEmail) {
+      // Maybe already signed in (real profile) or an interstitial.
+      if (/myaccount|signinoptions|manage your google account/i.test(first.text + first.url)) {
+        finish('ALREADY SIGNED IN on this profile — sign-in evidently works', true)
+        return
+      }
+      console.log(`[google-probe] unexpected page: ${first.text.slice(0, 300).replace(/\n+/g, ' | ')}`)
+      finish('no email form and no known wall — inspect manually', false)
+      return
+    }
+    console.log('[google-probe] email form served — identifier page accepts us')
+
+    // Step 2: submit a probe identifier (no password is ever entered — the
+    // goal is only to see whether Google serves the next step or a wall).
+    await win.webContents.executeJavaScript(
+      `(() => {
+        const el = document.querySelector('input[type=email], #identifierId')
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, 'asit.probe.check@gmail.com')
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        const next = document.querySelector('#identifierNext button, #identifierNext')
+        if (next) next.click()
+      })()`,
+      true
+    )
+    await new Promise((r) => setTimeout(r, 3500))
+    const second = await read()
+    if (blockedIn(second.text)) {
+      console.log(`[google-probe] page says: ${second.text.slice(0, 300).replace(/\n+/g, ' | ')}`)
+      finish('BLOCKED after the identifier — the wall appears at step 2', false)
+      return
+    }
+    if (/enter your password|couldn.t find your google account|wrong number of|try again/i.test(second.text)) {
+      finish('ACCEPTED — Google serves the full sign-in flow to this identity', true)
+      return
+    }
+    console.log(`[google-probe] step-2 page: ${second.text.slice(0, 300).replace(/\n+/g, ' | ')}`)
+    finish('identifier page accepted; step-2 response inconclusive — inspect above', true)
+  } catch (err) {
+    console.error('[google-probe] FAIL:', err)
+    app.exit(1)
+  }
+}
+
 // Headless workflow-engine check: ASIT_SMOKE_WORKFLOWS=1 electron out/main/index.js
 // CLI-free: proves the runner end to end — param substitution, per-step
 // outcomes, on_failure continue vs stop, wait_for timeout against a live
@@ -2619,6 +2725,18 @@ async function runSmokeTest(): Promise<void> {
     if (version !== MIGRATION_COUNT)
       throw new Error(`user_version ${version} != MIGRATION_COUNT ${MIGRATION_COUNT}`)
     console.log('[smoke] bookmarks CRUD + upsert ok, schema at version', version)
+
+    // One-click setup plumbing loads and answers coherently (no network, no
+    // terminal — just the read-only status path the UI polls).
+    const setupSvc = await import('./services/setup')
+    const login = setupSvc.cliLoginStatus()
+    if (typeof login.installed !== 'boolean')
+      throw new Error('cliLoginStatus returned a bad shape')
+    const installState = setupSvc.cliInstallState()
+    if (installState.installing !== false) throw new Error('installer claims to be running at boot')
+    console.log(
+      `[smoke] setup status path ok (installed=${login.installed}, loggedIn=${login.loggedIn})`
+    )
 
     // PDF text extraction (pure-JS, no CLI involved) using a sample PDF
     const samplePdf = join(process.cwd(), 'node_modules', 'pdf-parse', 'test', 'data', '05-versions-space.pdf')
