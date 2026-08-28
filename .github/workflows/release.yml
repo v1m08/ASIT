@@ -48,22 +48,21 @@ jobs:
       # Exactly as the last green build (1.0.14) ran it. --foreground-scripts
       # broke the Windows runner; the failure diagnostics below still fire.
       - run: npm ci
-      - name: Collect npm logs on failure
+      # Surface the failure as ANNOTATIONS. Run logs, step summaries and
+      # artifacts all need repo-admin auth to read through the API; the
+      # `::error::` workflow command becomes a check annotation, which does
+      # not. Without this an install failure is just "exit code 1".
+      - name: Report install failure
         if: failure()
         shell: bash
         run: |
-          mkdir -p npm-debug
-          cp -r ~/.npm/_logs/. npm-debug/ 2>/dev/null || true
-          node -v > npm-debug/versions.txt 2>&1 || true
-          npm -v >> npm-debug/versions.txt 2>&1 || true
-          npx electron-builder --version >> npm-debug/versions.txt 2>&1 || true
-      - name: Upload npm logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-debug-${{ matrix.name }}
-          path: npm-debug/
-          if-no-files-found: warn
+          echo "::error::install failed on ${{ matrix.name }} — node $(node -v), npm $(npm -v)"
+          for f in ~/.npm/_logs/*.log; do
+            [ -f "$f" ] || continue
+            grep -iE "npm error|npm ERR|gyp ERR|error:" "$f" | tail -12 | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+          done
 
       - run: npm run typecheck
 
