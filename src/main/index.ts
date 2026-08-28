@@ -1782,6 +1782,31 @@ async function runUiSmokeTest(): Promise<void> {
     await waitFor(`document.querySelector('.timer-bar')`, 'the timer bar to return')
     console.log('[ui-smoke] the study-tools switch hides/restores timer + review live')
 
+    // A picture of the shell. Every assertion above answers "is this control
+    // reachable"; none of them answers "does this look like a finished app",
+    // and nobody working on this can click through the macOS build at all.
+    // ASIT_SMOKE_SHOT=<path> writes one; CI can keep it as an artifact.
+    const shotPath = process.env.ASIT_SMOKE_SHOT
+    if (shotPath) {
+      try {
+        // Two reasons this is not just webContents.capturePage(): that one
+        // sees ONLY the renderer DOM, and every page in the app is a
+        // WebContentsView composited above it (invariant 2), so pages would be
+        // missing. And an offscreen window has nothing composited at all, so
+        // it must be brought on screen for the moment of the capture.
+        win.setBounds({ x: 40, y: 40, width: 1400, height: 900 })
+        win.showInactive()
+        await new Promise((r) => setTimeout(r, 1200))
+        const shot = await win.capturePage()
+        ;(await import('fs')).writeFileSync(shotPath, shot.toPNG())
+        win.setBounds({ x: -3000, y: -3000, width: 1400, height: 900 })
+        console.log(`[ui-smoke] screenshot written to ${shotPath}`)
+      } catch (err) {
+        // A picture is a nicety; never fail the suite over one.
+        console.log('[ui-smoke] screenshot failed:', err)
+      }
+    }
+
     tasks.deleteTask(task.id)
     console.log('[ui-smoke] ALL PASS')
     app.exit(0)

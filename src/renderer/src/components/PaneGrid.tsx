@@ -895,7 +895,18 @@ export default function PaneGrid({
     }
 
     const otherCollapsed = validLayout.collapsed?.[(1 - slotIndex) as 0 | 1] ?? false
-    const flex = otherCollapsed ? 1 : slotIndex === 0 ? validLayout.split : 1 - validLayout.split
+    // `flex: <n>` is flex-grow, and when the grows across all children sum to
+    // LESS THAN ONE, they share only that fraction of the space and the rest
+    // stays empty. With no split there is exactly one slot carrying the stored
+    // split (0.55), so the browser rendered at 55% of the window with a dead
+    // 45% strip beside it — for every unsplit group, which is most of them.
+    // A lone slot always takes the whole thing.
+    const flex =
+      !bothSlotsUsed || otherCollapsed
+        ? 1
+        : slotIndex === 0
+          ? validLayout.split
+          : 1 - validLayout.split
 
     return (
       <div
