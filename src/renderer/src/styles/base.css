@@ -184,31 +184,121 @@ select:focus {
   color: var(--text-dim);
 }
 
-/* ---- Workspace ---- */
-.workspace {
+/* ---- The shell ----
+   One screen. The header is the tab-group strip (the app's only navigation);
+   everything below it is the browser. */
+.shell {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.workspace-header {
+.shell-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 10px;
+  padding: 3px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   flex-shrink: 0;
 }
 
-.workspace-title {
-  font-weight: 600;
+.shell-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
-.workspace-body {
+.shell-body {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+
+.shell-booting {
+  background: var(--bg);
+}
+
+/* ---- Tab groups ----
+   Chrome-style: a coloured chip per group, the active one lifted. This strip
+   replaced a "home vs workspace" mode switch, so it has to read as somewhere
+   you ARE rather than a menu you opened. */
+.group-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.group-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.group-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: 190px;
+  padding: 5px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.group-chip:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.group-chip-on {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--group-color, var(--accent));
+}
+
+.group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-add {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.group-add:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.rail-toggle-on,
+.chat-toggle-on {
+  color: var(--accent);
 }
 
 /* ---- Resource rail ---- */
@@ -2865,12 +2955,80 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   background: var(--bg);
 }
 
+/* Wider than a plain new-tab page: this is also the dashboard the retired
+   home screen used to be, so it carries groups and to-dos beside the sites. */
 .ntp-inner {
-  width: min(620px, 90%);
-  margin-top: clamp(24px, 14vh, 140px);
+  width: min(940px, 92%);
+  margin-top: clamp(20px, 8vh, 80px);
+  padding-bottom: 40px;
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+.ntp-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 26px;
+  align-items: start;
+}
+
+@media (max-width: 720px) {
+  .ntp-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ntp-side {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.ntp-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.ntp-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--group-color, var(--accent));
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ntp-group:hover {
+  border-color: var(--accent);
+}
+
+.ntp-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.ntp-group-due,
+.ntp-group-recall {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.ntp-due-late {
+  color: var(--danger, #e06c75);
 }
 
 .ntp-address .browser-address {
@@ -3178,9 +3336,9 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   margin-left: auto;
 }
 
-/* The timer already pushes the right-hand group over; a second auto margin
-   would strand it in the middle of the header. */
-.workspace-header .status-cluster {
+/* The header's right-hand group already owns the auto margin; a second one
+   here would strand the cluster in the middle of the header. */
+.shell-head .status-cluster {
   margin-left: 0;
 }
 

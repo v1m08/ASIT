@@ -40,7 +40,16 @@ export interface TabSurface {
 }
 
 interface AsitState {
-  view: 'home' | 'workspace'
+  // There is no "home screen" and no mode. ASIT is a browser that is always
+  // showing exactly one TAB GROUP, and a group is a task. The scratchpad is
+  // the default group ("Browse") — the one you land in with no commitment —
+  // and every workspace is just another group in the same strip.
+  //
+  // The old shape was `view: 'home' | 'workspace'`: two different screens with
+  // two different tab systems, where opening a workspace threw away the
+  // browser you were in. Switching groups now only re-mounts the content with
+  // a different task, so tabs, panes and history all behave the way a browser's
+  // tab groups do.
   tasks: Task[]
   /** False until the first successful tasks load — gates empty states. */
   tasksLoaded: boolean
@@ -109,6 +118,13 @@ interface AsitState {
   setShortcutsOpen: (open: boolean) => void
   // Whichever browsing surface is on screen registers itself here, so
   // things like the history list can open a URL without knowing which.
+  // The page the user is looking at, published by whichever surface owns the
+  // tabs. Shell chrome (the sign-in handoff today) needs it without reaching
+  // into the grid's internals, and it is the natural hook for anything else
+  // that must react to "what is on screen".
+  activePageUrl: string | null
+  activePaneId: string | null
+  setActivePage: (paneId: string | null, url: string | null) => void
   urlOpener: ((url: string) => void) | null
   setUrlOpener: (fn: ((url: string) => void) | null) => void
   openUrlInWorkspace: (url: string) => void
@@ -117,17 +133,27 @@ interface AsitState {
 
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
+  /** The scratchpad group, loaded at boot so the shell always has a group. */
+  bootShell: () => Promise<void>
+  /** The default group: the scratchpad. Kept so "Browse" can be labelled and
+   *  reached without hunting for it in the task list (it is archived there). */
+  scratchTask: Task | null
+  /** Show a different tab group. Parks the current panes first, so pages stay
+   *  alive and revive without reloading — the whole point of a group switch. */
+  switchGroup: (id: string) => Promise<void>
+  /** Alias for switchGroup. Deep links, the phone and the smoke all speak
+   *  "open this task"; a group switch is what that means now. */
   openTask: (id: string) => Promise<void>
   startFocus: (id: string) => Promise<void>
-  goHome: () => void
   setActiveResources: (resources: Resource[]) => void
 }
 
 export const useStore = create<AsitState>((set, get) => ({
-  view: 'home',
   tasks: [],
   tasksLoaded: false,
+  // Null only until bootShell resolves; after that the shell always has a group.
   activeTask: null,
+  scratchTask: null,
   activeResources: [],
   settings: null,
   // The two right-docked panels share the same reserved column — opening one
@@ -173,12 +199,8 @@ export const useStore = create<AsitState>((set, get) => ({
   // Deep link (e.g. from a to-do): open the workspace AND a specific resource.
   openTaskAndResource: async (taskId: string, resourceId: string) => {
     set({ pendingResourceId: resourceId })
-    const result = await window.asit.tasks.open(taskId)
-    if (result) {
-      set({ view: 'workspace', activeTask: result.task, activeResources: result.resources })
-    } else {
-      set({ pendingResourceId: null })
-    }
+    await get().switchGroup(taskId)
+    if (get().activeTask?.id !== taskId) set({ pendingResourceId: null })
   },
 
   dragItem: null,
@@ -197,6 +219,15 @@ export const useStore = create<AsitState>((set, get) => ({
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
+  activePageUrl: null,
+  activePaneId: null,
+  setActivePage: (activePaneId, activePageUrl) => {
+    // Guarded: this fires on every nav-state push, and an unconditional set
+    // would re-render every subscriber many times per page load.
+    const s = get()
+    if (s.activePaneId === activePaneId && s.activePageUrl === activePageUrl) return
+    set({ activePaneId, activePageUrl })
+  },
   urlOpener: null,
   setUrlOpener: (urlOpener) => set({ urlOpener }),
   openUrlInWorkspace: (url) => {
@@ -229,34 +260,47 @@ export const useStore = create<AsitState>((set, get) => ({
     if (settings) set({ settings })
   },
 
-  openTask: async (id: string) => {
-    // Failure must SAY something — a click that silently does nothing reads
-    // as "the app is broken", which is worse than any error message.
+  // The shell cannot render without a group, so the scratchpad is fetched
+  // before anything else and becomes the one you land in.
+  bootShell: async () => {
+    const scratch = await reliably('browser', () => window.asit.tasks.scratchGet())
+    if (!scratch) return
+    set({ scratchTask: scratch.task })
+    if (!get().activeTask) {
+      set({ activeTask: scratch.task, activeResources: scratch.resources })
+    }
+  },
+
+  switchGroup: async (id: string) => {
+    const current = get().activeTask
+    if (current?.id === id) return
     try {
+      // Park BEFORE swapping: the outgoing group's panes are hidden but kept
+      // alive, so coming back is instant and nothing reloads.
+      if (current) await window.asit.panes.park()
       const result = await window.asit.tasks.open(id)
       if (result) {
-        set({ view: 'workspace', activeTask: result.task, activeResources: result.resources })
+        set({ activeTask: result.task, activeResources: result.resources })
       } else {
-        get().pushNotice("Couldn't open that workspace — it may have been deleted.", 'error')
+        // Failure must SAY something — a click that silently does nothing
+        // reads as "the app is broken", which is worse than any error.
+        get().pushNotice("Couldn't open that group — it may have been deleted.", 'error')
       }
     } catch (err) {
       get().pushNotice(
-        `Couldn't open that workspace — ${err instanceof Error ? err.message : String(err)}`,
+        `Couldn't open that group — ${err instanceof Error ? err.message : String(err)}`,
         'error'
       )
     }
   },
 
-  // One click from Home: open the workspace AND start a locked focus session.
-  startFocus: async (id: string) => {
-    const result = await window.asit.tasks.open(id)
-    if (result) {
-      set({ view: 'workspace', activeTask: result.task, activeResources: result.resources })
-      await window.asit.session.start(id, 'stopwatch')
-    }
-  },
+  openTask: async (id: string) => get().switchGroup(id),
 
-  goHome: () => set({ view: 'home', activeTask: null, activeResources: [] }),
+  // Switch to the group AND start a locked focus session on it.
+  startFocus: async (id: string) => {
+    await get().switchGroup(id)
+    if (get().activeTask?.id === id) await window.asit.session.start(id, 'stopwatch')
+  },
 
   setActiveResources: (resources) => set({ activeResources: resources })
 }))

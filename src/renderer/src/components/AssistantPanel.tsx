@@ -62,7 +62,7 @@ export default function AssistantPanel(): JSX.Element | null {
   const scope = useStore((s) => s.assistantScope)
   const setScope = useStore((s) => s.setAssistantScope)
   const activeTask = useStore((s) => s.activeTask)
-  const view = useStore((s) => s.view)
+  const scratchId = useStore((s) => s.scratchTask?.id)
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -429,7 +429,9 @@ export default function AssistantPanel(): JSX.Element | null {
     })
   }
 
-  const chatTask = view === 'workspace' ? activeTask : null
+  // The scratchpad ("Browse") is not a project, so the assistant treats it as
+  // "no particular workspace" exactly as the old home screen did.
+  const chatTask = activeTask && activeTask.id !== scratchId ? activeTask : null
 
   return (
     <div className="assistant-panel jarvis-panel">

@@ -308,7 +308,11 @@ export function installFocusRing(): () => void {
         return
       }
       case 'go-home':
-        if (store.view === 'workspace') void window.asit.panes.park().then(() => store.goHome())
+        // There is no home screen any more; the equivalent is the default tab
+        // group — the scratchpad you browse in when nothing is committed.
+        if (store.scratchTask && store.activeTask?.id !== store.scratchTask.id) {
+          void store.switchGroup(store.scratchTask.id)
+        }
         return
       default:
         return

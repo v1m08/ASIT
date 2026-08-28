@@ -261,6 +261,13 @@ export default function PaneGrid({
   // The valid layout, reachable from stable callbacks without a stale closure.
   const layoutRef = useRef(validLayout)
   layoutRef.current = validLayout
+  // Same, for engine-reported nav state. The tab SURFACE (the object shortcuts
+  // dispatch through) is captured in the store, so anything it reads out of a
+  // render closure is a snapshot of whenever it was last registered — which is
+  // how Ctrl+D pressed just after a page opened could silently do nothing.
+  // Every live read goes through these refs.
+  const navStatesRef = useRef(navStates)
+  navStatesRef.current = navStates
 
   /**
    * What to call a tab. A web tab is named by the PAGE, like every browser:
@@ -578,6 +585,24 @@ export default function PaneGrid({
 
   const openUrl = useCallback((url: string): void => openWebTab(url), [openWebTab])
 
+  // A browser always has a tab. This surface used to be a workspace grid, so
+  // an empty group rendered a bare "nothing open" slot — which, now that every
+  // group is browsed through here (including a brand-new one), read as a
+  // broken window rather than a fresh browser. Open the new-tab page instead;
+  // it costs no pane (invariant 2's builtin-notes pattern) and is where the
+  // address bar and the dashboard live.
+  const openedFirstTab = useRef(false)
+  useEffect(() => {
+    if (openedFirstTab.current) return
+    if (layout.slots[0].length > 0 || layout.slots[1].length > 0) {
+      openedFirstTab.current = true
+      return
+    }
+    openedFirstTab.current = true
+    openWebTab(NEW_TAB_URL, 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Keyboard shortcuts fire from a listener registered once, so they reach the
   // CURRENT versions of these through refs rather than a stale closure.
   const openResourceRef = useRef(openResource)
@@ -638,13 +663,44 @@ export default function PaneGrid({
     [validLayout, navStates, openUrl]
   )
 
+  // Publish what the user is looking at, so shell chrome can react to the page
+  // without reaching into this component (see store.setActivePage).
+  useEffect(() => {
+    const id = validLayout.active[focusSlot()]
+    const url = id
+      ? (navStates[id]?.url ?? validLayout.webTabs?.[id] ?? tabInfoFor(id, task, resources, validLayout.webTabs)?.resource?.url ?? null)
+      : null
+    useStore.getState().setActivePage(id ?? null, url && !isNewTabUrl(url) ? url : null)
+  }, [validLayout, navStates, task, resources, focusSlot])
+  useEffect(() => {
+    return () => useStore.getState().setActivePage(null, null)
+  }, [])
+
   // Claim the tab surface while this workspace is on screen, so the shared
   // shortcut dispatcher drives THESE tabs.
   const setTabSurface = useStore((st) => st.setTabSurface)
   useEffect(() => {
+    // Live reads (layoutRef/navStatesRef), never the render closure — see the
+    // note by navStatesRef.
     const activePaneId = (): string | null => {
-      const id = validLayout.active[focusSlot()]
-      return id && tabInfoFor(id, task, resources, validLayout.webTabs)?.viewBacked ? id : null
+      const live = layoutRef.current
+      const id = live.active[focusSlot()]
+      return id && tabInfoFor(id, task, resources, live.webTabs)?.viewBacked ? id : null
+    }
+    /** Where the active tab is, preferring the engine and falling back to the
+     *  layout for a page too young to have reported in yet.
+     *
+     *  The engine pushes a nav state as soon as the pane exists, and that
+     *  FIRST push carries an empty url — so `??` (which only falls through on
+     *  null/undefined) kept the empty string and every caller concluded there
+     *  was no page. That is why Ctrl+D and copy-address did nothing for the
+     *  first moment of a tab's life. Fall back on any falsy value, not just
+     *  null. */
+    const activeUrl = (): string | null => {
+      const id = activePaneId()
+      if (!id) return null
+      const url = navStatesRef.current[id]?.url || layoutRef.current.webTabs?.[id] || null
+      return url && !isNewTabUrl(url) ? url : null
     }
     setTabSurface({
       newTab: () => openWebTabRef.current?.(NEW_TAB_URL),
@@ -680,15 +736,19 @@ export default function PaneGrid({
         if (id) find.openFind(id)
       },
       // Everything below used to need a mouse.
+      //
+      // Both resolve the URL from the LAYOUT when the engine's nav-state has
+      // not landed yet: a tab that was just opened (or converted from the
+      // new-tab page) already knows where it is going, and Ctrl+D silently
+      // doing nothing for the first second of a page's life is a bug.
       bookmarkPage: () => {
         const id = activePaneId()
-        const nav = id ? navStates[id] : null
-        if (nav?.url && /^https?:/i.test(nav.url))
-          void toggleBookmark(nav.url, nav.title || nav.url, nav.favicon)
+        const url = activeUrl()
+        const nav = id ? navStatesRef.current[id] : null
+        if (url && /^https?:/i.test(url)) void toggleBookmark(url, nav?.title || url, nav?.favicon)
       },
       copyAddress: () => {
-        const id = activePaneId()
-        const url = id ? navStates[id]?.url : null
+        const url = activeUrl()
         if (url) void navigator.clipboard.writeText(url)
       },
       addFile: () => {

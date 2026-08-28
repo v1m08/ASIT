@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from './store/useStore'
-import Home from './screens/Home'
-import Workspace from './screens/Workspace'
+import Shell from './screens/Shell'
 import AccountsModal from './components/AccountsModal'
 import AssistantPanel from './components/AssistantPanel'
 import StatusListener from './components/StatusListener'
@@ -22,9 +21,9 @@ function SettingsGate(): JSX.Element | null {
 }
 
 export default function App(): JSX.Element {
-  const view = useStore((s) => s.view)
   const loadTasks = useStore((s) => s.loadTasks)
   const loadSettings = useStore((s) => s.loadSettings)
+  const bootShell = useStore((s) => s.bootShell)
   const [showWelcome, setShowWelcome] = useState(false)
 
   // Tab / Shift+Tab move between real zones; Ctrl+1…9 jump; Ctrl+K assistant.
@@ -56,10 +55,13 @@ export default function App(): JSX.Element {
   useEffect(() => {
     loadTasks()
     loadSettings()
+    // The shell cannot render without a group, so this is what makes the
+    // window appear at all.
+    void bootShell()
     window.asit.settings.get().then((s) => {
       if (!s.onboarded) setShowWelcome(true)
     })
-  }, [loadTasks, loadSettings])
+  }, [loadTasks, loadSettings, bootShell])
 
   async function closeWelcome(): Promise<void> {
     setShowWelcome(false)
@@ -68,7 +70,7 @@ export default function App(): JSX.Element {
 
   return (
     <>
-      {view === 'home' ? <Home /> : <Workspace />}
+      <Shell />
       <AssistantPanel />
       <StatusListener />
       {/* Mounted at the top so Ctrl+H reaches it from Home and a workspace. */}

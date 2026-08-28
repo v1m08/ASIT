@@ -1527,30 +1527,37 @@ async function runUiSmokeTest(): Promise<void> {
       }
     }
 
-    // Open the workspace the way a click would.
-    await waitFor(`document.querySelector('.task-card, .task-row, [data-focus-zone]')`, 'home to render')
+    // The shell boots straight into a browser — there is no home screen to
+    // pass through, and the default tab group is the scratchpad.
+    await waitFor(`document.querySelector('.shell .group-bar .group-chip')`, 'the tab-group bar')
+    await waitFor(`document.querySelector('.pane-grid')`, 'the browsing surface')
+    if (!(await evalIn<boolean>(`(() => {
+      const s = window.__asitStore.getState()
+      return !!s.activeTask && !!s.scratchTask && s.activeTask.id === s.scratchTask.id
+    })()`)))
+      fail('the shell did not boot into the default (scratchpad) tab group')
+    console.log('[ui-smoke] the shell boots into a browser showing the default tab group')
 
-    // Home's browser must render the SHARED tab strip (the scratch browser
-    // and the workspace grid used to carry two divergent copies of this
-    // chrome), and its find bar must open — Ctrl+F was once dead on Home.
-    await waitFor(`document.querySelector('.browser .tab-strip .tab')`, 'the shared tab strip on Home')
+    // The tab strip and its find bar must work in the shell (Ctrl+F was once
+    // dead on the home screen, because home carried its own divergent chrome).
+    await waitFor(`document.querySelector('.tab-strip .tab')`, 'the shared tab strip')
     await evalIn(`window.__asitStore.getState().tabSurface.find()`)
-    await waitFor(`document.querySelector('.browser .find-bar')`, 'the find bar on Home')
+    await waitFor(`document.querySelector('.find-bar')`, 'the find bar')
     await evalIn(`(() => {
-      const el = document.querySelector('.browser .find-bar input')
+      const el = document.querySelector('.find-bar input')
       el && el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })()`)
-    console.log('[ui-smoke] Home renders the shared tab strip and its find bar opens')
+    console.log('[ui-smoke] the shared tab strip renders and its find bar opens')
 
     // Scratch tabs persist in the scratch task's layout_json — the same shape
     // a workspace stores, which is what lets "save session" hand tabs over.
     const tabCountBefore = await evalIn<number>(
-      `document.querySelectorAll('.browser .tab-strip .tab').length`
+      `document.querySelectorAll('.tab-strip .tab').length`
     )
     await evalIn(`window.__asitStore.getState().tabSurface.newTab()`)
     await waitFor(
-      `document.querySelectorAll('.browser .tab-strip .tab').length === ${tabCountBefore + 1}`,
-      'the new Home tab'
+      `document.querySelectorAll('.tab-strip .tab').length === ${tabCountBefore + 1}`,
+      'the new tab'
     )
     {
       // waitFor wraps in !!(...) which is truthy for a bare Promise, so poll
@@ -1567,7 +1574,7 @@ async function runUiSmokeTest(): Promise<void> {
         await new Promise((r) => setTimeout(r, 250))
       }
     }
-    console.log('[ui-smoke] a new Home tab lands in the scratch layout_json')
+    console.log('[ui-smoke] a new tab lands in the default group’s layout_json')
 
     // The new tab IS the new-tab page: plain DOM, and — the invariant-2 part —
     // no pane may be visible while it shows (an NTP tab has no pane at all,
@@ -1605,8 +1612,18 @@ async function runUiSmokeTest(): Promise<void> {
     await waitFor(`document.querySelector('.bookmark-star-on')`, 'the filled bookmark star')
     console.log('[ui-smoke] bookmark round-trip: Ctrl+D stores the page and fills the star')
 
-    await evalIn(`window.__asitStore.getState().openTask(${JSON.stringify(task.id)})`)
-    await waitFor(`document.querySelector('.pane-grid')`, 'the workspace')
+    // Switching group must NOT be a screen change: the browser chrome stays,
+    // only the tabs under it swap. That is the whole point of the refactor —
+    // opening a workspace used to throw the browser away.
+    await evalIn(`window.__asitStore.getState().switchGroup(${JSON.stringify(task.id)})`)
+    await waitFor(
+      `window.__asitStore.getState().activeTask.id === ${JSON.stringify(task.id)}`,
+      'the group switch'
+    )
+    await waitFor(`document.querySelector('.pane-grid')`, 'the browsing surface after the switch')
+    if (!(await evalIn<boolean>(`!!document.querySelector('.shell .group-bar .group-chip-on')`)))
+      fail('the tab-group bar vanished after switching group')
+    console.log('[ui-smoke] switching tab group keeps the browser and swaps the tabs')
 
     // Open the pinned URL so a page pane exists, then wait for its toolbar.
     await evalIn(

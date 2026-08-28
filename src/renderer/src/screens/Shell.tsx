@@ -7,21 +7,40 @@ import ChatPanel from '../components/ChatPanel'
 import TimerBar, { useTimerState } from '../components/TimerBar'
 import BreakReview from '../components/BreakReview'
 import StatusCluster from '../components/StatusCluster'
-import WorkspaceSwitcher from '../components/WorkspaceSwitcher'
+import GroupBar from '../browser/GroupBar'
+import SigninHandoff from '../browser/SigninHandoff'
 
-export default function Workspace(): JSX.Element {
+// THE shell. One screen, always a browser.
+//
+// This replaced a home/workspace split in which the two halves of the app had
+// separate tab systems, separate chrome and separate shortcuts — so switching
+// context meant losing your tabs, and half the browser keys did nothing
+// depending on where you happened to be. Now there is a single tab surface
+// (PaneGrid) and a single set of chrome, and a "workspace" is just which tab
+// GROUP the surface is currently showing (see GroupBar).
+//
+// The rail and the chat are per-group panels of the same shell rather than
+// screens of their own, because they are scoped to the group: the rail holds
+// what this group has open, and the chat is the agent that can see this
+// group's folder and drive this group's panes (invariant 6).
+
+export default function Shell(): JSX.Element {
   const task = useStore((s) => s.activeTask)
   const resources = useStore((s) => s.activeResources)
   const setActiveResources = useStore((s) => s.setActiveResources)
-  const goHome = useStore((s) => s.goHome)
   const gridApi = useRef<PaneGridApi | null>(null)
   const chatOpen = useStore((s) => s.chatOpen)
   const studyEnabled = useStore((s) => s.settings?.studyEnabled ?? true)
+  const scratchId = useStore((s) => s.scratchTask?.id)
+  const [railOpen, setRailOpen] = useState(
+    () => localStorage.getItem('asit-rail-open') !== '0'
+  )
   const setChatOpen = (v: boolean | ((p: boolean) => boolean)): void =>
     useStore.setState((st) => ({ chatOpen: typeof v === 'function' ? v(st.chatOpen) : v }))
-  // Chat can never starve the pane area: cap at what the window affords
-  // (rail + panes need ~620px), re-clamped on every window resize.
-  const clampChatWidth = (w: number): number => Math.max(280, Math.min(560, window.innerWidth - 620, w))
+  // Chat can never starve the pane area: cap at what the window affords,
+  // re-clamped on every window resize.
+  const clampChatWidth = (w: number): number =>
+    Math.max(280, Math.min(560, window.innerWidth - 620, w))
   const [chatWidth, setChatWidth] = useState(() =>
     clampChatWidth(Number(localStorage.getItem('asit-chat-width')) || 360)
   )
@@ -31,6 +50,10 @@ export default function Workspace(): JSX.Element {
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
+
+  useEffect(() => {
+    localStorage.setItem('asit-rail-open', railOpen ? '1' : '0')
+  }, [railOpen])
 
   const refreshResources = useCallback(async (): Promise<void> => {
     if (!task) return
@@ -42,7 +65,7 @@ export default function Workspace(): JSX.Element {
     return window.asit.on(IPC.APP_EVENT, (...args: unknown[]) => {
       const p = args[0] as { type: string; id?: string; url?: string; owner?: string }
       if (p.type === 'open-url-tab' && p.url) {
-        // Only the workspace that owns the pane the link came from.
+        // Only the group that owns the pane the link came from.
         if (!p.owner || p.owner === task?.id) gridApi.current?.openUrl(p.url)
       } else if (p.type === 'open-resource' && p.id) {
         gridApi.current?.openResource(p.id === 'builtin-notes' ? BUILTIN_NOTES : p.id)
@@ -54,21 +77,22 @@ export default function Workspace(): JSX.Element {
     })
   }, [refreshResources, task?.id])
 
-  // Deep link (to-do or a notes link → file). Keyed on the pending id, not the
-  // task: links that point INSIDE the workspace you're already in must work
-  // too, and there the task id never changes.
+  // Deep link (to-do, notes link, or the phone). Keyed on the pending id, not
+  // the group: links that point INSIDE the group you are already in must work
+  // too, and there the group id never changes.
   const pendingResourceId = useStore((s) => s.pendingResourceId)
   useEffect(() => {
     if (!pendingResourceId) return
     const id = useStore.getState().consumePendingResource()
     if (!id) return
-    const open = (): void => gridApi.current?.openResource(id === 'builtin-notes' ? BUILTIN_NOTES : id)
+    const open = (): void =>
+      gridApi.current?.openResource(id === 'builtin-notes' ? BUILTIN_NOTES : id)
     if (gridApi.current) {
       open()
       return
     }
-    // Grid still mounting (task switch + cold lazy chunk can exceed any single
-    // delay) — retry until it appears, bounded.
+    // Grid still mounting (group switch + cold lazy chunk can exceed any
+    // single delay) — retry until it appears, bounded.
     let tries = 0
     const t = setInterval(() => {
       if (gridApi.current || ++tries > 20) {
@@ -79,47 +103,51 @@ export default function Workspace(): JSX.Element {
     return () => clearInterval(t)
   }, [pendingResourceId])
 
-  // The grid registers itself as the app-wide URL opener below; un-register
-  // on unmount or history/palette clicks on Home would call a stale closure
-  // over a grid that no longer exists (and nothing would visibly happen).
   useEffect(() => {
     return () => useStore.getState().setUrlOpener(null)
   }, [])
 
-  const handleGoHome = useCallback(async (): Promise<void> => {
-    // Park (hide, keep alive) — pages don't reload when you come back.
-    await window.asit.panes.park()
-    goHome()
-  }, [goHome])
+  // Pre-boot only: bootShell resolves the scratchpad and the shell appears.
+  if (!task) return <div className="shell shell-booting" />
 
-  if (!task) return <div />
+  const isScratch = task.id === scratchId
 
   return (
-    <div className="workspace">
-      <header className="workspace-header">
-        <button className="btn btn-ghost" title="Back to browsing (Alt+Home)" onClick={handleGoHome}>
-          ←
-        </button>
-        <WorkspaceSwitcher />
-        {studyEnabled && <TimerBar task={task} />}
-        <StatusCluster />
-        {!task.aiDisabled && (
+    <div className="shell">
+      <header className="shell-head">
+        <GroupBar />
+        <div className="shell-head-right">
+          {studyEnabled && !isScratch && <TimerBar task={task} />}
+          <StatusCluster />
           <button
-            className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
-            onClick={() => setChatOpen((v) => !v)}
+            className={`btn btn-ghost rail-toggle ${railOpen ? 'rail-toggle-on' : ''}`}
+            title="Show this group's files and pins"
+            onClick={() => setRailOpen((v) => !v)}
           >
-            ▭ Chat
+            ☰
           </button>
-        )}
+          {!task.aiDisabled && (
+            <button
+              className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
+              title="Agent for this group (Ctrl+\\)"
+              onClick={() => setChatOpen((v) => !v)}
+            >
+              ▭ Agent
+            </button>
+          )}
+        </div>
       </header>
-      <div className="workspace-body">
-        <ResourceRail
-          task={task}
-          resources={resources}
-          onOpen={(id) => gridApi.current?.openResource(id)}
-          onSearch={(q) => gridApi.current?.openSearch(q)}
-          onResourcesChanged={refreshResources}
-        />
+      <SigninHandoff />
+      <div className="shell-body">
+        {railOpen && (
+          <ResourceRail
+            task={task}
+            resources={resources}
+            onOpen={(id) => gridApi.current?.openResource(id)}
+            onSearch={(q) => gridApi.current?.openSearch(q)}
+            onResourcesChanged={refreshResources}
+          />
+        )}
         <PaneGrid
           key={task.id}
           task={task}
@@ -127,8 +155,6 @@ export default function Workspace(): JSX.Element {
           onApi={(api) => {
             gridApi.current = api
             ;(window as unknown as { __asitGrid?: unknown }).__asitGrid = api
-            // Let anything else in the app (history, to-do links) open a URL
-            // here without needing a reference to this grid.
             useStore.getState().setUrlOpener((url) => api.openUrl(url))
           }}
           onPin={async (title, url) => {
@@ -146,7 +172,7 @@ export default function Workspace(): JSX.Element {
           <>
             <div
               className="divider"
-              title="Drag to resize chat"
+              title="Drag to resize"
               onPointerDown={(e) => {
                 e.preventDefault()
                 window.asit.panes.setVisible(null, false)
@@ -174,14 +200,14 @@ export default function Workspace(): JSX.Element {
           </>
         )}
       </div>
-      {studyEnabled && <BreakReviewGate taskId={task.id} />}
+      {studyEnabled && !isScratch && <BreakReviewGate taskId={task.id} />}
     </div>
   )
 }
 
-// Isolates the 1-per-second SESSION_TICK subscription: with it inlined,
-// the ENTIRE workspace tree (rail, grid, every chat message) re-rendered
-// every second for the whole focus session.
+// Isolates the 1-per-second SESSION_TICK subscription: with it inlined, the
+// ENTIRE shell (rail, grid, every chat message) re-rendered every second for
+// the whole focus session.
 function BreakReviewGate({ taskId }: { taskId: string }): JSX.Element | null {
   const timerState = useTimerState()
   const [dismissed, setDismissed] = useState(false)
@@ -191,6 +217,10 @@ function BreakReviewGate({ taskId }: { taskId: string }): JSX.Element | null {
   }, [onBreak])
   if (!onBreak || dismissed || !timerState) return null
   return (
-    <BreakReview taskId={taskId} remainingSec={timerState.remainingSec} onClose={() => setDismissed(true)} />
+    <BreakReview
+      taskId={taskId}
+      remainingSec={timerState.remainingSec}
+      onClose={() => setDismissed(true)}
+    />
   )
 }
