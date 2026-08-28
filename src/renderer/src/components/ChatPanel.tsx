@@ -3,6 +3,7 @@ import { IPC } from '@shared/ipc-contract'
 import type { ChatMessage, ChatSession, Task } from '@shared/types'
 import { fmtCost, fmtTokens } from '../utils/fmt'
 import { useSnippets } from '../hooks/useSnippets'
+import { useStore } from '../store/useStore'
 import Markdown from './Markdown'
 
 interface StreamPayload {
@@ -115,6 +116,20 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [model, setModel] = useState('default')
+  // A prompt drafted from elsewhere ("automate this page"). Never auto-sent —
+  // see store.seedChat.
+  const chatSeed = useStore((s) => s.chatSeed)
+  useEffect(() => {
+    if (!chatSeed) return
+    const text = useStore.getState().consumeChatSeed()
+    if (!text) return
+    setInput((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text))
+    setTimeout(() => {
+      const el = document.querySelector<HTMLTextAreaElement>('.chat-input-box textarea')
+      el?.focus()
+      el?.setSelectionRange(el.value.length, el.value.length)
+    }, 40)
+  }, [chatSeed])
   const [liveTokens, setLiveTokens] = useState(0)
   const [taskFiles, setTaskFiles] = useState<FileRef[]>([])
   const [skillList, setSkillList] = useState<{ name: string; content: string }[]>([])

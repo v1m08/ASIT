@@ -3031,6 +3031,67 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   color: var(--danger, #e06c75);
 }
 
+/* Automations on the new-tab page — the thing a plain browser cannot do,
+   put where it is seen instead of behind a modal. */
+.ntp-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.ntp-manage {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.72rem;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.ntp-flows {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ntp-flow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.ntp-flow:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.ntp-flow:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ntp-flow-run {
+  color: var(--accent);
+  font-size: 0.7rem;
+}
+
+.ntp-flow-scope {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.ntp-next {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
 .ntp-address .browser-address {
   font-size: 1rem;
   padding: 11px 20px;
@@ -3295,10 +3356,13 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   white-space: nowrap;
 }
 
+/* Left-aligned: these sit under left-aligned section labels now that the NTP
+   is a dashboard, and centred copy under a left-aligned heading reads as a
+   layout mistake. */
 .ntp-empty {
   color: var(--text-dim);
-  font-size: 0.9rem;
-  text-align: center;
+  font-size: 0.85rem;
+  line-height: 1.5;
 }
 
 .side-panel {

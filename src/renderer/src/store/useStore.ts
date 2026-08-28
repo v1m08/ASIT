@@ -130,6 +130,14 @@ interface AsitState {
   openUrlInWorkspace: (url: string) => void
   chatOpen: boolean
   toggleChat: () => void
+  // A prompt handed to the group's agent from elsewhere in the app — "automate
+  // this page" is the first caller. It is DRAFTED into the box, never sent:
+  // an agent turn the user did not type is exactly what the send guardrails
+  // (invariant 14) exist to prevent, and a one-click action that silently
+  // starts talking to people would be the same mistake.
+  chatSeed: { text: string; at: number } | null
+  seedChat: (text: string) => void
+  consumeChatSeed: () => string | null
 
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
@@ -239,6 +247,13 @@ export const useStore = create<AsitState>((set, get) => ({
   },
   chatOpen: true,
   toggleChat: () => set((st) => ({ chatOpen: !st.chatOpen })),
+  chatSeed: null,
+  seedChat: (text) => set({ chatSeed: { text, at: Date.now() }, chatOpen: true }),
+  consumeChatSeed: () => {
+    const seed = get().chatSeed
+    if (seed) set({ chatSeed: null })
+    return seed?.text ?? null
+  },
   loadError: null,
   retryLoad: async () => {
     set({ loadError: null })

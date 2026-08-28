@@ -126,6 +126,7 @@ export default function Shell(): JSX.Element {
           >
             ☰
           </button>
+          {!task.aiDisabled && <AutomateButton />}
           {!task.aiDisabled && (
             <button
               className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
@@ -202,6 +203,35 @@ export default function Shell(): JSX.Element {
       </div>
       {studyEnabled && !isScratch && <BreakReviewGate taskId={task.id} />}
     </div>
+  )
+}
+
+// "Automate this" — the shortest path from doing a thing to never doing it
+// again. It drafts a request to the group's agent describing what is on
+// screen; the agent writes the workflow (invariant 22 contains what it may
+// put in one). Deliberately a DRAFT, not a send: it is one click, and one
+// click must never start an agent turn the user did not read.
+function AutomateButton(): JSX.Element {
+  const url = useStore((s) => s.activePageUrl)
+  const seedChat = useStore((s) => s.seedChat)
+  return (
+    <button
+      className="btn btn-ghost"
+      title={
+        url
+          ? 'Draft an automation for what you are doing here'
+          : 'Draft an automation for this group'
+      }
+      onClick={() =>
+        seedChat(
+          url
+            ? `Automate this: I'm on ${url}. Build a workflow for what I do here, ask me about any step you're unsure of, then save it.`
+            : `Build a workflow for something I do often in this group. Ask me what it should do, then save it.`
+        )
+      }
+    >
+      ⚡ Automate
+    </button>
   )
 }
 

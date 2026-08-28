@@ -1797,8 +1797,18 @@ async function runUiSmokeTest(): Promise<void> {
         win.setBounds({ x: 40, y: 40, width: 1400, height: 900 })
         win.showInactive()
         await new Promise((r) => setTimeout(r, 1200))
+        const fs = await import('fs')
         const shot = await win.capturePage()
-        ;(await import('fs')).writeFileSync(shotPath, shot.toPNG())
+        fs.writeFileSync(shotPath, shot.toPNG())
+        // And the new-tab page, which is also the dashboard — the two views
+        // worth eyeballing after any shell change.
+        await evalIn(`(() => {
+          const t = [...document.querySelectorAll('.tab-strip .tab')]
+            .find((el) => el.textContent.includes('New tab'))
+          t && t.click()
+        })()`)
+        await new Promise((r) => setTimeout(r, 900))
+        fs.writeFileSync(shotPath.replace(/\.png$/, '') + '-ntp.png', (await win.capturePage()).toPNG())
         win.setBounds({ x: -3000, y: -3000, width: 1400, height: 900 })
         console.log(`[ui-smoke] screenshot written to ${shotPath}`)
       } catch (err) {

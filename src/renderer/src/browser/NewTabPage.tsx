@@ -5,6 +5,7 @@ import { onBookmarksChanged } from './BookmarkStar'
 import { useStore } from '../store/useStore'
 import { groupColor } from './GroupBar'
 import TodoList from '../components/TodoList'
+import NtpAutomations from './NtpAutomations'
 
 // The new-tab page — and, since the home screen was retired, the dashboard.
 //
@@ -120,6 +121,7 @@ export default function NewTabPage({
           </div>
 
           <div className="ntp-side">
+            <NtpAutomations />
             {bookmarks.length > 0 && (
               <div className="ntp-section">
                 <div className="ntp-label">Bookmarks</div>

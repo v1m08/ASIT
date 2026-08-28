@@ -76,6 +76,15 @@ export default function AddressBar({
   // replace good suggestions with stale ones.
   useEffect(() => {
     if (draft === null) return
+    // Nothing typed, nothing to suggest. An empty query returns the top-sites
+    // ranking, which meant simply focusing the box dropped a list over
+    // whatever was behind it — on the new-tab page that is the dashboard, and
+    // the box autofocuses, so the page opened with its own content covered.
+    if (!draft.trim()) {
+      setSuggestions([])
+      setHighlight(-1)
+      return
+    }
     let live = true
     const t = setTimeout(() => {
       void window.asit.history.search(draft, 8).then((rows) => {
