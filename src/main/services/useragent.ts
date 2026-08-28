@@ -83,7 +83,14 @@ export function browserUserAgent(): string {
  */
 function brandList(): string {
   const v = chromeMajor()
-  return `"Chromium";v="${v}", "Google Chrome";v="${v}", "Not?A_Brand";v="99"`
+  // Deliberately NOT claiming "Google Chrome". navigator.userAgentData is
+  // owned by Chromium and cannot be set from the main process — it reports
+  // Chromium and a GREASE brand, never Google Chrome. Sending a header that
+  // named Google Chrome therefore CONTRADICTED the very object a site reads
+  // to verify the header, which is the exact mismatch this module exists to
+  // remove. The UA string still says Chrome/<v>, which is the signal sites
+  // actually branch on.
+  return `"Chromium";v="${v}", "Not?A_Brand";v="99"`
 }
 
 /**
