@@ -6,6 +6,7 @@ import { useStore } from '../store/useStore'
 import { groupColor } from './GroupBar'
 import TodoList from '../components/TodoList'
 import NtpAutomations from './NtpAutomations'
+import NtpStats from './NtpStats'
 
 // The new-tab page — and, since the home screen was retired, the dashboard.
 //
@@ -168,6 +169,8 @@ export default function NewTabPage({
             )}
           </div>
         </div>
+
+        <NtpStats />
       </div>
     </div>
   )

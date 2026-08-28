@@ -3092,6 +3092,22 @@ body.assistant-open:has(.jarvis-panel) .home-main {
   color: var(--text-dim);
 }
 
+.ntp-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 16px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.ntp-stats b {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .ntp-address .browser-address {
   font-size: 1rem;
   padding: 11px 20px;
