@@ -1,6 +1,6 @@
 {
   "name": "asit",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "description": "ASIT — a local-first study workspace: instant task context, embedded browser panes, focus lockdown, spaced repetition, and AI through your Claude Code subscription",
   "main": "./out/main/index.js",
   "author": "Vedansh Mannem",
