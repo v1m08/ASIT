@@ -249,7 +249,11 @@ const api = {
   },
   accounts: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNTS_LIST),
-    openLogin: (providerId: string) => ipcRenderer.invoke(IPC.ACCOUNTS_OPEN_LOGIN, providerId)
+    openLogin: (providerId: string) => ipcRenderer.invoke(IPC.ACCOUNTS_OPEN_LOGIN, providerId),
+    bridgeInfo: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_INFO),
+    bridgeSignIn: (url: string) => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_SIGNIN, url),
+    bridgeFinish: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_FINISH),
+    bridgeCancel: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_CANCEL)
   },
   session: {
     start: (taskId: string, mode?: 'stopwatch' | 'pomodoro', workMin?: number, breakMin?: number) =>

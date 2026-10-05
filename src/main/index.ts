@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, session, shell } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
 import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
@@ -15,6 +15,7 @@ import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
 import { initActions, watchJarvisActions } from './services/actions'
 import { initWorkflows, sweepInterruptedRuns } from './services/workflows'
+import { cancelBridge, sweepBridgeProfile } from './services/signinbridge'
 import { bus } from './services/bus'
 import { initUsage } from './services/usage'
 import { initActivity } from './services/activity'
@@ -160,6 +161,13 @@ app.whenReady().then(() => {
     }
   }
 
+  // DB-free, so it runs before the DB opens (and on a machine whose native
+  // sqlite build is broken).
+  if (process.env.ASIT_SMOKE_SIGNIN === '1') {
+    runSigninBridgeSmokeTest()
+    return
+  }
+
   getDb() // open DB + run migrations before any IPC arrives
 
   if (process.env.ASIT_SMOKE === '1') {
@@ -224,6 +232,8 @@ app.whenReady().then(() => {
   // Before any pane loads: the browse partition must present a consistent
   // browser identity or sign-in flows refuse it.
   applyBrowserIdentity('persist:asit-browse')
+  // A crash mid-sign-in must not leave a signed-in borrowed profile on disk.
+  sweepBridgeProfile()
   initBrowserFilters()
   void loadExtensions()
   initScheduler() // time-based agent runs
@@ -316,6 +326,7 @@ app.whenReady().then(() => {
 // recover from. closeDb() checkpoints and closes; it is idempotent, so
 // running here and again below is harmless.
 app.on('before-quit', () => {
+  cancelBridge() // close a borrowed sign-in browser; its profile is wiped
   try {
     closeDb()
   } catch (err) {
@@ -578,6 +589,14 @@ async function runSecuritySmokeTest(): Promise<void> {
       if (!tryStop.startsWith('unknown action')) fail(`session-stop verb exists: ${verb}`)
     }
     console.log('[security-smoke] delete_workspace is Jarvis-only; no session-stop verb exists')
+
+    // The real-browser sign-in bridge moves whole sessions — it must have no
+    // agent door at all (absence, like the vault).
+    for (const verb of ['signin', 'sign_in', 'import_session', 'import_cookies', 'bridge_signin']) {
+      const tryBridge = await actions.executeAction(jarvis.id, { action: verb, url: 'https://accounts.google.com/' })
+      if (!tryBridge.startsWith('unknown action')) fail(`sign-in bridge reachable by an agent: ${verb}`)
+    }
+    console.log('[security-smoke] no action verb reaches the sign-in bridge')
 
     // Private workspace unreachable by Jarvis name resolution.
     const priv = tasksSvc.createTask({ title: 'Secret', aiDisabled: true })
@@ -2068,6 +2087,119 @@ async function runPanesSmokeTest(): Promise<void> {
     app.exit(0)
   } catch (err) {
     console.error('[panes-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless sign-in bridge check: ASIT_SMOKE_SIGNIN=1 electron out/main/index.js
+// Network-free: borrows the installed Chromium-family browser (or
+// ASIT_SIGNIN_BROWSER), headless, against a local page that sets cookies the
+// way a sign-in does, and proves the whole round trip — CDP over the pipe,
+// auto-finish on the marker cookie, import into the browse partition with
+// HttpOnly/expiry/host-only intact, and the borrowed profile wiped after.
+// No browser installed → SKIP (the feature degrades to the plain handoff).
+async function runSigninBridgeSmokeTest(): Promise<void> {
+  const fail = (msg: string): never => {
+    console.error('[signin-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+  try {
+    const { existsSync } = await import('fs')
+    const { createServer } = await import('http')
+    const bridge = await import('./services/signinbridge')
+
+    // Pure mapping rules first — these are what keep a Google session valid.
+    const dom = bridge.toElectronCookie({
+      name: 'SAPISID', value: 'v', domain: '.google.com', path: '/', expires: 2e9,
+      httpOnly: false, secure: true, session: false, sameSite: 'None'
+    })
+    if (dom.domain !== '.google.com' || dom.expirationDate !== 2e9 || dom.sameSite !== 'no_restriction')
+      fail(`domain cookie mis-mapped: ${JSON.stringify(dom)}`)
+    const hostOnly = bridge.toElectronCookie({
+      name: '__Host-GAPS', value: 'v', domain: 'accounts.google.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, session: true
+    })
+    if (hostOnly.domain !== undefined || hostOnly.expirationDate !== undefined)
+      fail(`host-only cookie widened or given an expiry: ${JSON.stringify(hostOnly)}`)
+    const marker = (domain: string): import('./services/signinbridge').CdpCookie => ({
+      name: 'SAPISID', value: 'v', domain, path: '/', expires: 2e9,
+      httpOnly: false, secure: true, session: false
+    })
+    if (!bridge.googleSignedIn([marker('.google.com')]))
+      fail('SAPISID on .google.com not recognised as signed in')
+    if (bridge.googleSignedIn([marker('.evil-google.com')]))
+      fail('marker matched a lookalike domain')
+    console.log('[signin-smoke] cookie mapping keeps host-only, domain, expiry and SameSite intact')
+
+    const browser = bridge.findBridgeBrowser()
+    if (!browser) {
+      console.log('[signin-smoke] no Chromium-family browser installed — SKIP live round trip')
+      console.log('[signin-smoke] ALL PASS')
+      app.exit(0)
+      return
+    }
+    console.log(`[signin-smoke] borrowing ${browser.name}: ${browser.path}`)
+
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith('/login')) {
+        res.setHeader('Set-Cookie', [
+          'asit_session=signed-in; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600',
+          'asit_pref=1; Path=/'
+        ])
+      }
+      res.setHeader('Content-Type', 'text/html')
+      res.end('<title>signed in</title><p>ok</p>')
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    const origin = `http://127.0.0.1:${port}`
+
+    const result = await bridge.signInWithRealBrowser(`${origin}/login`, {
+      headless: true,
+      timeoutMs: 60_000,
+      doneWhen: (cs) => cs.some((c) => c.name === 'asit_session')
+    })
+    console.log(`[signin-smoke] bridge result: ${JSON.stringify(result)}`)
+    if (!result.ok || result.imported < 2) fail(`round trip did not import: ${JSON.stringify(result)}`)
+    if (result.reason) fail(`finished for the wrong reason: ${result.reason}`)
+
+    const jar = await session.fromPartition('persist:asit-browse').cookies.get({ url: origin })
+    const sess = jar.find((c) => c.name === 'asit_session')
+    const pref = jar.find((c) => c.name === 'asit_pref')
+    if (!sess || sess.value !== 'signed-in') fail('session cookie missing from the browse partition')
+    if (!sess!.httpOnly) fail('HttpOnly lost in transit')
+    if (sess!.session || !sess!.expirationDate) fail('persistent cookie came back as a session cookie')
+    if (!pref || !pref.session) fail('session cookie came back persistent (or missing)')
+    console.log('[signin-smoke] the borrowed browser’s session landed in persist:asit-browse')
+
+    if (bridge.bridgeActive()) fail('bridge still marked active after finishing')
+    if (existsSync(join(app.getPath('userData'), 'signin-bridge')))
+      fail('borrowed profile left on disk after import')
+    console.log('[signin-smoke] borrowed browser closed and its profile wiped')
+
+    // No marker (any non-Google site): the user's Done click finishes it.
+    await session.fromPartition('persist:asit-browse').clearStorageData({ storages: ['cookies'] })
+    const manual = bridge.signInWithRealBrowser(`${origin}/login`, { headless: true, timeoutMs: 60_000 })
+    await new Promise((r) => setTimeout(r, 3000))
+    if (!bridge.bridgeActive()) fail('bridge finished without a marker or a Done click')
+    const dup = await bridge.signInWithRealBrowser(`${origin}/login`)
+    if (dup.ok || !dup.reason?.includes('already open')) fail('a second concurrent bridge was allowed')
+    bridge.finishBridge()
+    const manualResult = await manual
+    if (!manualResult.ok || manualResult.imported < 2)
+      fail(`Done click did not import: ${JSON.stringify(manualResult)}`)
+    console.log('[signin-smoke] Done imports a marker-less sign-in; one bridge at a time')
+
+    const again = await bridge.signInWithRealBrowser('file:///etc/passwd')
+    if (again.ok || !again.reason?.includes('http')) fail('non-http url accepted')
+    console.log('[signin-smoke] only http(s) pages can be opened')
+
+    server.close()
+    console.log('[signin-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[signin-smoke] FAIL:', err)
     app.exit(1)
   }
 }

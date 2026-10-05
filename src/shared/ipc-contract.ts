@@ -98,6 +98,11 @@ export const IPC = {
   // accounts (shared browser profile logins)
   ACCOUNTS_LIST: 'accounts:list',
   ACCOUNTS_OPEN_LOGIN: 'accounts:open-login',
+  // real-browser sign-in bridge (services/signinbridge.ts) — renderer-only, no agent path
+  ACCOUNTS_BRIDGE_INFO: 'accounts:bridge-info',
+  ACCOUNTS_BRIDGE_SIGNIN: 'accounts:bridge-signin',
+  ACCOUNTS_BRIDGE_FINISH: 'accounts:bridge-finish',
+  ACCOUNTS_BRIDGE_CANCEL: 'accounts:bridge-cancel',
 
   // app events pushed by main (Claude-driven actions, toasts)
   APP_EVENT: 'app:event', // push M→R

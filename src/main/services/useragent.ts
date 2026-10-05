@@ -72,9 +72,9 @@ export function browserUserAgent(): string {
 // reliably clear it — a single apparent pass turned out to be non-
 // deterministic (cookie/IP/rate dependent), blocking on every repeat. This is
 // Google's documented policy against OAuth in embedded browsers, and there is
-// no reliable client-side bypass. ASIT handles it honestly with a real-
-// browser handoff (ScratchBrowser's signin banner); no UA disguise is worth
-// the fragility. Everything else on the partition stays consistent Chromium.
+// no reliable client-side bypass. ASIT handles it by borrowing a real
+// browser for the sign-in and importing the session (signinbridge.ts); no UA
+// disguise is worth the fragility. Everything else on the partition stays consistent Chromium.
 
 /**
  * The Sec-CH-UA brand list. Real Chrome sends a deliberately-shuffled trio

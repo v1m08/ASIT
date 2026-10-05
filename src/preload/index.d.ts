@@ -297,6 +297,14 @@ declare global {
           }[]
         >
         openLogin: (providerId: string) => Promise<void>
+        /** Installed Chromium-family browser the sign-in bridge would borrow, if any. */
+        bridgeInfo: () => Promise<{ browser: string | null; active: boolean }>
+        /** Sign in inside a borrowed real browser; resolves once the session is imported. */
+        bridgeSignIn: (
+          url: string
+        ) => Promise<{ ok: boolean; imported: number; browser?: string; reason?: string }>
+        bridgeFinish: () => Promise<void>
+        bridgeCancel: () => Promise<void>
       }
       session: {
         start: (
