@@ -203,7 +203,16 @@ const api = {
   ui: {
     contextMenu: (
       items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]
-    ) => ipcRenderer.invoke(IPC.UI_CONTEXT_MENU, items)
+    ) => ipcRenderer.invoke(IPC.UI_CONTEXT_MENU, items),
+    /** 'darwin' draws native traffic lights; everything else gets sidebar controls. */
+    platform: process.platform,
+    windowControl: (op: 'minimize' | 'maximize' | 'close') =>
+      ipcRenderer.invoke(IPC.UI_WINDOW_CONTROL, op),
+    onWindowState: (cb: (s: { maximized: boolean; fullscreen: boolean }) => void) => {
+      const h = (_e: unknown, s: { maximized: boolean; fullscreen: boolean }): void => cb(s)
+      ipcRenderer.on(IPC.UI_WINDOW_STATE, h)
+      return () => ipcRenderer.removeListener(IPC.UI_WINDOW_STATE, h)
+    }
   },
   history: {
     search: (q: string, limit?: number) => ipcRenderer.invoke(IPC.HISTORY_SEARCH, q, limit),
@@ -249,7 +258,11 @@ const api = {
   },
   accounts: {
     list: () => ipcRenderer.invoke(IPC.ACCOUNTS_LIST),
-    openLogin: (providerId: string) => ipcRenderer.invoke(IPC.ACCOUNTS_OPEN_LOGIN, providerId)
+    openLogin: (providerId: string) => ipcRenderer.invoke(IPC.ACCOUNTS_OPEN_LOGIN, providerId),
+    bridgeInfo: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_INFO),
+    bridgeSignIn: (url: string) => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_SIGNIN, url),
+    bridgeFinish: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_FINISH),
+    bridgeCancel: () => ipcRenderer.invoke(IPC.ACCOUNTS_BRIDGE_CANCEL)
   },
   session: {
     start: (taskId: string, mode?: 'stopwatch' | 'pomodoro', workMin?: number, breakMin?: number) =>

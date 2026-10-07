@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles/base.css'
+import './styles/arc.css'
 import { useOverlay } from './hooks/useOverlay'
 
 // The crash screen is an overlay like any other, so it claims the panes

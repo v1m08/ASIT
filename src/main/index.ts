@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, session, shell } from 'electron'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, renameSync } from 'fs'
 import { IPC } from '@shared/ipc-contract'
 import { join } from 'path'
@@ -15,6 +15,7 @@ import { timer } from './services/timer'
 import { initQuestions } from './services/questions'
 import { initActions, watchJarvisActions } from './services/actions'
 import { initWorkflows, sweepInterruptedRuns } from './services/workflows'
+import { cancelBridge, sweepBridgeProfile } from './services/signinbridge'
 import { bus } from './services/bus'
 import { initUsage } from './services/usage'
 import { initActivity } from './services/activity'
@@ -100,7 +101,12 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     autoHideMenuBar: true,
-    backgroundColor: '#12141a',
+    backgroundColor: '#15161c',
+    // Arc-style chrome: no OS title bar — the sidebar runs to the top edge.
+    // macOS keeps its traffic lights (inset over the sidebar); Windows and
+    // Linux get min/max/close drawn by the sidebar (WindowControls.tsx).
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -109,6 +115,17 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+  // The sidebar's maximize glyph and the content card's rounding follow this.
+  const pushWindowState = (): void => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    mainWindow.webContents.send(IPC.UI_WINDOW_STATE, {
+      maximized: mainWindow.isMaximized(),
+      fullscreen: mainWindow.isFullScreen()
+    })
+  }
+  for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen'] as const)
+    mainWindow.on(ev as 'maximize', pushWindowState)
+  mainWindow.webContents.on('did-finish-load', pushWindowState)
   paneManager.attach(mainWindow)
   lockdown.attach(mainWindow)
 
@@ -158,6 +175,13 @@ app.whenReady().then(() => {
     ]) {
       rmSync(p, { recursive: true, force: true })
     }
+  }
+
+  // DB-free, so it runs before the DB opens (and on a machine whose native
+  // sqlite build is broken).
+  if (process.env.ASIT_SMOKE_SIGNIN === '1') {
+    runSigninBridgeSmokeTest()
+    return
   }
 
   getDb() // open DB + run migrations before any IPC arrives
@@ -224,6 +248,8 @@ app.whenReady().then(() => {
   // Before any pane loads: the browse partition must present a consistent
   // browser identity or sign-in flows refuse it.
   applyBrowserIdentity('persist:asit-browse')
+  // A crash mid-sign-in must not leave a signed-in borrowed profile on disk.
+  sweepBridgeProfile()
   initBrowserFilters()
   void loadExtensions()
   initScheduler() // time-based agent runs
@@ -316,6 +342,7 @@ app.whenReady().then(() => {
 // recover from. closeDb() checkpoints and closes; it is idempotent, so
 // running here and again below is harmless.
 app.on('before-quit', () => {
+  cancelBridge() // close a borrowed sign-in browser; its profile is wiped
   try {
     closeDb()
   } catch (err) {
@@ -578,6 +605,14 @@ async function runSecuritySmokeTest(): Promise<void> {
       if (!tryStop.startsWith('unknown action')) fail(`session-stop verb exists: ${verb}`)
     }
     console.log('[security-smoke] delete_workspace is Jarvis-only; no session-stop verb exists')
+
+    // The real-browser sign-in bridge moves whole sessions — it must have no
+    // agent door at all (absence, like the vault).
+    for (const verb of ['signin', 'sign_in', 'import_session', 'import_cookies', 'bridge_signin']) {
+      const tryBridge = await actions.executeAction(jarvis.id, { action: verb, url: 'https://accounts.google.com/' })
+      if (!tryBridge.startsWith('unknown action')) fail(`sign-in bridge reachable by an agent: ${verb}`)
+    }
+    console.log('[security-smoke] no action verb reaches the sign-in bridge')
 
     // Private workspace unreachable by Jarvis name resolution.
     const priv = tasksSvc.createTask({ title: 'Secret', aiDisabled: true })
@@ -1492,9 +1527,27 @@ async function runUiSmokeTest(): Promise<void> {
     const settingsSvc = await import('./services/settings')
     settingsSvc.setSettings({ onboarded: true })
 
+    // A local site, not the internet: a UI check must not fail because a
+    // runner (or a sandbox) can't reach example.com. Styled like a real page
+    // so the screenshot shows the shell around something believable.
+    const { createServer } = await import('http')
+    const site = createServer((_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      res.end(`<!doctype html><title>Field Notes — Example</title>
+        <body style="margin:0;font:16px/1.6 Georgia,serif;color:#222;background:#fbfaf7">
+        <main style="max-width:680px;margin:56px auto;padding:0 24px">
+        <p style="font:600 12px system-ui;letter-spacing:.08em;text-transform:uppercase;color:#a0522d">Example</p>
+        <h1 style="font-size:40px;line-height:1.15;margin:.2em 0 .5em">A quiet page to browse</h1>
+        <p>This is a local stand-in for a real website, served by the UI smoke test so the check never depends on the network.</p>
+        <p>Pages render inside the content card, framed by the sidebar and the space's colour.</p>
+        </main></body>`)
+    })
+    await new Promise<void>((r) => site.listen(0, '127.0.0.1', () => r()))
+    const siteUrl = `http://127.0.0.1:${(site.address() as { port: number }).port}/`
+
     const task = tasks.createTask({ title: 'UI Smoke Workspace' })
     const { addUrlResource } = await import('./services/resources')
-    addUrlResource(task.id, 'Example', 'https://example.com')
+    addUrlResource(task.id, 'Example', siteUrl)
 
     // The real UI needs the real backend behind it, or every control fails
     // for a reason that has nothing to do with the control.
@@ -1588,7 +1641,7 @@ async function runUiSmokeTest(): Promise<void> {
     await evalIn(`(() => {
       const el = document.querySelector('.ntp .browser-address')
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
-      setter.call(el, 'https://example.com')
+      setter.call(el, ${JSON.stringify(siteUrl)})
       el.dispatchEvent(new Event('input', { bubbles: true }))
       el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     })()`)
@@ -1602,7 +1655,7 @@ async function runUiSmokeTest(): Promise<void> {
       for (;;) {
         const ok = await evalIn<boolean>(`(async () => {
           const list = await window.asit.bookmarks.list()
-          return list.some((b) => b.url.startsWith('https://example.com'))
+          return list.some((b) => b.url.startsWith(${JSON.stringify(siteUrl)}))
         })()`)
         if (ok) break
         if (Date.now() > deadline) fail('bookmarkPage never stored the page')
@@ -1789,26 +1842,79 @@ async function runUiSmokeTest(): Promise<void> {
     const shotPath = process.env.ASIT_SMOKE_SHOT
     if (shotPath) {
       try {
-        // Two reasons this is not just webContents.capturePage(): that one
-        // sees ONLY the renderer DOM, and every page in the app is a
-        // WebContentsView composited above it (invariant 2), so pages would be
-        // missing. And an offscreen window has nothing composited at all, so
-        // it must be brought on screen for the moment of the capture.
+        // An offscreen window has nothing composited at all, so it is brought
+        // on screen for the moment of the capture (pages are stood in as
+        // images — see shoot()).
         win.setBounds({ x: 40, y: 40, width: 1400, height: 900 })
         win.showInactive()
+        // The find bar was opened by the overlap check above; a picture of
+        // the shell should show it at rest.
+        await evalIn(`(() => {
+          const el = document.querySelector('.find-bar input')
+          el && el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        })()`)
         await new Promise((r) => setTimeout(r, 1200))
         const fs = await import('fs')
-        const shot = await win.capturePage()
-        fs.writeFileSync(shotPath, shot.toPNG())
-        // And the new-tab page, which is also the dashboard — the two views
-        // worth eyeballing after any shell change.
-        await evalIn(`(() => {
-          const t = [...document.querySelectorAll('.tab-strip .tab')]
-            .find((el) => el.textContent.includes('New tab'))
-          t && t.click()
-        })()`)
-        await new Promise((r) => setTimeout(r, 900))
-        fs.writeFileSync(shotPath.replace(/\.png$/, '') + '-ntp.png', (await win.capturePage()).toPNG())
+        // win.capturePage() sees the window's OWN DOM only — every page is a
+        // separate WebContentsView composited on top (invariant 2), so a raw
+        // capture shows an empty card where the page is. Stand each visible
+        // page in as an image at its exact bounds (and radius) for the shot.
+        const shoot = async (file: string): Promise<void> => {
+          await new Promise((r) => setTimeout(r, 900))
+          const zoomNow = ui.getZoomFactor() || 1
+          const stand: { x: number; y: number; w: number; h: number; src: string }[] = []
+          for (const [paneId, b] of paneManager.boundsForSmoke()) {
+            const v = paneManager.viewForSmoke(paneId)
+            if (!v || b.width < 2 || b.height < 2) continue
+            const img = await v.webContents.capturePage()
+            stand.push({
+              x: b.x / zoomNow,
+              y: b.y / zoomNow,
+              w: b.width / zoomNow,
+              h: b.height / zoomNow,
+              src: img.toDataURL()
+            })
+          }
+          await evalIn(`(() => {
+            for (const p of ${JSON.stringify(stand)}) {
+              const i = document.createElement('img')
+              i.className = 'smoke-pane-standin'
+              i.src = p.src
+              Object.assign(i.style, { position: 'fixed', left: p.x + 'px', top: p.y + 'px',
+                width: p.w + 'px', height: p.h + 'px', borderRadius: '10px',
+                zIndex: 99999, pointerEvents: 'none' })
+              document.body.appendChild(i)
+            }
+          })()`)
+          await new Promise((r) => setTimeout(r, 300))
+          const shot = await win.capturePage()
+          await evalIn(`document.querySelectorAll('.smoke-pane-standin').forEach((e) => e.remove())`)
+          fs.writeFileSync(file, shot.toPNG())
+        }
+        const base = shotPath.replace(/\.png$/, '')
+        const clickTab = (label: string): Promise<unknown> =>
+          evalIn(`(() => {
+            const t = [...document.querySelectorAll('.tab-strip .tab')]
+              .find((el) => el.textContent.includes(${JSON.stringify(label)}))
+            t && t.click()
+          })()`)
+        const clickTitle = (title: string): Promise<unknown> =>
+          evalIn(`document.querySelector('button[title=${JSON.stringify(title)}]')?.click()`)
+
+        await shoot(shotPath)
+        // The new-tab page, which is also the dashboard.
+        await clickTab('New tab')
+        await shoot(`${base}-ntp.png`)
+        // Split view: the page on one side, the new-tab page on the other.
+        await evalIn(`window.__asitStore.getState().tabSurface.toggleSplit()`)
+        await clickTab('Field Notes')
+        await shoot(`${base}-split.png`)
+        await evalIn(`window.__asitStore.getState().tabSurface.toggleSplit()`)
+        // Compact: the sidebar hidden, chrome folded into one row.
+        await clickTitle('Hide sidebar')
+        await clickTab('Field Notes')
+        await shoot(`${base}-compact.png`)
+        await clickTitle('Show sidebar')
         win.setBounds({ x: -3000, y: -3000, width: 1400, height: 900 })
         console.log(`[ui-smoke] screenshot written to ${shotPath}`)
       } catch (err) {
@@ -1818,6 +1924,7 @@ async function runUiSmokeTest(): Promise<void> {
     }
 
     tasks.deleteTask(task.id)
+    site.close()
     console.log('[ui-smoke] ALL PASS')
     app.exit(0)
   } catch (err) {
@@ -2068,6 +2175,119 @@ async function runPanesSmokeTest(): Promise<void> {
     app.exit(0)
   } catch (err) {
     console.error('[panes-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
+// Headless sign-in bridge check: ASIT_SMOKE_SIGNIN=1 electron out/main/index.js
+// Network-free: borrows the installed Chromium-family browser (or
+// ASIT_SIGNIN_BROWSER), headless, against a local page that sets cookies the
+// way a sign-in does, and proves the whole round trip — CDP over the pipe,
+// auto-finish on the marker cookie, import into the browse partition with
+// HttpOnly/expiry/host-only intact, and the borrowed profile wiped after.
+// No browser installed → SKIP (the feature degrades to the plain handoff).
+async function runSigninBridgeSmokeTest(): Promise<void> {
+  const fail = (msg: string): never => {
+    console.error('[signin-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+  try {
+    const { existsSync } = await import('fs')
+    const { createServer } = await import('http')
+    const bridge = await import('./services/signinbridge')
+
+    // Pure mapping rules first — these are what keep a Google session valid.
+    const dom = bridge.toElectronCookie({
+      name: 'SAPISID', value: 'v', domain: '.google.com', path: '/', expires: 2e9,
+      httpOnly: false, secure: true, session: false, sameSite: 'None'
+    })
+    if (dom.domain !== '.google.com' || dom.expirationDate !== 2e9 || dom.sameSite !== 'no_restriction')
+      fail(`domain cookie mis-mapped: ${JSON.stringify(dom)}`)
+    const hostOnly = bridge.toElectronCookie({
+      name: '__Host-GAPS', value: 'v', domain: 'accounts.google.com', path: '/', expires: -1,
+      httpOnly: true, secure: true, session: true
+    })
+    if (hostOnly.domain !== undefined || hostOnly.expirationDate !== undefined)
+      fail(`host-only cookie widened or given an expiry: ${JSON.stringify(hostOnly)}`)
+    const marker = (domain: string): import('./services/signinbridge').CdpCookie => ({
+      name: 'SAPISID', value: 'v', domain, path: '/', expires: 2e9,
+      httpOnly: false, secure: true, session: false
+    })
+    if (!bridge.googleSignedIn([marker('.google.com')]))
+      fail('SAPISID on .google.com not recognised as signed in')
+    if (bridge.googleSignedIn([marker('.evil-google.com')]))
+      fail('marker matched a lookalike domain')
+    console.log('[signin-smoke] cookie mapping keeps host-only, domain, expiry and SameSite intact')
+
+    const browser = bridge.findBridgeBrowser()
+    if (!browser) {
+      console.log('[signin-smoke] no Chromium-family browser installed — SKIP live round trip')
+      console.log('[signin-smoke] ALL PASS')
+      app.exit(0)
+      return
+    }
+    console.log(`[signin-smoke] borrowing ${browser.name}: ${browser.path}`)
+
+    const server = createServer((req, res) => {
+      if (req.url?.startsWith('/login')) {
+        res.setHeader('Set-Cookie', [
+          'asit_session=signed-in; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600',
+          'asit_pref=1; Path=/'
+        ])
+      }
+      res.setHeader('Content-Type', 'text/html')
+      res.end('<title>signed in</title><p>ok</p>')
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()))
+    const port = (server.address() as { port: number }).port
+    const origin = `http://127.0.0.1:${port}`
+
+    const result = await bridge.signInWithRealBrowser(`${origin}/login`, {
+      headless: true,
+      timeoutMs: 60_000,
+      doneWhen: (cs) => cs.some((c) => c.name === 'asit_session')
+    })
+    console.log(`[signin-smoke] bridge result: ${JSON.stringify(result)}`)
+    if (!result.ok || result.imported < 2) fail(`round trip did not import: ${JSON.stringify(result)}`)
+    if (result.reason) fail(`finished for the wrong reason: ${result.reason}`)
+
+    const jar = await session.fromPartition('persist:asit-browse').cookies.get({ url: origin })
+    const sess = jar.find((c) => c.name === 'asit_session')
+    const pref = jar.find((c) => c.name === 'asit_pref')
+    if (!sess || sess.value !== 'signed-in') fail('session cookie missing from the browse partition')
+    if (!sess!.httpOnly) fail('HttpOnly lost in transit')
+    if (sess!.session || !sess!.expirationDate) fail('persistent cookie came back as a session cookie')
+    if (!pref || !pref.session) fail('session cookie came back persistent (or missing)')
+    console.log('[signin-smoke] the borrowed browser’s session landed in persist:asit-browse')
+
+    if (bridge.bridgeActive()) fail('bridge still marked active after finishing')
+    if (existsSync(join(app.getPath('userData'), 'signin-bridge')))
+      fail('borrowed profile left on disk after import')
+    console.log('[signin-smoke] borrowed browser closed and its profile wiped')
+
+    // No marker (any non-Google site): the user's Done click finishes it.
+    await session.fromPartition('persist:asit-browse').clearStorageData({ storages: ['cookies'] })
+    const manual = bridge.signInWithRealBrowser(`${origin}/login`, { headless: true, timeoutMs: 60_000 })
+    await new Promise((r) => setTimeout(r, 3000))
+    if (!bridge.bridgeActive()) fail('bridge finished without a marker or a Done click')
+    const dup = await bridge.signInWithRealBrowser(`${origin}/login`)
+    if (dup.ok || !dup.reason?.includes('already open')) fail('a second concurrent bridge was allowed')
+    bridge.finishBridge()
+    const manualResult = await manual
+    if (!manualResult.ok || manualResult.imported < 2)
+      fail(`Done click did not import: ${JSON.stringify(manualResult)}`)
+    console.log('[signin-smoke] Done imports a marker-less sign-in; one bridge at a time')
+
+    const again = await bridge.signInWithRealBrowser('file:///etc/passwd')
+    if (again.ok || !again.reason?.includes('http')) fail('non-http url accepted')
+    console.log('[signin-smoke] only http(s) pages can be opened')
+
+    server.close()
+    console.log('[signin-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[signin-smoke] FAIL:', err)
     app.exit(1)
   }
 }

@@ -42,6 +42,9 @@ export const IPC = {
   UPDATE_CHECK: 'update:check',
   UPDATE_INSTALL: 'update:install',
   UI_CONTEXT_MENU: 'ui:context-menu',
+  // Frameless window: the sidebar draws the controls (Windows/Linux)
+  UI_WINDOW_CONTROL: 'ui:window-control',
+  UI_WINDOW_STATE: 'ui:window-state',
   VAULT_SAVE_PENDING: 'vault:save-pending',   // commit the offered login
   VAULT_DISCARD_PENDING: 'vault:discard-pending',
   VAULT_OFFER_SAVE: 'vault:offer-save',       // push M->R: site + username only
@@ -98,6 +101,11 @@ export const IPC = {
   // accounts (shared browser profile logins)
   ACCOUNTS_LIST: 'accounts:list',
   ACCOUNTS_OPEN_LOGIN: 'accounts:open-login',
+  // real-browser sign-in bridge (services/signinbridge.ts) — renderer-only, no agent path
+  ACCOUNTS_BRIDGE_INFO: 'accounts:bridge-info',
+  ACCOUNTS_BRIDGE_SIGNIN: 'accounts:bridge-signin',
+  ACCOUNTS_BRIDGE_FINISH: 'accounts:bridge-finish',
+  ACCOUNTS_BRIDGE_CANCEL: 'accounts:bridge-cancel',
 
   // app events pushed by main (Claude-driven actions, toasts)
   APP_EVENT: 'app:event', // push M→R

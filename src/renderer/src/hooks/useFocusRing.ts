@@ -299,6 +299,8 @@ export function installFocusRing(): () => void {
       }
       case 'open-palette':
         return store.setPaletteOpen(true)
+      case 'toggle-sidebar':
+        return store.toggleSidebar()
       case 'toggle-chat': {
         const opening = !store.chatOpen
         store.toggleChat()

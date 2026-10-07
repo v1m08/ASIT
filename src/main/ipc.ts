@@ -11,6 +11,7 @@ import { invalidateClaudePathCache, resolveClaudePath } from './services/claude'
 import { timer } from './services/timer'
 import * as questions from './services/questions'
 import * as accounts from './services/accounts'
+import * as signinBridge from './services/signinbridge'
 import * as usage from './services/usage'
 import * as transfer from './services/transfer'
 import * as assistant from './services/assistant'
@@ -207,6 +208,17 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   // A renderer-driven NATIVE context menu. App DOM cannot draw a dropdown
   // over a pane (WebContentsViews paint above everything), so any menu
   // anchored to chrome that sits beside a pane has to be a real OS menu.
+  // Frameless window (Arc-style): the sidebar draws min/max/close on Windows
+  // and Linux; macOS keeps its native traffic lights.
+  handle(IPC.UI_WINDOW_CONTROL, (_e, op: string) => {
+    const win = getWindow()
+    if (!win) return
+    if (op === 'minimize') win.minimize()
+    else if (op === 'maximize') {
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    } else if (op === 'close') win.close()
+  })
   handle(
     IPC.UI_CONTEXT_MENU,
     (_e, items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]) =>
@@ -431,6 +443,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   handle(IPC.ACCOUNTS_OPEN_LOGIN, (_e, providerId: string) =>
     accounts.openLogin(providerId, getWindow())
   )
+  // Real-browser sign-in bridge. Deliberately renderer-only: no action verb,
+  // flow verb or agent service reaches these (vault-style absence).
+  handle(IPC.ACCOUNTS_BRIDGE_INFO, () => {
+    const b = signinBridge.findBridgeBrowser()
+    return { browser: b?.name ?? null, active: signinBridge.bridgeActive() }
+  })
+  handle(IPC.ACCOUNTS_BRIDGE_SIGNIN, (_e, url: string) =>
+    /^https:\/\/accounts\.google\.com\//i.test(url)
+      ? signinBridge.signInToGoogle(url)
+      : signinBridge.signInWithRealBrowser(url)
+  )
+  handle(IPC.ACCOUNTS_BRIDGE_FINISH, () => signinBridge.finishBridge())
+  handle(IPC.ACCOUNTS_BRIDGE_CANCEL, () => signinBridge.cancelBridge())
 
   // --- session / timer / lockdown ---
   handle(

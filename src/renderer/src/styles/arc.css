@@ -1,0 +1,1549 @@
+/* ==========================================================================
+   ASIT × Arc — the shell's design layer (loaded after base.css)
+
+   The principles, borrowed from Arc and Arc Search:
+   1. Chrome in ONE column. Tabs, address and spaces live in the sidebar, so
+      the page gets the full height of the window.
+   2. Content is a CARD. Pages sit in a rounded, softly-shadowed card inset
+      from a coloured frame — the page is the object, the app is the table
+      it rests on. (WebContentsViews round themselves to match:
+      panes.ts PANE_RADIUS = --card-radius.)
+   3. Colour means place. Each space tints the frame and the accent, so you
+      know where you are without reading anything.
+   4. Hierarchy by weight and translucency, not boxes. White at 7% / 13% /
+      18% replaces borders; separators are rare and faint.
+   5. Small, calm type. 13px tabs keep a 30-tab sidebar scannable.
+   6. A 4px grid; 8px gutters; 8–14px radii.
+   7. Quiet until touched. Secondary controls (close ×, page actions, space
+      menu) fade in on hover instead of crowding every row.
+   8. One focal point per screen. The new-tab page is a single search box
+      with room to breathe (Arc Search), the rest stays light.
+   ========================================================================== */
+
+:root {
+  --font-ui:
+    'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter,
+    system-ui, sans-serif;
+  --font-display:
+    'Segoe UI Variable Display', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+    Inter, system-ui, sans-serif;
+  --frame-base: #111217;
+  --card: #18191f;
+  --card-radius: 10px;
+  --gap: 8px;
+  --glass-1: rgba(255, 255, 255, 0.06);
+  --glass-2: rgba(255, 255, 255, 0.1);
+  --glass-3: rgba(255, 255, 255, 0.15);
+  --ink: rgba(255, 255, 255, 0.9);
+  --ink-dim: rgba(255, 255, 255, 0.55);
+  --ink-faint: rgba(255, 255, 255, 0.32);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --space: #8b93a7;
+  --radius: 8px;
+  font-size: 14px;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: var(--frame-base);
+}
+
+/* ---------- The frame ------------------------------------------------------ */
+
+.shell {
+  flex-direction: row;
+  color: var(--ink);
+  /* The space accent drives every focus ring, primary button and active
+     state inside the shell. Modals render outside .shell and keep the
+     neutral accent. */
+  --accent: color-mix(in oklab, var(--space) 82%, white);
+  --accent-dim: color-mix(in oklab, var(--space) 58%, #0b0c10);
+  --bg: var(--card);
+  background:
+    radial-gradient(
+      120% 70% at 0% 0%,
+      color-mix(in oklab, var(--space) 26%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      90% 60% at 100% 100%,
+      color-mix(in oklab, var(--space) 12%, transparent),
+      transparent 70%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--space) 13%, var(--frame-base)),
+      var(--frame-base)
+    );
+  transition: background-color 0.4s var(--ease);
+}
+
+.shell-compact {
+  flex-direction: column;
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--gap) var(--gap) var(--gap) 0;
+}
+
+.shell-compact .shell-main {
+  padding: 0 var(--gap) var(--gap);
+}
+
+.shell-body {
+  gap: 0;
+}
+
+/* The docked assistant panel needs its column reserved or pages paint over
+   it (invariant 2). This used to target .workspace/.home-main, which the
+   one-shell refactor removed — so the reservation silently stopped. */
+body.assistant-open .shell-main {
+  margin-right: 376px;
+}
+
+body.assistant-open:has(.jarvis-panel) .shell-main {
+  margin-right: 456px;
+}
+
+/* ---------- Cards ------------------------------------------------------------ */
+
+.pane-grid {
+  gap: 0;
+  min-width: 320px;
+}
+
+.slot,
+.chat-card {
+  background: var(--card);
+  border-radius: var(--card-radius);
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.055),
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 8px 28px rgba(0, 0, 0, 0.32);
+}
+
+.slot-focused {
+  box-shadow:
+    0 0 0 1.5px color-mix(in oklab, var(--space) 70%, transparent),
+    0 8px 28px rgba(0, 0, 0, 0.32);
+}
+
+.chat-card {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+.chat-card .chat-panel {
+  border-left: none;
+  background: transparent;
+}
+
+/* Dividers are the gutters themselves: invisible until you reach for them. */
+.divider,
+.divider-chat {
+  width: var(--gap);
+  background: transparent;
+  position: relative;
+}
+
+.divider::after {
+  content: '';
+  position: absolute;
+  inset: 30% 3px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.divider:hover::after {
+  background: color-mix(in oklab, var(--space) 70%, transparent);
+}
+
+.divider-horizontal {
+  width: auto;
+  height: var(--gap);
+}
+
+.divider-horizontal::after {
+  inset: 3px 30%;
+}
+
+.slot-collapsed {
+  background: var(--glass-1);
+  box-shadow: none;
+}
+
+/* ---------- Sidebar ---------------------------------------------------------- */
+
+.sidebar {
+  position: relative;
+  width: var(--sidebar-w, 252px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  padding: 8px 8px 8px 10px;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.sb-top {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+
+.sb-top button,
+.sb-top input,
+.sb-url-host,
+.sb-scroll button,
+.sb-foot,
+.sb-resize {
+  -webkit-app-region: no-drag;
+}
+
+.sb-drag {
+  flex: 1;
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+
+.sb-drag-fill {
+  min-height: 28px;
+}
+
+/* macOS draws its traffic lights at (14,14) over this corner. */
+.sb-traffic-space {
+  width: 66px;
+  flex-shrink: 0;
+}
+
+.sb-nav-host,
+.sb-nav {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.sb-icon-btn,
+.sidebar .nav-btn,
+.shell-head .sb-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.sb-icon-btn:hover,
+.sidebar .nav-btn:hover:not(:disabled) {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+.sidebar .nav-btn:disabled {
+  color: var(--ink-faint);
+  opacity: 0.6;
+}
+
+/* Window controls (Windows / Linux): three quiet dots that wake on hover. */
+.win-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 6px 0 4px;
+  -webkit-app-region: no-drag;
+}
+
+.win-ctl {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.win-ctl span {
+  font-size: 10px;
+  line-height: 1;
+  color: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  font-weight: 700;
+}
+
+.win-controls:hover .win-ctl span {
+  opacity: 1;
+}
+
+.win-controls:hover .win-ctl-close {
+  background: #ff5f57;
+}
+
+.win-controls:hover .win-ctl-min {
+  background: #febc2e;
+}
+
+.win-controls:hover .win-ctl-max {
+  background: #28c840;
+}
+
+/* The address pill: just the domain at rest, the full URL when you click. */
+.sb-url-host {
+  position: relative;
+  z-index: 30;
+  flex-shrink: 0;
+}
+
+.pane-toolbar.sb-url {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 4px 0 11px;
+  border: none;
+  border-radius: 10px;
+  background: var(--glass-2);
+  transition:
+    background 0.15s,
+    box-shadow 0.15s;
+}
+
+.pane-toolbar.sb-url:hover {
+  background: var(--glass-3);
+}
+
+.pane-toolbar.sb-url:focus-within {
+  background: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.sb-url-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.sb-url-glyph {
+  width: 16px;
+  text-align: center;
+  color: var(--ink-dim);
+  flex-shrink: 0;
+}
+
+.sb-url .address-box {
+  position: static;
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-url .browser-address {
+  width: 100%;
+  height: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+}
+
+.sb-url .browser-address::placeholder {
+  color: var(--ink-dim);
+  font-weight: 400;
+}
+
+.sb-url .browser-address:focus {
+  font-weight: 400;
+}
+
+/* Suggestions drop over the sidebar only — no page is covered, so pages
+   stay on screen while you type (AddressBar overPanes={false}). */
+.sb-url .address-suggestions {
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in oklab, var(--space) 8%, #1d1e25);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+}
+
+.sb-url .address-suggestion {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border-radius: 8px;
+}
+
+.sb-url-actions {
+  display: flex;
+  align-items: center;
+}
+
+.sb-url-actions > * {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.sb-url:hover .sb-url-actions > *,
+.sb-url:focus-within .sb-url-actions > *,
+.sb-url-actions > .bookmark-star-on,
+.sb-url-actions > .pane-zoom-label {
+  opacity: 1;
+}
+
+.sb-url .nav-btn {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  font-size: 13px;
+}
+
+/* A page loading draws a thin space-coloured line under the pill. */
+.sb-url-loading::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: sb-loading 1.1s var(--ease) infinite;
+}
+
+@keyframes sb-loading {
+  from {
+    background-position: -50% 0;
+  }
+  to {
+    background-position: 150% 0;
+  }
+}
+
+.sb-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 -4px;
+  padding: 4px 4px 0;
+}
+
+.sb-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+/* Favorites: big favicon tiles, Arc's top grid. */
+.sb-favorites {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.sb-fav {
+  height: 42px;
+  border: none;
+  border-radius: 10px;
+  background: var(--glass-1);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    transform 0.15s var(--ease);
+}
+
+.sb-fav:hover {
+  background: var(--glass-2);
+}
+
+.sb-fav:active {
+  transform: scale(0.96);
+}
+
+.sb-fav img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.sb-fav-letter {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-dim);
+}
+
+/* The space's name, above its pinned items and tabs. */
+.space-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px 4px 8px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.space-head-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--space);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--space) 25%, transparent);
+  flex-shrink: 0;
+}
+
+.space-head-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-head-menu {
+  opacity: 0;
+  height: 22px;
+  min-width: 26px;
+  letter-spacing: 0.1em;
+}
+
+.space-head:hover .space-head-menu {
+  opacity: 1;
+}
+
+/* Pinned (the space's resources) — rows that read exactly like tabs. */
+.rail-embedded {
+  width: auto;
+  border: none;
+  background: transparent;
+  overflow: visible;
+  flex-shrink: 0;
+}
+
+.rail-embedded .rail-section {
+  padding: 0;
+}
+
+.rail-header-btn {
+  justify-content: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  padding: 6px 8px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.rail-header-btn:hover {
+  color: var(--ink-dim);
+}
+
+.rail-caret {
+  width: 10px;
+  font-size: 9px;
+}
+
+.rail-count {
+  margin-left: auto;
+  font-weight: 500;
+}
+
+.rail-embedded .rail-item {
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border-radius: 8px;
+  gap: 9px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rail-embedded .rail-item:hover {
+  background: var(--glass-1);
+}
+
+.rail-embedded .rail-icon {
+  width: 16px;
+  text-align: center;
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+
+.rail-embedded .rail-actions {
+  display: flex;
+  gap: 4px;
+  padding: 4px 4px 2px;
+  border: none;
+}
+
+.rail-embedded .rail-add {
+  flex: 1;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: var(--ink-dim);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.rail-embedded .rail-add:hover {
+  border-style: solid;
+  background: var(--glass-1);
+  color: var(--ink);
+}
+
+.rail-embedded .rail-form input {
+  background: var(--glass-1);
+  border-color: transparent;
+  font-size: 13px;
+}
+
+.rail-embedded .library-popover {
+  left: 0;
+  right: 0;
+}
+
+/* Tabs: the sidebar list. */
+.sb-tabs-host {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  flex-shrink: 0;
+}
+
+.sb-tab-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tab-strip-vertical {
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.tab-strip-vertical .tab {
+  height: 32px;
+  max-width: none;
+  padding: 0 4px 0 10px;
+  gap: 9px;
+  border: none;
+  border-radius: 8px;
+  color: var(--ink);
+  transition:
+    background 0.12s,
+    box-shadow 0.12s;
+}
+
+.tab-strip-vertical .tab:hover {
+  background: var(--glass-1);
+}
+
+.tab-strip-vertical .tab-active {
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.25),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.12);
+}
+
+.tab-strip-unfocused .tab-active {
+  background: var(--glass-1);
+  box-shadow: none;
+}
+
+.tab-strip-vertical .tab .tab-title {
+  flex: 1;
+  max-width: none;
+  font-size: 13px;
+}
+
+.tab-strip-vertical .tab-active .tab-title {
+  font-weight: 550;
+}
+
+.tab-strip-vertical .tab-icon {
+  width: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--ink-dim);
+  font-size: 12px;
+}
+
+.tab-strip-vertical .tab-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+}
+
+.tab-strip-vertical .tab-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  padding: 0;
+  opacity: 0;
+  color: var(--ink-dim);
+  transition: opacity 0.12s;
+}
+
+.tab-strip-vertical .tab:hover .tab-btn,
+.tab-strip-vertical .tab-active .tab-btn {
+  opacity: 1;
+}
+
+.tab-strip-vertical .tab .tab-btn:hover {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+.tab-strip-vertical .tab-new-row {
+  opacity: 1;
+  width: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  align-self: stretch;
+}
+
+.tab-strip-vertical .tab-new-row:hover {
+  background: var(--glass-1);
+  color: var(--ink);
+}
+
+.tab-new-plus {
+  width: 16px;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.tab-strip-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 2px 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+
+.tab-strip-heading-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tab-strip-focus-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tab-strip-heading .slot-strip-actions {
+  margin: 0;
+}
+
+.tab-strip-heading .tab-btn {
+  opacity: 1;
+  width: 22px;
+  height: 22px;
+}
+
+.tab-strip-vertical .tab-drop-hint {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+}
+
+/* Foot: status, actions, space switcher. */
+.sb-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sb-foot .timer-bar {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: var(--glass-1);
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.sb-status {
+  position: relative;
+}
+
+.sidebar .status-cluster {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+.sidebar .status-notice,
+.sidebar .status-job,
+.sidebar .status-activity,
+.sidebar .status-load-error {
+  max-width: 100%;
+}
+
+/* Popovers open UPWARD from the foot (they still hide pages via useOverlay). */
+.sidebar .downloads-popover {
+  top: auto;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: auto;
+  width: 320px;
+}
+
+.sb-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sb-actions .sb-pill {
+  flex: 1;
+  justify-content: center;
+}
+
+.sb-spaces {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sb-spaces .group-bar {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Launchers that live in the status cluster, restyled for the sidebar. */
+.sidebar .assistant-launcher,
+.sidebar .shortcuts-hint {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--glass-1);
+  color: var(--ink-dim);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  width: auto;
+  display: inline-grid;
+  place-items: center;
+  opacity: 1;
+  transform: none;
+}
+
+.sidebar .shortcuts-hint {
+  padding: 0 8px;
+}
+
+.sidebar .assistant-launcher:hover,
+.sidebar .shortcuts-hint:hover,
+.sidebar .assistant-launcher.active {
+  background: var(--glass-2);
+  color: var(--ink);
+}
+
+.sb-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 9px;
+  background: var(--glass-1);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    transform 0.15s var(--ease);
+}
+
+.sb-pill:hover {
+  background: var(--glass-2);
+}
+
+.sb-pill:active {
+  transform: scale(0.97);
+}
+
+.sb-pill.chat-toggle-on {
+  background: color-mix(in oklab, var(--space) 40%, transparent);
+  color: #fff;
+}
+
+.rail-toggle-on {
+  color: var(--ink);
+}
+
+/* Space switcher. */
+.sidebar .group-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 0 0;
+  overflow-x: auto;
+  border: none;
+  background: transparent;
+}
+
+.group-chip {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.group-chip:hover {
+  background: var(--glass-1);
+}
+
+.group-chip .group-dot {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--group-color);
+  background: color-mix(in oklab, var(--group-color) 22%, transparent);
+  transition:
+    transform 0.2s var(--ease),
+    background 0.2s;
+}
+
+.group-chip-on .group-dot {
+  color: #101115;
+  background: var(--group-color);
+  transform: scale(1.08);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--group-color) 35%, transparent);
+}
+
+.group-chip .group-name {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.group-chip .private-lock {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  font-size: 9px;
+  line-height: 1;
+  padding: 1px;
+  border-radius: 4px;
+  background: var(--frame-base);
+}
+
+.group-add {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.group-add:hover {
+  background: var(--glass-1);
+  color: var(--ink);
+}
+
+.sb-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -5px;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+/* ---------- Compact mode (sidebar hidden) ------------------------------------ */
+
+.shell-compact .shell-head {
+  height: 40px;
+  padding: 0 var(--gap);
+  border: none;
+  background: transparent;
+  -webkit-app-region: drag;
+}
+
+.shell-compact .shell-head button,
+.shell-compact .shell-head input,
+.shell-compact .shell-head .status-cluster {
+  -webkit-app-region: no-drag;
+}
+
+.shell-compact .group-bar {
+  display: flex;
+  gap: 2px;
+}
+
+.shell-compact .group-chip-on {
+  width: auto;
+  padding: 0 10px 0 4px;
+  border-radius: 999px;
+  background: var(--glass-1);
+  gap: 6px;
+  grid-auto-flow: column;
+}
+
+.shell-compact .group-chip-on .group-name {
+  position: static;
+  width: auto;
+  height: auto;
+  clip: auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.shell-compact .tab-strip {
+  background: transparent;
+  padding: 6px 6px 0;
+}
+
+.shell-compact .tab {
+  border-radius: 8px 8px 0 0;
+}
+
+.shell-compact .tab-active {
+  background: var(--glass-2);
+  border-color: transparent;
+}
+
+.shell-compact .pane-toolbar {
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.shell-compact .resource-rail {
+  margin-right: var(--gap);
+  border: none;
+  border-radius: var(--card-radius);
+  background: var(--glass-1);
+}
+
+/* ---------- Banners inside the chrome --------------------------------------- */
+
+.sidebar .signin-handoff {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--space) 22%, rgba(255, 255, 255, 0.05));
+  font-size: 12px;
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+
+.sidebar .signin-handoff .btn {
+  white-space: normal;
+}
+
+.shell-compact .signin-handoff {
+  border-radius: var(--card-radius);
+  border: none;
+}
+
+/* ---------- Controls, everywhere ------------------------------------------- */
+
+.btn {
+  border-radius: 8px;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s,
+    transform 0.12s var(--ease);
+}
+
+.btn:active {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  color: #fff;
+}
+
+input,
+textarea,
+select {
+  border-radius: 8px;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+.sb-url .browser-address:focus,
+.ntp .browser-address:focus {
+  box-shadow: none;
+}
+
+/* ---------- Command bar (Ctrl+P) — Arc's centred, glassy box --------------- */
+
+.palette {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(28, 29, 36, 0.86);
+  backdrop-filter: blur(40px) saturate(160%);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.55),
+    0 0 0 0.5px rgba(255, 255, 255, 0.06) inset;
+  overflow: hidden;
+  animation: arc-pop 0.16s var(--ease);
+}
+
+.palette-input {
+  font-size: 17px;
+  padding: 16px 18px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 0;
+  background: transparent;
+}
+
+.palette-input:focus {
+  box-shadow: none;
+}
+
+.palette-row {
+  border-radius: 8px;
+}
+
+.modal-backdrop {
+  background: rgba(8, 9, 12, 0.45);
+  backdrop-filter: blur(3px);
+}
+
+.modal {
+  border-radius: 14px;
+  animation: arc-pop 0.16s var(--ease);
+}
+
+@keyframes arc-pop {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------- New-tab page — Arc Search's single focal point ----------------- */
+
+.shell .ntp {
+  background:
+    radial-gradient(
+      70% 45% at 50% 0%,
+      color-mix(in oklab, var(--space) 16%, transparent),
+      transparent 70%
+    ),
+    var(--card);
+}
+
+.shell .ntp-inner {
+  width: min(880px, 90%);
+  margin-top: clamp(28px, 13vh, 140px);
+  gap: 34px;
+}
+
+.ntp-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.ntp-greeting {
+  font-family: var(--font-display);
+  font-size: clamp(28px, 4.2vw, 40px);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.ntp-search {
+  position: relative;
+  width: min(680px, 100%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 58px;
+  padding: 0 8px 0 20px;
+  border-radius: 29px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 10px 36px rgba(0, 0, 0, 0.3);
+  transition:
+    box-shadow 0.2s var(--ease),
+    background 0.2s;
+}
+
+.ntp-search:focus-within {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 0 0 1.5px color-mix(in oklab, var(--accent) 70%, transparent),
+    0 0 0 6px color-mix(in oklab, var(--accent) 14%, transparent),
+    0 14px 44px rgba(0, 0, 0, 0.35);
+}
+
+.ntp-search-icon {
+  font-size: 18px;
+  color: var(--ink-dim);
+}
+
+.ntp-search .address-box {
+  position: static;
+}
+
+.shell .ntp-address .browser-address {
+  height: 56px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 17px;
+  color: var(--ink);
+}
+
+.ntp-address .browser-address::placeholder {
+  color: var(--ink-faint);
+}
+
+.ntp-search .address-suggestions {
+  left: 0;
+  right: 0;
+  top: calc(100% + 8px);
+  padding: 6px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in oklab, var(--space) 6%, #1d1e25);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.ntp-search .address-suggestion {
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13.5px;
+}
+
+.ntp-browse {
+  flex-shrink: 0;
+  height: 42px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 21px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--space) 75%, #fff 10%),
+    color-mix(in oklab, var(--space) 55%, #6d5dfc)
+  );
+  color: #fff;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  cursor: pointer;
+  box-shadow: 0 4px 16px color-mix(in oklab, var(--space) 35%, transparent);
+  transition:
+    transform 0.15s var(--ease),
+    opacity 0.15s,
+    filter 0.15s;
+}
+
+.ntp-browse:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.ntp-browse:disabled {
+  opacity: 0.35;
+  cursor: default;
+  box-shadow: none;
+}
+
+.ntp-search-hint {
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.ntp-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 6px;
+  margin-top: 12px;
+  max-width: 680px;
+}
+
+.ntp-tile {
+  width: 82px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 4px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.ntp-tile:hover {
+  background: var(--glass-1);
+  color: var(--ink);
+}
+
+.ntp-tile-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--glass-2);
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--ink);
+  transition: transform 0.2s var(--ease);
+}
+
+.ntp-tile:hover .ntp-tile-icon {
+  transform: scale(1.06);
+}
+
+.ntp-tile-icon img {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
+
+.ntp-tile-label {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+/* Below the fold: soft cards, sentence-case labels. */
+.shell .ntp-label {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  color: var(--ink-dim);
+}
+
+.shell .ntp-columns {
+  gap: 14px;
+}
+
+.shell .ntp-todos,
+.shell .ntp-side > .ntp-section {
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: var(--glass-1);
+}
+
+.shell .ntp-side {
+  gap: 14px;
+}
+
+.shell .ntp-group {
+  border: none;
+  border-radius: 12px;
+  background: var(--glass-1);
+  padding: 12px 14px;
+}
+
+.shell .ntp-group:hover {
+  background: var(--glass-2);
+}
+
+.shell .ntp-group .group-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--group-color);
+}
+
+.shell .ntp-stats {
+  border-top: none;
+  justify-content: center;
+  color: var(--ink-faint);
+}
+
+/* The new-tab page lives in a CARD, which in a split can be a third of the
+   window — so it responds to its own width, not the viewport's. */
+.shell .ntp {
+  container-type: inline-size;
+}
+
+@container (max-width: 620px) {
+  .shell .ntp-inner {
+    width: calc(100% - 40px);
+    margin-top: 48px;
+    gap: 24px;
+  }
+
+  .shell .ntp-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ntp-search {
+    height: 50px;
+    padding: 0 6px 0 16px;
+  }
+
+  .shell .ntp-address .browser-address {
+    height: 48px;
+    font-size: 15px;
+  }
+
+  .ntp-browse {
+    height: 38px;
+    width: 38px;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .ntp-browse::before {
+    content: '✦';
+    font-size: 15px;
+  }
+
+  .ntp-search-hint {
+    text-align: center;
+  }
+}
+
+.ntp-label-row {
+  gap: 10px;
+}
+
+.ntp-label-row .ntp-manage {
+  white-space: nowrap;
+}
+
+/* Status chips were sized for a wide header row; in the sidebar they wrap. */
+.sidebar .save-password {
+  width: 100%;
+  flex-wrap: wrap;
+  white-space: normal;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.sidebar .update-pill,
+.sidebar .dictating-pill,
+.sidebar .status-cluster > * {
+  max-width: 100%;
+}

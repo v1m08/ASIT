@@ -104,6 +104,15 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
   { id: 'focus-address', accel: 'CommandOrControl+L', key: 'l', ctrl: true, label: 'Address bar' },
   { id: 'toggle-chat', accel: 'CommandOrControl+B', key: 'b', ctrl: true, label: 'Show / hide chat' },
+  // Arc's is Cmd+S; plain Ctrl+S belongs to pages (Overleaf recompiles on it).
+  {
+    id: 'toggle-sidebar',
+    accel: 'CommandOrControl+Shift+S',
+    key: 's',
+    ctrl: true,
+    shift: true,
+    label: 'Show / hide sidebar'
+  },
   {
     id: 'toggle-notes',
     accel: 'CommandOrControl+Shift+E',
@@ -259,6 +268,7 @@ export const SHORTCUT_GROUPS: { title: string; ids: string[] }[] = [
       'toggle-split',
       'toggle-direction',
       'toggle-chat',
+      'toggle-sidebar',
       'toggle-notes',
       'focus-todo',
       'toggle-focus'

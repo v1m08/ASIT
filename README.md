@@ -41,7 +41,7 @@ one is waiting. Nothing is ever installed underneath you mid-task.
 3. **Make your first workspace.** Browse to a course page or open a PDF, then hit **💾 Save session** — or click **+ New workspace** in the sidebar. That folder is now the AI's context; you never paste or explain anything.
 4. **Try the AI.** Open a PDF in the workspace, press **`Ctrl+K`**, and ask a question about it. Or press **`Ctrl+Space`** and just *talk* to it.
 
-> **Google sign-in note:** Google blocks sign-in inside *any* embedded browser (it's their anti-webview policy, not an ASIT limitation), so when you hit a Google login ASIT offers to open it in your real browser. Sites that use "Sign in with Google" are affected the same way; email/password logins and everything else sign in normally and stay signed in forever.
+> **Google sign-in:** Google blocks its sign-in page inside *any* embedded browser (an anti-webview policy, not an ASIT bug). Arc and Brave never hit that wall because they are real Chromium browsers, so ASIT borrows one: click **Sign in with Chrome** (or Edge, Brave, Arc, Vivaldi) on the wall or in Connected accounts. Your installed browser opens on a throwaway profile, you sign in there, and ASIT imports the session into its own browser profile, then closes that window and deletes the profile. From then on every tab in every group is signed in to Gmail, Docs, Drive and "Sign in with Google" sites. If no Chromium-family browser is installed, ASIT falls back to opening the page in your default browser.
 
 That's the whole loop: **gather → focus → study → ask.** Everything below is detail you can pick up as you go.
 

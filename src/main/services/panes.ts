@@ -25,6 +25,8 @@ import { searchUrlFor } from './search'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
+/** Matches --card-radius in the renderer's arc.css. */
+const PANE_RADIUS = 10
 const BROWSE_PARTITION = 'persist:asit-browse'
 
 export interface PaneTarget {
@@ -243,6 +245,10 @@ class PaneManager {
         preload: join(__dirname, '../preload/pane.js')
       }
     })
+    // Pages sit inside the shell's rounded content card (Arc-style). The
+    // view is composited above the DOM, so the card's CSS radius can't clip
+    // it — the view has to round its own corners to match (--card-radius).
+    view.setBorderRadius(PANE_RADIUS)
 
     // Allow web popups (Google OAuth login flows need them); they share the
     // persistent session so completed logins land back in the pane. Anything

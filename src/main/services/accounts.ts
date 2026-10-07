@@ -1,5 +1,6 @@
 import { BrowserWindow, session } from 'electron'
 import { join } from 'path'
+import { findBridgeBrowser, signInToGoogle } from './signinbridge'
 
 // Login helper for the shared embedded-browser profile. Signing in here means
 // every workspace pane (Overleaf, Docs, Canvas, ...) is already authenticated.
@@ -111,6 +112,11 @@ export async function accountStatuses(): Promise<AccountStatus[]> {
 export function openLogin(providerId: string, parent: BrowserWindow | null): Promise<void> {
   const provider = PROVIDERS.find((p) => p.id === providerId)
   if (!provider) return Promise.resolve()
+  // Google refuses its sign-in ceremony in any embedded window, so borrow the
+  // user's real browser when one is installed (services/signinbridge.ts) and
+  // import the session. Without one, the embedded window is the only try left.
+  if (provider.id === 'google' && findBridgeBrowser())
+    return signInToGoogle(provider.loginUrl).then(() => undefined)
   return new Promise((resolve) => {
     const win = new BrowserWindow({
       width: 980,

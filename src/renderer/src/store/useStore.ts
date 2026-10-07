@@ -130,14 +130,22 @@ interface AsitState {
   openUrlInWorkspace: (url: string) => void
   chatOpen: boolean
   toggleChat: () => void
+  /** Arc's sidebar (tabs, address, spaces). Hidden = the compact layout. */
+  sidebarOpen: boolean
+  toggleSidebar: () => void
   // A prompt handed to the group's agent from elsewhere in the app — "automate
   // this page" is the first caller. It is DRAFTED into the box, never sent:
   // an agent turn the user did not type is exactly what the send guardrails
   // (invariant 14) exist to prevent, and a one-click action that silently
   // starts talking to people would be the same mistake.
-  chatSeed: { text: string; at: number } | null
-  seedChat: (text: string) => void
-  consumeChatSeed: () => string | null
+  //
+  // One exception, `send: true`: the text IS the user's own words, typed and
+  // submitted by them a moment ago (the new-tab page's "Browse for me"). That
+  // is a live user message by every definition the guardrails use, so it is
+  // sent as one — never use it for text the app composed on its own.
+  chatSeed: { text: string; at: number; send?: boolean } | null
+  seedChat: (text: string, opts?: { send?: boolean }) => void
+  consumeChatSeed: () => { text: string; send: boolean } | null
 
   loadTasks: () => Promise<void>
   loadSettings: () => Promise<void>
@@ -247,12 +255,29 @@ export const useStore = create<AsitState>((set, get) => ({
   },
   chatOpen: true,
   toggleChat: () => set((st) => ({ chatOpen: !st.chatOpen })),
+  sidebarOpen: (() => {
+    try {
+      return localStorage.getItem('asit-sidebar-open') !== '0'
+    } catch {
+      return true
+    }
+  })(),
+  toggleSidebar: () =>
+    set((st) => {
+      try {
+        localStorage.setItem('asit-sidebar-open', st.sidebarOpen ? '0' : '1')
+      } catch {
+        // storage unavailable: the toggle still works for this session
+      }
+      return { sidebarOpen: !st.sidebarOpen }
+    }),
   chatSeed: null,
-  seedChat: (text) => set({ chatSeed: { text, at: Date.now() }, chatOpen: true }),
+  seedChat: (text, opts) =>
+    set({ chatSeed: { text, at: Date.now(), send: !!opts?.send }, chatOpen: true }),
   consumeChatSeed: () => {
     const seed = get().chatSeed
     if (seed) set({ chatSeed: null })
-    return seed?.text ?? null
+    return seed ? { text: seed.text, send: !!seed.send } : null
   },
   loadError: null,
   retryLoad: async () => {
