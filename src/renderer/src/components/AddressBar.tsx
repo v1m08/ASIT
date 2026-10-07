@@ -71,6 +71,12 @@ export default function AddressBar({
   const [highlight, setHighlight] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
+  // The deferred close a blur schedules (see onBlur). Held so a focus that
+  // comes straight back can cancel it.
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current)
+  }, [])
 
   // The dropdown hangs down over the page area, and WebContentsViews paint
   // above ALL renderer DOM (invariant 2) — without this the suggestions were
@@ -146,6 +152,15 @@ export default function AddressBar({
           onDraftChange?.(e.target.value)
         }}
         onFocus={(e) => {
+          // Focus came back before the blur's close ran (a window activation
+          // bouncing focus out and in, a suggestion click): the editing
+          // session never ended. Without this the stale close fired AFTER the
+          // refocus and threw away whatever had been typed since.
+          if (closeTimer.current) {
+            clearTimeout(closeTimer.current)
+            closeTimer.current = null
+            if (draft !== null) return
+          }
           // The real address, not the idle label — then select it all once
           // React has swapped it in.
           setDraft(url ?? e.target.value)
@@ -155,7 +170,11 @@ export default function AddressBar({
         onBlur={() => {
           // Deferred: a click on a suggestion blurs the input first, and
           // closing immediately would unmount the row before it registers.
-          setTimeout(close, 120)
+          if (closeTimer.current) clearTimeout(closeTimer.current)
+          closeTimer.current = setTimeout(() => {
+            closeTimer.current = null
+            close()
+          }, 120)
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && e.shiftKey && onAltSubmit) {
