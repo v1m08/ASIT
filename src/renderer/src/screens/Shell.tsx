@@ -1,16 +1,43 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
-import PaneGrid, { BUILTIN_NOTES, type PaneGridApi } from '../components/PaneGrid'
+import PaneGrid, {
+  BUILTIN_NOTES,
+  type PaneGridApi,
+  type SidebarHosts
+} from '../components/PaneGrid'
 import ResourceRail from '../components/ResourceRail'
 import ChatPanel from '../components/ChatPanel'
 import TimerBar, { useTimerState } from '../components/TimerBar'
 import BreakReview from '../components/BreakReview'
 import StatusCluster from '../components/StatusCluster'
-import GroupBar from '../browser/GroupBar'
+import GroupBar, { BROWSE_COLOR, SpaceHeader, groupColor } from '../browser/GroupBar'
 import SigninHandoff from '../browser/SigninHandoff'
+import Favorites from '../browser/Favorites'
+import WindowControls from '../browser/WindowControls'
 
-// THE shell. One screen, always a browser.
+// THE shell. One screen, always a browser — laid out the way Arc is.
+//
+//   ┌ sidebar ──────────┐┌ content card ─────────────────┐┌ agent card ┐
+//   │ ● ● ●     ◧ ← → ⟳ ││                                ││            │
+//   │ [ domain.com    ★]││   the page (rounded view)      ││            │
+//   │ ▢ ▢ ▢ ▢ favorites ││                                ││            │
+//   │ Space name    ··· ││                                ││            │
+//   │ ▾ Pinned          ││                                ││            │
+//   │ + New Tab         ││                                ││            │
+//   │   tabs…           ││                                ││            │
+//   │ status · ✦ Agent  ││                                ││            │
+//   │ (A) (B) (C)  +    ││                                ││            │
+//   └───────────────────┘└────────────────────────────────┘└────────────┘
+//
+// The chrome lives in ONE column so the page gets the whole height, and the
+// space's colour tints the frame so you always know where you are. The tab
+// list and address bar are still PaneGrid's (the one tab surface) — it portals
+// them into the sidebar hosts below. Hiding the sidebar (◧) falls back to the
+// compact layout: a strip and toolbar inside each card.
+//
+// Invariant 2 still rules: everything here is DOM BESIDE the pages, never
+// over them. The sidebar and the agent card reserve real layout space.
 //
 // This replaced a home/workspace split in which the two halves of the app had
 // separate tab systems, separate chrome and separate shortcuts — so switching
@@ -35,12 +62,28 @@ export default function Shell(): JSX.Element {
   const [railOpen, setRailOpen] = useState(
     () => localStorage.getItem('asit-rail-open') !== '0'
   )
+  const sidebarOpen = useStore((s) => s.sidebarOpen)
+  const toggleSidebar = useStore((s) => s.toggleSidebar)
+  const clampSidebar = (w: number): number => Math.max(208, Math.min(380, w))
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    clampSidebar(Number(localStorage.getItem('asit-sidebar-width')) || 252)
+  )
+  // Portal targets for PaneGrid's tab list / nav / address bar. Callback refs
+  // into state, so the grid re-renders into them once they exist.
+  const [tabsHost, setTabsHost] = useState<HTMLElement | null>(null)
+  const [navHost, setNavHost] = useState<HTMLElement | null>(null)
+  const [urlHost, setUrlHost] = useState<HTMLElement | null>(null)
+  const hosts: SidebarHosts | undefined = sidebarOpen
+    ? { tabs: tabsHost, nav: navHost, url: urlHost }
+    : undefined
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => window.asit.ui.onWindowState((st) => setMaximized(st.maximized || st.fullscreen)), [])
   const setChatOpen = (v: boolean | ((p: boolean) => boolean)): void =>
     useStore.setState((st) => ({ chatOpen: typeof v === 'function' ? v(st.chatOpen) : v }))
   // Chat can never starve the pane area: cap at what the window affords,
   // re-clamped on every window resize.
   const clampChatWidth = (w: number): number =>
-    Math.max(280, Math.min(560, window.innerWidth - 620, w))
+    Math.max(280, Math.min(560, window.innerWidth - 700, w))
   const [chatWidth, setChatWidth] = useState(() =>
     clampChatWidth(Number(localStorage.getItem('asit-chat-width')) || 360)
   )
@@ -54,6 +97,27 @@ export default function Shell(): JSX.Element {
   useEffect(() => {
     localStorage.setItem('asit-rail-open', railOpen ? '1' : '0')
   }, [railOpen])
+
+  // Shared by both dividers: pages swallow pointer events, so they hide for
+  // the duration of a drag (same rule as any overlay, invariant 2).
+  const dragResize = (
+    e: React.PointerEvent,
+    onMove: (ev: PointerEvent) => void,
+    onDone: () => void
+  ): void => {
+    e.preventDefault()
+    window.asit.panes.setVisible(null, false)
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.asit.panes.setVisible(null, true)
+      onDone()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
 
   const refreshResources = useCallback(async (): Promise<void> => {
     if (!task) return
@@ -111,95 +175,185 @@ export default function Shell(): JSX.Element {
   if (!task) return <div className="shell shell-booting" />
 
   const isScratch = task.id === scratchId
+  const platform = window.asit.ui.platform
+
+  const grid = (
+    <PaneGrid
+      key={task.id}
+      task={task}
+      resources={resources}
+      sidebar={hosts}
+      onApi={(api) => {
+        gridApi.current = api
+        ;(window as unknown as { __asitGrid?: unknown }).__asitGrid = api
+        useStore.getState().setUrlOpener((url) => api.openUrl(url))
+      }}
+      onPin={async (title, url) => {
+        await window.asit.resources.addUrl(task.id, title.slice(0, 60), url)
+        await refreshResources()
+      }}
+      onAttachLibrary={async (name) => {
+        const r = await window.asit.library.attach(task.id, name)
+        if (r) await refreshResources()
+        return r
+      }}
+      onResourcesChanged={refreshResources}
+    />
+  )
+
+  const agentToggle = !task.aiDisabled && (
+    <button
+      className={`sb-pill chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
+      title="Agent for this space (Ctrl+\\)"
+      onClick={() => setChatOpen((v) => !v)}
+    >
+      ✦ Agent
+    </button>
+  )
 
   return (
-    <div className="shell">
-      <header className="shell-head">
-        <GroupBar />
-        <div className="shell-head-right">
-          {studyEnabled && !isScratch && <TimerBar task={task} />}
-          <StatusCluster />
-          <button
-            className={`btn btn-ghost rail-toggle ${railOpen ? 'rail-toggle-on' : ''}`}
-            title="Show this group's files and pins"
-            onClick={() => setRailOpen((v) => !v)}
-          >
-            ☰
-          </button>
-          {!task.aiDisabled && <AutomateButton />}
-          {!task.aiDisabled && (
+    <div
+      className={`shell platform-${platform} ${sidebarOpen ? '' : 'shell-compact'} ${maximized ? 'shell-maximized' : ''}`}
+      style={{
+        ['--space' as string]: isScratch ? BROWSE_COLOR : groupColor(task.id),
+        ['--sidebar-w' as string]: `${sidebarWidth}px`
+      }}
+    >
+      {sidebarOpen ? (
+        <aside className="sidebar" data-focus-zone="Sidebar">
+          <div className="sb-top">
+            {platform === 'darwin' ? (
+              <span className="sb-traffic-space" />
+            ) : (
+              <WindowControls maximized={maximized} />
+            )}
+            <span className="sb-drag" />
             <button
-              className={`btn btn-ghost chat-toggle ${chatOpen ? 'chat-toggle-on' : ''}`}
-              title="Agent for this group (Ctrl+\\)"
-              onClick={() => setChatOpen((v) => !v)}
+              className="sb-icon-btn"
+              title="Hide sidebar"
+              aria-label="Hide sidebar (Ctrl+Shift+S)"
+              onClick={toggleSidebar}
             >
-              ▭ Agent
+              ◧
             </button>
-          )}
-        </div>
-      </header>
-      <SigninHandoff />
-      <div className="shell-body">
-        {railOpen && (
-          <ResourceRail
-            task={task}
-            resources={resources}
-            onOpen={(id) => gridApi.current?.openResource(id)}
-            onSearch={(q) => gridApi.current?.openSearch(q)}
-            onResourcesChanged={refreshResources}
-          />
-        )}
-        <PaneGrid
-          key={task.id}
-          task={task}
-          resources={resources}
-          onApi={(api) => {
-            gridApi.current = api
-            ;(window as unknown as { __asitGrid?: unknown }).__asitGrid = api
-            useStore.getState().setUrlOpener((url) => api.openUrl(url))
-          }}
-          onPin={async (title, url) => {
-            await window.asit.resources.addUrl(task.id, title.slice(0, 60), url)
-            await refreshResources()
-          }}
-          onAttachLibrary={async (name) => {
-            const r = await window.asit.library.attach(task.id, name)
-            if (r) await refreshResources()
-            return r
-          }}
-          onResourcesChanged={refreshResources}
-        />
-        {chatOpen && !task.aiDisabled && (
-          <>
-            <div
-              className="divider"
-              title="Drag to resize"
-              onPointerDown={(e) => {
-                e.preventDefault()
-                window.asit.panes.setVisible(null, false)
-                const onMove = (ev: PointerEvent): void => {
-                  setChatWidth(clampChatWidth(window.innerWidth - ev.clientX))
-                }
-                const onUp = (): void => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  window.removeEventListener('pointercancel', onUp)
-                  window.asit.panes.setVisible(null, true)
-                  setChatWidth((w) => {
-                    localStorage.setItem('asit-chat-width', String(w))
+            <div className="sb-nav-host" ref={setNavHost} />
+          </div>
+          <div className="sb-url-host" ref={setUrlHost} />
+          <SigninHandoff />
+          <div className="sb-scroll">
+            <Favorites />
+            <SpaceHeader />
+            <ResourceRail
+              embedded
+              task={task}
+              resources={resources}
+              onOpen={(id) => gridApi.current?.openResource(id)}
+              onSearch={(q) => gridApi.current?.openSearch(q)}
+              onResourcesChanged={refreshResources}
+            />
+            <div className="sb-tabs-host" ref={setTabsHost} />
+            <span className="sb-drag sb-drag-fill" />
+          </div>
+          <div className="sb-foot">
+            {studyEnabled && !isScratch && <TimerBar task={task} />}
+            <div className="sb-status">
+              <StatusCluster />
+            </div>
+            {!task.aiDisabled && (
+              <div className="sb-actions">
+                {agentToggle}
+                <AutomateButton />
+              </div>
+            )}
+            <div className="sb-spaces">
+              <button
+                className="sb-icon-btn"
+                title="Settings (Ctrl+,)"
+                onClick={() => useStore.getState().setSettingsOpen(true)}
+              >
+                ⚙
+              </button>
+              <GroupBar />
+            </div>
+          </div>
+          <div
+            className="sb-resize"
+            title="Drag to resize"
+            onPointerDown={(e) =>
+              dragResize(
+                e,
+                (ev) => setSidebarWidth(clampSidebar(ev.clientX)),
+                () =>
+                  setSidebarWidth((w) => {
+                    localStorage.setItem('asit-sidebar-width', String(w))
                     return w
                   })
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-                window.addEventListener('pointercancel', onUp)
-              }}
+              )
+            }
+          />
+        </aside>
+      ) : (
+        // Compact: the sidebar folds into one slim row above the card.
+        <header className="shell-head">
+          {platform === 'darwin' ? (
+            <span className="sb-traffic-space" />
+          ) : (
+            <WindowControls maximized={maximized} />
+          )}
+          <button
+            className="sb-icon-btn"
+            title="Show sidebar"
+            aria-label="Show sidebar (Ctrl+Shift+S)"
+            onClick={toggleSidebar}
+          >
+            ◨
+          </button>
+          <GroupBar />
+          <span className="sb-drag" />
+          <div className="shell-head-right">
+            {studyEnabled && !isScratch && <TimerBar task={task} />}
+            <StatusCluster />
+            {!task.aiDisabled && <AutomateButton />}
+            {agentToggle}
+          </div>
+        </header>
+      )}
+      <div className="shell-main">
+        {!sidebarOpen && <SigninHandoff />}
+        <div className="shell-body">
+          {!sidebarOpen && railOpen && (
+            <ResourceRail
+              task={task}
+              resources={resources}
+              onOpen={(id) => gridApi.current?.openResource(id)}
+              onSearch={(q) => gridApi.current?.openSearch(q)}
+              onResourcesChanged={refreshResources}
             />
-            <div style={{ width: chatWidth, display: 'flex', flexShrink: 0 }}>
-              <ChatPanel task={task} />
-            </div>
-          </>
-        )}
+          )}
+          {grid}
+          {chatOpen && !task.aiDisabled && (
+            <>
+              <div
+                className="divider divider-chat"
+                title="Drag to resize"
+                onPointerDown={(e) =>
+                  dragResize(
+                    e,
+                    (ev) => setChatWidth(clampChatWidth(window.innerWidth - ev.clientX)),
+                    () =>
+                      setChatWidth((w) => {
+                        localStorage.setItem('asit-chat-width', String(w))
+                        return w
+                      })
+                  )
+                }
+              />
+              <div className="chat-card" style={{ width: chatWidth }}>
+                <ChatPanel task={task} />
+              </div>
+            </>
+          )}
+        </div>
       </div>
       {studyEnabled && !isScratch && <BreakReviewGate taskId={task.id} />}
     </div>
@@ -216,7 +370,7 @@ function AutomateButton(): JSX.Element {
   const seedChat = useStore((s) => s.seedChat)
   return (
     <button
-      className="btn btn-ghost"
+      className="sb-pill"
       title={
         url
           ? 'Draft an automation for what you are doing here'

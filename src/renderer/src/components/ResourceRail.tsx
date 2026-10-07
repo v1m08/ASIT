@@ -20,8 +20,11 @@ export default function ResourceRail({
   resources,
   onOpen,
   onSearch,
-  onResourcesChanged
+  onResourcesChanged,
+  embedded = false
 }: {
+  /** Inside the Arc sidebar: a collapsible "Pinned" section, not a column. */
+  embedded?: boolean
   task: Task
   resources: Resource[]
   onOpen: (id: string) => void
@@ -137,6 +140,17 @@ export default function ResourceRail({
     await onResourcesChanged()
   }
 
+  if (collapsed && embedded) {
+    return (
+      <section className="resource-rail rail-embedded rail-embedded-collapsed">
+        <button className="rail-header rail-header-btn" onClick={toggleCollapsed}>
+          <span className="rail-caret">▸</span> Pinned
+          <span className="rail-count">{resources.length + 4}</span>
+        </button>
+      </section>
+    )
+  }
+
   if (collapsed) {
     return (
       <aside className="resource-rail rail-mini">
@@ -173,18 +187,26 @@ export default function ResourceRail({
 
   return (
     <aside
-      className={`resource-rail ${railDrop.over ? 'drop-target-over' : ''}`}
+      className={`resource-rail ${embedded ? 'rail-embedded' : ''} ${railDrop.over ? 'drop-target-over' : ''}`}
       {...railDrop.handlers}
     >
       {railDrop.over && (
         <div className="drop-hint">Drop to add to {task.title}</div>
       )}
       <div className="rail-section">
-        <div className="rail-header"> Resources
-          <button className="rail-btn rail-toggle" title="Collapse" onClick={toggleCollapsed}>
-            «
+        {embedded ? (
+          <button className="rail-header rail-header-btn" onClick={toggleCollapsed}>
+            <span className="rail-caret">▾</span> Pinned
           </button>
-        </div>
+        ) : (
+          <div className="rail-header">
+            {' '}
+            Resources
+            <button className="rail-btn rail-toggle" title="Collapse" onClick={toggleCollapsed}>
+              «
+            </button>
+          </div>
+        )}
 
         <div className="rail-item" onClick={() => onOpen(BUILTIN_NOTES)}>
           <span className="rail-icon">✎</span>

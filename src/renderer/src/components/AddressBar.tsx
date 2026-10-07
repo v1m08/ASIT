@@ -40,7 +40,11 @@ export default function AddressBar({
   onNavigate,
   className = '',
   placeholder = 'Search or enter address',
-  autoFocus = false
+  autoFocus = false,
+  idleLabel,
+  overPanes = true,
+  onDraftChange,
+  onAltSubmit
 }: {
   /** The page currently shown; displayed whenever the user isn't typing. */
   url: string
@@ -49,6 +53,16 @@ export default function AddressBar({
   placeholder?: string
   /** New-tab page: land the caret in the box, like every browser. */
   autoFocus?: boolean
+  /** Shown instead of the URL while not editing — the sidebar shows just the
+   *  domain, Arc-style; focusing reveals (and selects) the full address. */
+  idleLabel?: string
+  /** False when the suggestions open over app DOM only (the sidebar): no
+   *  page can cover them, so the pages need not vanish while you type. */
+  overPanes?: boolean
+  /** Reports what is typed (the new-tab page's "Browse for me" reads it). */
+  onDraftChange?: (value: string) => void
+  /** Shift+Enter — the new-tab page hands the query to the agent. */
+  onAltSubmit?: (value: string) => void
 }): JSX.Element {
   // null means "not editing" — show the live URL. A plain value-state would
   // freeze the bar on whatever was last typed while the page navigates on.
@@ -63,7 +77,7 @@ export default function AddressBar({
   // simply invisible wherever a page was showing. Keyed to the editing
   // session (focus…blur), NOT the suggestion count: the count crosses 0↔N
   // per keystroke, and each crossing would flash every pane hidden/visible.
-  useOverlay(draft !== null)
+  useOverlay(overPanes && draft !== null)
 
   const close = useCallback((): void => {
     setDraft(null)
@@ -126,11 +140,17 @@ export default function AddressBar({
         autoFocus={autoFocus}
         placeholder={placeholder}
         spellCheck={false}
-        value={draft ?? url ?? ''}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={(e) => {
+        value={draft ?? idleLabel ?? url ?? ''}
+        onChange={(e) => {
           setDraft(e.target.value)
+          onDraftChange?.(e.target.value)
+        }}
+        onFocus={(e) => {
+          // The real address, not the idle label — then select it all once
+          // React has swapped it in.
+          setDraft(url ?? e.target.value)
           e.target.select()
+          requestAnimationFrame(() => inputRef.current?.select())
         }}
         onBlur={() => {
           // Deferred: a click on a suggestion blurs the input first, and
@@ -138,6 +158,14 @@ export default function AddressBar({
           setTimeout(close, 120)
         }}
         onKeyDown={(e) => {
+          if (e.key === 'Enter' && e.shiftKey && onAltSubmit) {
+            const value = (draft ?? '').trim()
+            if (value) {
+              close()
+              onAltSubmit(value)
+            }
+            return
+          }
           if (e.key === 'Enter') {
             const pick = highlight >= 0 ? suggestions[highlight] : null
             go(pick ? pick.url : (draft ?? url))

@@ -116,13 +116,24 @@ export default function ChatPanel({ task }: { task: Task }): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [model, setModel] = useState('default')
-  // A prompt drafted from elsewhere ("automate this page"). Never auto-sent —
-  // see store.seedChat.
+  // A prompt drafted from elsewhere ("automate this page") lands in the box,
+  // unsent. The only sent kind is the user's own typed words ("Browse for
+  // me" on the new-tab page) — see store.seedChat.
   const chatSeed = useStore((s) => s.chatSeed)
   useEffect(() => {
     if (!chatSeed) return
-    const text = useStore.getState().consumeChatSeed()
-    if (!text) return
+    const seed = useStore.getState().consumeChatSeed()
+    if (!seed) return
+    const text = seed.text
+    if (seed.send) {
+      // After this mount's reset effects (below) have run — they clear busy
+      // and messages, which would otherwise race the send.
+      setTimeout(() => {
+        if (busyRef.current) setQueue((q) => [...q, text])
+        else void sendOutgoingRef.current?.(text)
+      }, 0)
+      return
+    }
     setInput((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text))
     setTimeout(() => {
       const el = document.querySelector<HTMLTextAreaElement>('.chat-input-box textarea')

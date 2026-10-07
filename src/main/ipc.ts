@@ -208,6 +208,17 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   // A renderer-driven NATIVE context menu. App DOM cannot draw a dropdown
   // over a pane (WebContentsViews paint above everything), so any menu
   // anchored to chrome that sits beside a pane has to be a real OS menu.
+  // Frameless window (Arc-style): the sidebar draws min/max/close on Windows
+  // and Linux; macOS keeps its native traffic lights.
+  handle(IPC.UI_WINDOW_CONTROL, (_e, op: string) => {
+    const win = getWindow()
+    if (!win) return
+    if (op === 'minimize') win.minimize()
+    else if (op === 'maximize') {
+      if (win.isMaximized()) win.unmaximize()
+      else win.maximize()
+    } else if (op === 'close') win.close()
+  })
   handle(
     IPC.UI_CONTEXT_MENU,
     (_e, items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]) =>

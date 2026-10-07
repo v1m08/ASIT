@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IPC } from '@shared/ipc-contract'
 import type { PaneNavState, Resource, Task, WorkspaceLayout } from '@shared/types'
 import NotesEditor from './NotesEditor'
@@ -7,7 +8,7 @@ import AppWindowPane from './AppWindowPane'
 import ReviewPane from './ReviewPane'
 import { useStore } from '../store/useStore'
 import { useFileDrop } from '../hooks/useFileDrop'
-import { hostOf, toNavUrl } from './AddressBar'
+import AddressBar, { hostOf, toNavUrl } from './AddressBar'
 import { useOverlay } from '../hooks/useOverlay'
 import { searchUrl } from '../lib/search'
 import { childPath } from '../utils/paths'
@@ -121,6 +122,18 @@ function paneTargetFor(tab: TabInfo): { url?: string; filePath?: string } {
   return {}
 }
 
+/**
+ * Where the shell's sidebar wants this surface's chrome (Arc layout). The tab
+ * list and the toolbar are still owned and rendered by PaneGrid — the one tab
+ * surface (invariant 21) — they are only PORTALED into the sidebar. All null
+ * (sidebar hidden) = the compact layout: a horizontal strip in each slot.
+ */
+export interface SidebarHosts {
+  tabs: HTMLElement | null
+  nav: HTMLElement | null
+  url: HTMLElement | null
+}
+
 export interface PaneGridApi {
   openResource: (id: string) => void
   openSearch: (query: string) => void
@@ -134,8 +147,10 @@ export default function PaneGrid({
   onApi,
   onPin,
   onAttachLibrary,
-  onResourcesChanged
+  onResourcesChanged,
+  sidebar
 }: {
+  sidebar?: SidebarHosts
   task: Task
   resources: Resource[]
   onApi?: (api: PaneGridApi) => void
@@ -499,6 +514,13 @@ export default function PaneGrid({
   // hard-code slot 0, so in a split Ctrl+W/Ctrl+Tab/Ctrl+R always hit the
   // left pane regardless of which one you were actually using.
   const focusedSlotRef = useRef<0 | 1>(0)
+  // Mirrored into state for rendering: the sidebar toolbar follows the
+  // focused slot (one address bar for a split, like Arc).
+  const [focusedSlot, setFocusedSlotState] = useState<0 | 1>(0)
+  const setFocusedSlot = useCallback((i: 0 | 1): void => {
+    focusedSlotRef.current = i
+    setFocusedSlotState(i)
+  }, [])
   const focusSlot = useCallback((): 0 | 1 => {
     const want = focusedSlotRef.current
     if (layoutRef.current.active[want]) return want
@@ -509,7 +531,7 @@ export default function PaneGrid({
       const e = args[0] as { type: string; paneId?: string }
       if (e.type !== 'pane-focused' || !e.paneId) return
       const at = layoutRef.current.slots.findIndex((s) => s.includes(e.paneId!))
-      if (at === 0 || at === 1) focusedSlotRef.current = at
+      if (at === 0 || at === 1) setFocusedSlot(at)
     })
   }, [])
 
@@ -541,7 +563,7 @@ export default function PaneGrid({
         const other: 0 | 1 = focused === 0 ? 1 : 0
         const slotIndex: 0 | 1 =
           inSlot ?? (viewBackedAt(focused) ? focused : viewBackedAt(other) ? other : focused)
-        focusedSlotRef.current = slotIndex
+        setFocusedSlot(slotIndex)
         const slots: [string[], string[]] = [[...prev.slots[0]], [...prev.slots[1]]]
         slots[slotIndex].push(id)
         const active: [string | null, string | null] = [...prev.active]
@@ -584,6 +606,23 @@ export default function PaneGrid({
   )
 
   const openUrl = useCallback((url: string): void => openWebTab(url), [openWebTab])
+
+  /** The sidebar address bar: go there IN the focused tab when it is a web
+   *  tab (converting a new-tab page in place), otherwise in a new tab beside
+   *  the notes/PDF/terminal you're on. */
+  const navigateFocused = useCallback(
+    (target: string): void => {
+      const activeId = layoutRef.current.active[focusSlot()]
+      if (activeId && activeId.startsWith(WEBTAB_PREFIX)) {
+        if (!isNewTabUrl(layoutRef.current.webTabs?.[activeId] ?? ''))
+          window.asit.panes.navigate(activeId, { url: target })
+        setLayout((prev) => ({ ...prev, webTabs: { ...prev.webTabs, [activeId]: target } }))
+        return
+      }
+      openWebTab(target)
+    },
+    [openWebTab, focusSlot]
+  )
 
   // A browser always has a tab. This surface used to be a workspace grid, so
   // an empty group rendered a bare "nothing open" slot — which, now that every
@@ -785,7 +824,7 @@ export default function PaneGrid({
   }, [setTabSurface, validLayout, task, resources, navStates, onPin, onResourcesChanged])
 
   function selectTab(slotIndex: 0 | 1, id: string): void {
-    focusedSlotRef.current = slotIndex
+    setFocusedSlot(slotIndex)
     setLayout((prev) => {
       const active: [string | null, string | null] = [...prev.active]
       active[slotIndex] = id
@@ -869,6 +908,218 @@ export default function PaneGrid({
 
   const bothSlotsUsed = validLayout.slots[1].length > 0
 
+  const inSidebar = !!sidebar?.tabs
+
+  function tabGlyph(tab: TabInfo): string {
+    return tab.kind === 'ntp'
+      ? '⌕'
+      : tab.kind === 'builtin-review'
+        ? '◎'
+        : tab.kind === 'builtin-terminal'
+          ? '▶_'
+          : tab.kind === 'builtin-app'
+            ? '▢'
+            : tab.kind === 'url'
+              ? '◍'
+              : tab.kind === 'pdf'
+                ? '▤'
+                : tab.kind === 'file'
+                  ? '▥'
+                  : '✎'
+  }
+
+  /** One slot's tab list — a sidebar section (vertical) or the in-slot strip. */
+  function renderStrip(slotIndex: 0 | 1, vertical: boolean): JSX.Element {
+    const tabs = validLayout.slots[slotIndex]
+      .map((id) => tabInfoFor(id, task, resources, validLayout.webTabs))
+      .filter((t): t is TabInfo => !!t)
+    const slotFileDrop = slotIndex === 0 ? slot0Drop : slot1Drop
+    const sideNames = validLayout.direction === 'column' ? ['Top', 'Bottom'] : ['Left', 'Right']
+    const actions = bothSlotsUsed ? (
+      <span className="slot-strip-actions">
+        {slotIndex === 0 && (
+          <button
+            className="tab-btn"
+            title={
+              validLayout.direction === 'column'
+                ? 'Switch to side-by-side split'
+                : 'Switch to top/bottom split'
+            }
+            onClick={toggleDirection}
+          >
+            {validLayout.direction === 'column' ? '◫' : '⬒'}
+          </button>
+        )}
+        <button
+          className="tab-btn"
+          title={validLayout.collapsed?.[slotIndex] ? 'Expand this side' : 'Collapse this side'}
+          onClick={() => toggleCollapse(slotIndex)}
+        >
+          {validLayout.collapsed?.[slotIndex] ? '+' : '−'}
+        </button>
+      </span>
+    ) : null
+    return (
+      <TabStrip
+        key={`strip-${slotIndex}`}
+        vertical={vertical}
+        heading={
+          vertical && bothSlotsUsed ? (
+            <span className="tab-strip-heading-label">
+              Split · {sideNames[slotIndex]}
+              {focusedSlot === slotIndex && <span className="tab-strip-focus-dot" />}
+            </span>
+          ) : undefined
+        }
+        tabs={tabs.map(
+          (tab): TabDescriptor => ({
+            id: tab.id,
+            label: tabLabel(tab),
+            loading: !!navStates[tab.id]?.loading && tab.viewBacked,
+            favicon: tab.viewBacked ? navStates[tab.id]?.favicon : null,
+            glyph: tabGlyph(tab)
+          })
+        )}
+        activeId={validLayout.active[slotIndex]}
+        onSelect={(id) => selectTab(slotIndex, id)}
+        onClose={(id) => closeTab(slotIndex, id)}
+        onContextMenu={(id) => {
+          const t = tabs.find((x) => x.id === id)
+          if (t) void tabMenu(slotIndex, t)
+        }}
+        onNewTab={() => openWebTab(NEW_TAB_URL, slotIndex)}
+        // In the sidebar ⇄ only earns its row space during a split; "open in
+        // split" stays on the tab's context menu.
+        onMoveTab={vertical && !bothSlotsUsed ? undefined : (id) => moveTab(slotIndex, id)}
+        leading={
+          slotFileDrop.over ? <span className="tab-drop-hint">Drop to open here</span> : null
+        }
+        trailing={actions}
+        stripProps={{
+          ...slotFileDrop.handlers,
+          className: [
+            slotFileDrop.over ? 'drop-target-over' : '',
+            vertical && bothSlotsUsed && focusedSlot !== slotIndex ? 'tab-strip-unfocused' : ''
+          ].join(' ')
+        }}
+      />
+    )
+  }
+
+  /** Star / find / pin / zoom — what a page offers beside its address. */
+  function pageActions(activeTab: TabInfo, nav: PaneNavState): JSX.Element {
+    return (
+      <>
+        {zoomLabel !== null && <span className="pane-zoom-label">{zoomLabel}%</span>}
+        <BookmarkStar url={nav.url} title={nav.title || nav.url} favicon={nav.favicon} />
+        <button
+          className="nav-btn"
+          title="Find in page (Ctrl+F)"
+          onClick={() => find.openFind(activeTab.id)}
+        >
+          ⌕
+        </button>
+        {onPin && !hidePin && (
+          <button
+            className="nav-btn"
+            title="Pin this page to the space"
+            onClick={() => onPin(nav.title || nav.url, nav.url)}
+          >
+            ⌾
+          </button>
+        )}
+      </>
+    )
+  }
+
+  /** The sidebar's chrome for the FOCUSED slot: nav arrows + address pill. */
+  function renderSidebarChrome(): JSX.Element[] {
+    if (!sidebar) return []
+    const slot = validLayout.active[focusedSlot] ? focusedSlot : focusSlot()
+    const id = validLayout.active[slot]
+    const tab = id ? tabInfoFor(id, task, resources, validLayout.webTabs) : null
+    const nav = tab && tab.kind === 'url' ? navStates[tab.id] : null
+    const paneId = tab?.viewBacked ? tab.id : null
+    const go = (n: 'back' | 'forward' | 'stop' | 'reload'): void => {
+      if (paneId) window.asit.panes.navigate(paneId, { nav: n })
+    }
+    const out: JSX.Element[] = []
+    if (sidebar.nav) {
+      out.push(
+        createPortal(
+          <div className="sb-nav">
+            <button
+              className="nav-btn"
+              title="Back"
+              disabled={!nav?.canGoBack}
+              onClick={() => go('back')}
+            >
+              ←
+            </button>
+            <button
+              className="nav-btn"
+              title="Forward"
+              disabled={!nav?.canGoForward}
+              onClick={() => go('forward')}
+            >
+              →
+            </button>
+            <button
+              className="nav-btn"
+              disabled={!paneId}
+              title={nav?.loading ? 'Stop loading' : 'Reload'}
+              onClick={() => go(nav?.loading ? 'stop' : 'reload')}
+            >
+              {nav?.loading ? '✕' : '⟳'}
+            </button>
+          </div>,
+          sidebar.nav,
+          'sb-nav'
+        )
+      )
+    }
+    if (sidebar.url) {
+      const url = nav?.url ?? ''
+      out.push(
+        createPortal(
+          <div className={`pane-toolbar sb-url ${nav?.loading ? 'sb-url-loading' : ''}`}>
+            {nav?.favicon ? (
+              <img className="sb-url-favicon" src={nav.favicon} alt="" />
+            ) : (
+              <span className="sb-url-glyph">{nav ? '◍' : '⌕'}</span>
+            )}
+            <AddressBar
+              key={`${task.id}:${id ?? 'none'}`}
+              url={url}
+              idleLabel={url ? hostOf(url) : undefined}
+              overPanes={false}
+              placeholder={
+                tab && !nav && tab.kind !== 'ntp' ? 'Search or open a page…' : 'Search or enter address'
+              }
+              onNavigate={navigateFocused}
+            />
+            {nav && tab && <span className="sb-url-actions">{pageActions(tab, nav)}</span>}
+          </div>,
+          sidebar.url,
+          'sb-url'
+        )
+      )
+    }
+    if (sidebar.tabs) {
+      out.push(
+        createPortal(
+          <div className="sb-tab-lists">
+            {renderStrip(0, true)}
+            {bothSlotsUsed && renderStrip(1, true)}
+          </div>,
+          sidebar.tabs,
+          'sb-tabs'
+        )
+      )
+    }
+    return out
+  }
+
   function renderSlot(slotIndex: 0 | 1): JSX.Element {
     const tabs = validLayout.slots[slotIndex]
       .map((id) => tabInfoFor(id, task, resources, validLayout.webTabs))
@@ -877,7 +1128,6 @@ export default function PaneGrid({
     const activeTab = tabs.find((t) => t.id === activeId) ?? null
     const nav = activeTab && activeTab.kind === 'url' ? navStates[activeTab.id] : null
     const isCollapsed = validLayout.collapsed?.[slotIndex] ?? false
-    const slotFileDrop = slotIndex === 0 ? slot0Drop : slot1Drop
 
     if (isCollapsed) {
       return (
@@ -910,106 +1160,25 @@ export default function PaneGrid({
 
     return (
       <div
-        className="slot"
+        className={`slot ${bothSlotsUsed && focusedSlot === slotIndex ? 'slot-focused' : ''}`}
         style={{ flex }}
+        // DOM content (notes, the new-tab page) never reports pane focus, so
+        // a click inside the card is what makes this side the focused one.
+        onMouseDownCapture={() => {
+          if (focusedSlotRef.current !== slotIndex) setFocusedSlot(slotIndex)
+        }}
         data-focus-zone={activeTab?.title}
         data-focus-pane={activeTab?.viewBacked ? activeTab.id : undefined}
       >
-        {tabs.length > 0 && (
-          <TabStrip
-            tabs={tabs.map(
-              (tab): TabDescriptor => ({
-                id: tab.id,
-                label: tabLabel(tab),
-                loading: !!navStates[tab.id]?.loading && tab.viewBacked,
-                favicon: tab.viewBacked ? navStates[tab.id]?.favicon : null,
-                glyph:
-                  tab.kind === 'ntp'
-                    ? '＋'
-                    : tab.kind === 'builtin-review'
-                      ? '◎'
-                      : tab.kind === 'builtin-terminal'
-                        ? '▶_'
-                        : tab.kind === 'builtin-app'
-                          ? '▢'
-                          : tab.kind === 'url'
-                            ? '◍'
-                            : tab.kind === 'pdf'
-                              ? '▤'
-                              : tab.kind === 'file'
-                                ? '▥'
-                                : '✎'
-              })
-            )}
-            activeId={activeId}
-            onSelect={(id) => selectTab(slotIndex, id)}
-            onClose={(id) => closeTab(slotIndex, id)}
-            onContextMenu={(id) => {
-              const t = tabs.find((x) => x.id === id)
-              if (t) void tabMenu(slotIndex, t)
-            }}
-            onNewTab={() => openWebTab(NEW_TAB_URL, slotIndex)}
-            onMoveTab={(id) => moveTab(slotIndex, id)}
-            leading={
-              slotFileDrop.over ? <span className="tab-drop-hint">Drop to open here</span> : null
-            }
-            trailing={
-              bothSlotsUsed ? (
-                <span className="slot-strip-actions">
-                  {slotIndex === 0 && (
-                    <button
-                      className="tab-btn"
-                      title={
-                        validLayout.direction === 'column'
-                          ? 'Switch to side-by-side split'
-                          : 'Switch to top/bottom split'
-                      }
-                      onClick={toggleDirection}
-                    >
-                      {validLayout.direction === 'column' ? '◫' : '⬒'}
-                    </button>
-                  )}
-                  <button
-                    className="tab-btn"
-                    title="Collapse pane"
-                    onClick={() => toggleCollapse(slotIndex)}
-                  >
-                    −
-                  </button>
-                </span>
-              ) : null
-            }
-            stripProps={{
-              ...slotFileDrop.handlers,
-              className: slotFileDrop.over ? 'drop-target-over' : undefined
-            }}
-          />
-        )}
-        {nav && activeTab && (
+        {!inSidebar && tabs.length > 0 && renderStrip(slotIndex, false)}
+        {!inSidebar && nav && activeTab && (
           <BrowserToolbar
             paneId={activeTab.id}
             nav={nav}
             url={nav.url}
             addressClassName="pane-address"
           >
-            {zoomLabel !== null && <span className="pane-zoom-label">{zoomLabel}%</span>}
-            <BookmarkStar url={nav.url} title={nav.title || nav.url} favicon={nav.favicon} />
-            <button
-              className="nav-btn"
-              title="Find in page (Ctrl+F)"
-              onClick={() => find.openFind(activeTab.id)}
-            >
-              ⌕
-            </button>
-            {onPin && !hidePin && (
-              <button
-                className="nav-btn"
-                title="Save this page as a task resource"
-                onClick={() => onPin(nav.title || nav.url, nav.url)}
-              >
-                ⌾
-              </button>
-            )}
+            {pageActions(activeTab, nav)}
           </BrowserToolbar>
         )}
         {find.findFor === activeTab?.id && activeTab && <FindBar find={find} />}
@@ -1103,7 +1272,11 @@ export default function PaneGrid({
   const vertical = validLayout.direction === 'column'
 
   return (
-    <div className={`pane-grid ${vertical ? 'pane-grid-vertical' : ''}`} ref={gridRef}>
+    <div
+      className={`pane-grid ${vertical ? 'pane-grid-vertical' : ''} ${bothSlotsUsed ? 'pane-grid-split' : ''}`}
+      ref={gridRef}
+    >
+      {renderSidebarChrome()}
       {renderSlot(0)}
       {bothSlotsUsed && (
         <>

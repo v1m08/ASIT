@@ -221,6 +221,11 @@ declare global {
         contextMenu: (
           items: { id?: string; label?: string; enabled?: boolean; separator?: boolean }[]
         ) => Promise<string | null>
+        platform: string
+        windowControl: (op: 'minimize' | 'maximize' | 'close') => Promise<void>
+        onWindowState: (
+          cb: (s: { maximized: boolean; fullscreen: boolean }) => void
+        ) => () => void
       }
       history: {
         search: (q: string, limit?: number) => Promise<HistoryEntry[]>

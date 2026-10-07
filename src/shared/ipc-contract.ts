@@ -42,6 +42,9 @@ export const IPC = {
   UPDATE_CHECK: 'update:check',
   UPDATE_INSTALL: 'update:install',
   UI_CONTEXT_MENU: 'ui:context-menu',
+  // Frameless window: the sidebar draws the controls (Windows/Linux)
+  UI_WINDOW_CONTROL: 'ui:window-control',
+  UI_WINDOW_STATE: 'ui:window-state',
   VAULT_SAVE_PENDING: 'vault:save-pending',   // commit the offered login
   VAULT_DISCARD_PENDING: 'vault:discard-pending',
   VAULT_OFFER_SAVE: 'vault:offer-save',       // push M->R: site + username only

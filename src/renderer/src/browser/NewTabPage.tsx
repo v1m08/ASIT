@@ -18,6 +18,30 @@ import NtpStats from './NtpStats'
 //
 // Plain DOM: an NTP tab has no pane, so nothing paints over this (invariant 2
 // by construction — the builtin-notes pattern).
+//
+// Shaped like Arc Search: ONE focal point — a greeting and a big search pill
+// with room around it — then your sites as round tiles, then everything else
+// in calm cards below the fold. "Browse for me" (or Shift+Enter) hands the
+// typed question to this space's agent, which reads the web for you; it is
+// the user's own words, so it is sent rather than drafted (store.seedChat).
+
+function greeting(now = new Date()): string {
+  const h = now.getHours()
+  if (h < 5) return 'Up late'
+  if (h < 12) return 'Good morning'
+  if (h < 18) return 'Good afternoon'
+  return 'Good evening'
+}
+
+/** The agent turn "Browse for me" sends. The question is the user's own. */
+export function browseForMePrompt(query: string): string {
+  return (
+    `Browse for me: ${query}\n\n` +
+    'Look this up on the web using the browser — open a few good sources in tabs ' +
+    'and read them — then give me a short, well-organised answer: the key points ' +
+    'first, details after, and the links you used.'
+  )
+}
 
 function daysUntil(dueDate: string): number {
   return Math.ceil((new Date(dueDate + 'T23:59:59').getTime() - Date.now()) / 86400000)
@@ -64,6 +88,13 @@ export default function NewTabPage({
   const scratchId = useStore((s) => s.scratchTask?.id)
   const switchGroup = useStore((s) => s.switchGroup)
   const studyEnabled = useStore((s) => s.settings?.studyEnabled ?? true)
+  const seedChat = useStore((s) => s.seedChat)
+  const aiOff = !!activeTask?.aiDisabled
+  const [query, setQuery] = useState('')
+  const browseForMe = (q: string): void => {
+    if (!q.trim() || aiOff) return
+    seedChat(browseForMePrompt(q.trim()), { send: true })
+  }
 
   useEffect(() => {
     // An empty query is the visit-count ranking — the browser's "top sites".
@@ -85,7 +116,61 @@ export default function NewTabPage({
   return (
     <div className="ntp">
       <div className="ntp-inner">
-        <AddressBar url="" onNavigate={onNavigate} className="ntp-address" autoFocus />
+        <div className="ntp-hero">
+          <h1 className="ntp-greeting">{greeting()}</h1>
+          <div className="ntp-search">
+            <span className="ntp-search-icon">⌕</span>
+            <AddressBar
+              url=""
+              onNavigate={onNavigate}
+              className="ntp-address"
+              placeholder={aiOff ? 'Search or enter address' : 'Search, enter an address, or ask…'}
+              autoFocus
+              onDraftChange={setQuery}
+              onAltSubmit={aiOff ? undefined : browseForMe}
+            />
+            {!aiOff && (
+              <button
+                className="ntp-browse"
+                disabled={!query.trim()}
+                title="Have this space's agent read the web and write you an answer (Shift+Enter)"
+                onClick={() => browseForMe(query)}
+              >
+                ✦ Browse for me
+              </button>
+            )}
+          </div>
+          <p className="ntp-search-hint">
+            {aiOff
+              ? 'Enter to go · this space is private, so the agent is off'
+              : 'Enter to search · Shift+Enter to have the agent browse for you'}
+          </p>
+          {(bookmarks.length > 0 || topSites.length > 0) && (
+            <div className="ntp-tiles">
+              {[...bookmarks.map((b) => ({ id: b.id, url: b.url, title: b.title, favicon: b.favicon })),
+                ...topSites.map((t) => ({ id: t.id, url: t.url, title: t.title, favicon: null as string | null }))]
+                .filter((x, i, all) => all.findIndex((y) => hostOf(y.url) === hostOf(x.url)) === i)
+                .slice(0, 8)
+                .map((site) => (
+                  <button
+                    key={site.id}
+                    className="ntp-tile"
+                    title={site.url}
+                    onClick={() => onNavigate(site.url)}
+                  >
+                    <span className="ntp-tile-icon">
+                      {site.favicon ? (
+                        <img src={site.favicon} alt="" />
+                      ) : (
+                        (hostOf(site.url)[0] ?? '·').toUpperCase()
+                      )}
+                    </span>
+                    <span className="ntp-tile-label">{site.title || hostOf(site.url)}</span>
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
 
         {groups.length > 0 && (
           <div className="ntp-section">
@@ -123,48 +208,9 @@ export default function NewTabPage({
 
           <div className="ntp-side">
             <NtpAutomations />
-            {bookmarks.length > 0 && (
-              <div className="ntp-section">
-                <div className="ntp-label">Bookmarks</div>
-                <div className="ntp-sites">
-                  {bookmarks.slice(0, 10).map((b) => (
-                    <button
-                      key={b.id}
-                      className="ntp-site"
-                      title={b.url}
-                      onClick={() => onNavigate(b.url)}
-                    >
-                      <span className="ntp-site-host">
-                        {b.favicon ? <img className="ntp-favicon" src={b.favicon} alt="" /> : '★'}{' '}
-                        {hostOf(b.url)}
-                      </span>
-                      <span className="ntp-site-title">{b.title || hostOf(b.url)}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {topSites.length > 0 && (
-              <div className="ntp-section">
-                <div className="ntp-label">Often visited</div>
-                <div className="ntp-sites">
-                  {topSites.map((s) => (
-                    <button
-                      key={s.id}
-                      className="ntp-site"
-                      title={s.url}
-                      onClick={() => onNavigate(s.url)}
-                    >
-                      <span className="ntp-site-host">{hostOf(s.url)}</span>
-                      <span className="ntp-site-title">{s.title || hostOf(s.url)}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
             {topSites.length === 0 && bookmarks.length === 0 && (
               <p className="ntp-empty">
-                Type an address or search — sites you visit often will show up here.
+                Sites you bookmark (★) and visit often show up as tiles above.
               </p>
             )}
           </div>
