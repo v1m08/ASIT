@@ -153,7 +153,7 @@ export default function AddressBar({
         }}
         onFocus={(e) => {
           // Focus came back before the blur's close ran (a window activation
-          // bouncing focus out and in, a suggestion click): the editing
+          // bouncing focus out and back in, an alt-tab and back): the editing
           // session never ended. Without this the stale close fired AFTER the
           // refocus and threw away whatever had been typed since.
           if (closeTimer.current) {
