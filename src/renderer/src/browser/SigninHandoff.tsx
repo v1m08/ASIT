@@ -28,7 +28,11 @@ function signinDestination(wallUrl: string): string {
   return 'https://www.google.com/'
 }
 
-type Phase = { kind: 'idle' } | { kind: 'waiting' } | { kind: 'failed'; reason: string }
+type Phase =
+  | { kind: 'idle' }
+  | { kind: 'waiting' }
+  | { kind: 'saving' }
+  | { kind: 'failed'; reason: string }
 
 export default function SigninHandoff(): JSX.Element | null {
   const url = useStore((s) => s.activePageUrl)
@@ -42,7 +46,7 @@ export default function SigninHandoff(): JSX.Element | null {
     void window.asit.accounts.bridgeInfo().then((i) => setBrowser(i.browser))
   }, [onWall, browser])
 
-  if (!url || (!onWall && phase.kind !== 'waiting')) return null
+  if (!url || (!onWall && phase.kind !== 'waiting' && phase.kind !== 'saving')) return null
   const dest = signinDestination(url)
 
   async function bridge(): Promise<void> {
@@ -62,17 +66,31 @@ export default function SigninHandoff(): JSX.Element | null {
     }
   }
 
+  if (phase.kind === 'saving') {
+    return (
+      <div className="signin-handoff">
+        <span>
+          Bringing your Google session over from {browser ?? 'the browser'}… Chrome saves new
+          sign-ins every few seconds, so this can take up to half a minute.
+        </span>
+      </div>
+    )
+  }
+
   if (phase.kind === 'waiting') {
     return (
       <div className="signin-handoff">
         <span>
-          Finish signing in to Google in the {browser ?? 'browser'} window. ASIT brings the session
-          back on its own as soon as you’re in — this window then closes.
+          Sign in to Google in the {browser ?? 'browser'} window that just opened. When you’re in,
+          close that window (or click “I’m signed in”) and ASIT brings the session over.
         </span>
         <button
           className="btn"
           title="Import the session now (for when the browser didn’t close on its own)"
-          onClick={() => void window.asit.accounts.bridgeFinish()}
+          onClick={() => {
+            setPhase({ kind: 'saving' })
+            void window.asit.accounts.bridgeFinish()
+          }}
         >
           I’m signed in
         </button>

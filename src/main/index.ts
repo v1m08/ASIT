@@ -2182,8 +2182,9 @@ async function runPanesSmokeTest(): Promise<void> {
 // Headless sign-in bridge check: ASIT_SMOKE_SIGNIN=1 electron out/main/index.js
 // Network-free: borrows the installed Chromium-family browser (or
 // ASIT_SIGNIN_BROWSER), headless, against a local page that sets cookies the
-// way a sign-in does, and proves the whole round trip — CDP over the pipe,
-// auto-finish on the marker cookie, import into the browse partition with
+// way a sign-in does, and proves the whole round trip — a sign-in phase with
+// NO debugging pipe, auto-finish on the marker cookie's name in the profile's
+// store, a separate harvest over the pipe, import into the browse partition with
 // HttpOnly/expiry/host-only intact, and the borrowed profile wiped after.
 // No browser installed → SKIP (the feature degrades to the plain handoff).
 async function runSigninBridgeSmokeTest(): Promise<void> {
@@ -2249,7 +2250,7 @@ async function runSigninBridgeSmokeTest(): Promise<void> {
       doneWhen: (cs) => cs.some((c) => c.name === 'asit_session')
     })
     console.log(`[signin-smoke] bridge result: ${JSON.stringify(result)}`)
-    if (!result.ok || result.imported < 2) fail(`round trip did not import: ${JSON.stringify(result)}`)
+    if (!result.ok || result.imported < 1) fail(`round trip did not import: ${JSON.stringify(result)}`)
     if (result.reason) fail(`finished for the wrong reason: ${result.reason}`)
 
     const jar = await session.fromPartition('persist:asit-browse').cookies.get({ url: origin })
@@ -2258,8 +2259,11 @@ async function runSigninBridgeSmokeTest(): Promise<void> {
     if (!sess || sess.value !== 'signed-in') fail('session cookie missing from the browse partition')
     if (!sess!.httpOnly) fail('HttpOnly lost in transit')
     if (sess!.session || !sess!.expirationDate) fail('persistent cookie came back as a session cookie')
-    if (!pref || !pref.session) fail('session cookie came back persistent (or missing)')
-    console.log('[signin-smoke] the borrowed browser’s session landed in persist:asit-browse')
+    // The borrowed browser QUITS between sign-in and harvest (no DevTools
+    // attached while the user signs in), so session-only cookies end with it,
+    // exactly as in any browser restart. Account sign-ins are persistent.
+    if (pref) fail('a session-only cookie survived the browser quitting — harvest is not from a fresh start')
+    console.log('[signin-smoke] the borrowed browser’s persistent session landed in persist:asit-browse')
 
     if (bridge.bridgeActive()) fail('bridge still marked active after finishing')
     if (existsSync(join(app.getPath('userData'), 'signin-bridge')))
@@ -2268,14 +2272,17 @@ async function runSigninBridgeSmokeTest(): Promise<void> {
 
     // No marker (any non-Google site): the user's Done click finishes it.
     await session.fromPartition('persist:asit-browse').clearStorageData({ storages: ['cookies'] })
-    const manual = bridge.signInWithRealBrowser(`${origin}/login`, { headless: true, timeoutMs: 60_000 })
+    const manual = bridge.signInWithRealBrowser(`${origin}/login`, { headless: true, timeoutMs: 90_000 })
     await new Promise((r) => setTimeout(r, 3000))
     if (!bridge.bridgeActive()) fail('bridge finished without a marker or a Done click')
     const dup = await bridge.signInWithRealBrowser(`${origin}/login`)
     if (dup.ok || !dup.reason?.includes('already open')) fail('a second concurrent bridge was allowed')
+    // Clicked 3s in — long before Chrome's ~30s cookie commit. Done must
+    // still bring the session over (it waits for the commit; a SIGTERM
+    // shutdown alone would lose it).
     bridge.finishBridge()
     const manualResult = await manual
-    if (!manualResult.ok || manualResult.imported < 2)
+    if (!manualResult.ok || manualResult.imported < 1)
       fail(`Done click did not import: ${JSON.stringify(manualResult)}`)
     console.log('[signin-smoke] Done imports a marker-less sign-in; one bridge at a time')
 
