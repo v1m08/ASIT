@@ -20,7 +20,7 @@ import type { DownloadItem } from '@shared/types'
 import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 import { applyDeclutter } from './declutter'
-import { recordVisit } from './history'
+import { recordFavicon, recordVisit } from './history'
 import { searchUrlFor } from './search'
 
 // All embedded browser panes share one persistent partition so logins
@@ -282,6 +282,7 @@ class PaneManager {
 
     view.webContents.on('page-favicon-updated', (_e, icons) => {
       this.favicons.set(paneId, icons[0] ?? null)
+      recordFavicon(view.webContents.getURL(), icons[0] ?? null) // updates an existing row only
       pushNavState()
     })
 
@@ -500,6 +501,49 @@ class PaneManager {
     )
     if (!pane) return 'no visible page to type into'
     return this.typeToView(pane.view, text)
+  }
+
+  /**
+   * The command bar's backdrop. An overlay has to hide every view (invariant
+   * 2), which used to flash the content card empty for as long as the bar was
+   * up — the opposite of Arc, where the page stays put behind it. So just
+   * before hiding, photograph each visible page and let the renderer stand
+   * the pictures in at their bounds (the UI smoke's screenshot trick).
+   *
+   * It also takes the keyboard back for the app's DOM FIRST, so keys typed
+   * in the instant before the views hide land in the bar, not the page.
+   *
+   * User-driven only (the bar opening): pixels go to the app's own renderer,
+   * never to an agent — no action verb or agent IPC reaches this.
+   */
+  async captureVisible(): Promise<{ x: number; y: number; w: number; h: number; src: string }[]> {
+    if (!this.win || this.win.isDestroyed()) return []
+    this.releaseNavKeys()
+    this.win.webContents.focus()
+    const zoom = this.win.webContents.getZoomFactor() || 1
+    const visible = [...this.panes.values()].filter((p) => p.desiredVisible && !this.allHidden)
+    const shots = await Promise.all(
+      visible.map(async (p) => {
+        const b = p.view.getBounds()
+        if (b.width < 2 || b.height < 2) return null
+        try {
+          const img = await p.view.webContents.capturePage()
+          if (img.isEmpty()) return null
+          // DIP width is plenty for a backdrop and keeps the JPEG small.
+          const src = img.resize({ width: Math.round(b.width) }).toJPEG(78).toString('base64')
+          return {
+            x: b.x / zoom,
+            y: b.y / zoom,
+            w: b.width / zoom,
+            h: b.height / zoom,
+            src: `data:image/jpeg;base64,${src}`
+          }
+        } catch {
+          return null
+        }
+      })
+    )
+    return shots.filter((s): s is NonNullable<typeof s> => s !== null)
   }
 
   // Overlay support: hide every view so renderer DOM (modals, lockdown
@@ -1314,6 +1358,279 @@ class PaneManager {
     return false
   }
 
+  // --- workflow form primitives (fill_form / extract steps) ---------------
+  //
+  // Job-application forms (Greenhouse, Lever, Workday, Ashby…) name their
+  // fields with <label for>, aria-labelledby or a question above the field —
+  // almost never aria-label — so label-matching that only read the element's
+  // own attributes missed most of them, and a "deterministic" workflow fell
+  // back to a model step to find "First Name". This script reads every name a
+  // human would read, fills ALL fields in one pass per frame (no per-field
+  // 4s retry), and handles <select>, checkboxes and radios.
+  //
+  // Same containment as fillByLabel: owner-scoped panes only, never a submit
+  // or click on a send control. Password / one-time-code / file inputs are
+  // refused: credentials belong to the vault (invariant 16), and a browser
+  // can't set a file input from script anyway — say so instead of silently
+  // "succeeding".
+  private static FIELD_NAME_JS = `
+    const clean = (t) => (t || '').replace(/\\s+/g, ' ').replace(/[*:]+\\s*$/, '').trim().toLowerCase()
+    const namesOf = (el) => {
+      const out = []
+      const add = (t) => { const c = clean(t); if (c && c.length < 200) out.push(c) }
+      add(el.getAttribute('aria-label'))
+      const lb = el.getAttribute('aria-labelledby')
+      if (lb) add(lb.split(/\\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' '))
+      if (el.labels) for (const l of el.labels) add(l.innerText)
+      add(el.getAttribute('placeholder'))
+      add(el.getAttribute('title'))
+      add(el.getAttribute('name') && el.getAttribute('name').replace(/[_\\-\\[\\]]+/g, ' '))
+      add(el.id && el.id.replace(/[_\\-]+/g, ' '))
+      // The question text right above a field (ATS forms wrap each field in a
+      // container whose first text is the question).
+      const box = el.closest('fieldset, [role="group"], .field, .form-field, .application-question, li, .question, [data-qa*="question"]')
+      if (box) {
+        const legend = box.querySelector('legend, label, .label, h3, h4')
+        if (legend && !legend.contains(el)) add(legend.innerText)
+      }
+      return out
+    }
+    const visible = (el) => {
+      const r = el.getBoundingClientRect(); const s = getComputedStyle(el)
+      return s.display !== 'none' && s.visibility !== 'hidden' && (r.width > 0 || r.height > 0)
+    }
+    const fieldScore = (el, target) => {
+      let best = -1
+      for (const n of namesOf(el)) {
+        let sc = -1
+        if (n === target) sc = 100
+        else if (n.startsWith(target)) sc = 70
+        else if (n.includes(target)) sc = 45
+        else continue
+        sc -= Math.min(20, Math.floor(n.length / 15))
+        if (sc > best) best = sc
+      }
+      return best
+    }
+  `
+
+  private formFillScript(fields: [string, string][]): string {
+    return `(() => {
+      ${PaneManager.FIELD_NAME_JS}
+      const fields = ${JSON.stringify(fields)}
+      const all = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="checkbox"], [role="radio"]'))
+        .filter((el) => visible(el) && !el.disabled && el.type !== 'hidden' && el.type !== 'submit' && el.type !== 'button')
+      const filled = [], missing = [], refused = []
+      const used = new Set()
+      for (const [label, value] of fields) {
+        const target = clean(label)
+        let best = null, bestScore = -1
+        for (const el of all) {
+          if (used.has(el)) continue
+          let sc = fieldScore(el, target)
+          // Radios: the label names the QUESTION (shared by every option), so
+          // the option is picked by its OWN text matching the value ("No").
+          if (el.type === 'radio' || el.getAttribute('role') === 'radio') {
+            const box = el.closest('fieldset, [role="radiogroup"], [role="group"], .field, li, .question')
+            const q = box ? clean(box.innerText) : ''
+            const own = [el.getAttribute('aria-label'), ...(el.labels ? Array.from(el.labels).map((l) => l.innerText) : []), el.value]
+              .map(clean).filter(Boolean)
+            const want = clean(value)
+            const optionHit = own.some((o) => o === want) ? 30 : own.some((o) => o.startsWith(want)) ? 15 : -1
+            sc = (sc >= 0 || q.includes(target)) && optionHit >= 0 ? Math.max(sc, 60) + optionHit : -1
+          }
+          if (sc > bestScore) { bestScore = sc; best = el }
+        }
+        if (!best) { missing.push(label); continue }
+        const el = best
+        const type = (el.getAttribute('type') || '').toLowerCase()
+        const ac = (el.getAttribute('autocomplete') || '').toLowerCase()
+        if (type === 'password' || ac === 'one-time-code' || ac.includes('password')) { refused.push(label + ' (password field — use the vault)'); continue }
+        if (type === 'file') { refused.push(label + ' (file upload — attach it yourself)'); continue }
+        used.add(el)
+        const v = String(value)
+        const truthy = /^(true|yes|on|1|checked|x)$/i.test(v.trim())
+        try {
+          el.scrollIntoView({ block: 'center', behavior: 'instant' })
+          if (el.tagName === 'SELECT') {
+            const want = clean(v)
+            const opt = Array.from(el.options).find((o) => clean(o.text) === want || clean(o.value) === want) ||
+                        Array.from(el.options).find((o) => clean(o.text).startsWith(want)) ||
+                        Array.from(el.options).find((o) => clean(o.text).includes(want))
+            if (!opt) { missing.push(label + ' (no option "' + v + '")'); continue }
+            el.value = opt.value
+            el.dispatchEvent(new Event('input', { bubbles: true }))
+            el.dispatchEvent(new Event('change', { bubbles: true }))
+          } else if (type === 'checkbox' || el.getAttribute('role') === 'checkbox') {
+            const on = el.checked ?? el.getAttribute('aria-checked') === 'true'
+            if (on !== truthy) el.click()
+          } else if (type === 'radio' || el.getAttribute('role') === 'radio') {
+            if (!(el.checked ?? el.getAttribute('aria-checked') === 'true')) el.click()
+          } else if (el.isContentEditable) {
+            el.focus(); el.innerText = v
+            el.dispatchEvent(new InputEvent('input', { bubbles: true }))
+          } else {
+            el.focus()
+            const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')
+            if (setter && setter.set) setter.set.call(el, v); else el.value = v
+            el.dispatchEvent(new Event('input', { bubbles: true }))
+            el.dispatchEvent(new Event('change', { bubbles: true }))
+            el.dispatchEvent(new Event('blur', { bubbles: true }))
+          }
+          filled.push(label)
+        } catch (e) { missing.push(label) }
+      }
+      return { filled, missing, refused }
+    })()`
+  }
+
+  /**
+   * Fill many labelled fields in one go. Waits up to 4s for the form to
+   * exist (first field findable), then makes ONE pass per frame. A field
+   * filled in an earlier frame is not looked for again.
+   */
+  async fillForm(
+    owner: string,
+    fields: Record<string, string>,
+    pageIndex?: number
+  ): Promise<{ filled: string[]; missing: string[]; refused: string[] }> {
+    let pending: [string, string][] = Object.entries(fields)
+      .filter(([k]) => k.trim())
+      .slice(0, 60)
+      .map(([k, v]) => [k, String(v ?? '')])
+    const filled: string[] = []
+    const refused: string[] = []
+    const views = this.urlViews(owner, pageIndex)
+    if (views.length === 0) return { filled, missing: pending.map(([k]) => k), refused }
+    const deadline = Date.now() + 4000
+    for (let attempt = 0; pending.length > 0; attempt++) {
+      for (const view of views) {
+        const frames = view.webContents.mainFrame.framesInSubtree.slice(0, 15)
+        for (const frame of frames) {
+          if (pending.length === 0) break
+          try {
+            const r = (await frame.executeJavaScript(this.formFillScript(pending), true)) as {
+              filled: string[]
+              missing: string[]
+              refused: string[]
+            }
+            filled.push(...r.filled)
+            refused.push(...r.refused)
+            const done = new Set([...r.filled, ...r.refused.map((x) => x.replace(/ \(.*$/, ''))])
+            pending = pending.filter(([k]) => !done.has(k))
+          } catch {
+            // frame inaccessible
+          }
+        }
+      }
+      // Retry only while NOTHING has matched yet — the form may still be
+      // mounting. Once some fields filled, the rest are genuinely absent.
+      if (filled.length > 0 || refused.length > 0 || Date.now() > deadline) break
+      await new Promise((r) => setTimeout(r, 400))
+    }
+    return { filled, missing: pending.map(([k]) => k), refused }
+  }
+
+  /**
+   * Read one value off a page for a workflow `extract` step: a field's value
+   * or a control's text (`label`), the text of a CSS `selector`, a regex
+   * `pattern` over the visible text (first capture group), or the page's
+   * url/title. Never reads password or one-time-code fields.
+   */
+  async readValue(
+    owner: string,
+    spec: { label?: string; selector?: string; pattern?: string; from?: 'url' | 'title' },
+    pageIndex?: number
+  ): Promise<string | null> {
+    const views = this.urlViews(owner, pageIndex)
+    if (views.length === 0) return null
+    if (spec.from === 'url') return views[0].webContents.getURL()
+    if (spec.from === 'title') return views[0].webContents.getTitle()
+    const script = `(() => {
+      ${PaneManager.FIELD_NAME_JS}
+      const secret = (el) => {
+        const t = (el.getAttribute('type') || '').toLowerCase(), ac = (el.getAttribute('autocomplete') || '').toLowerCase()
+        return t === 'password' || ac === 'one-time-code' || ac.includes('password')
+      }
+      const textOf = (el) => (el.value !== undefined && el.tagName !== 'BUTTON' ? (el.tagName === 'SELECT' ? (el.selectedOptions[0]?.text || '') : el.value) : el.innerText || '').trim()
+      ${spec.selector ? `
+      try {
+        const el = document.querySelector(${JSON.stringify(spec.selector)})
+        if (el && !secret(el)) return textOf(el)
+      } catch (e) {}
+      return null` : spec.pattern ? `
+      let re
+      try { re = new RegExp(${JSON.stringify(spec.pattern)}, 'i') } catch (e) { return null }
+      const m = (document.body ? document.body.innerText : '').match(re)
+      return m ? (m[1] ?? m[0]).trim() : null` : `
+      const target = clean(${JSON.stringify(spec.label ?? '')})
+      let best = null, bestScore = -1
+      for (const el of document.querySelectorAll(${JSON.stringify(PaneManager.INTERACTIVE_SELECTOR)})) {
+        if (!visible(el) || secret(el)) continue
+        const sc = Math.max(fieldScore(el, target), (clean(el.innerText) === target ? 80 : -1))
+        if (sc > bestScore) { bestScore = sc; best = el }
+      }
+      return best ? textOf(best) : null`}
+    })()`
+    for (const view of views) {
+      for (const frame of view.webContents.mainFrame.framesInSubtree.slice(0, 15)) {
+        try {
+          const v = (await frame.executeJavaScript(script, true)) as string | null
+          if (typeof v === 'string' && v.trim()) return v.slice(0, 4000)
+        } catch {
+          // frame inaccessible / bad selector
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * The fields and buttons of the owner's page, by the names fill_form will
+   * match — so a drafted workflow uses labels that actually exist instead of
+   * guessed ones. Shape only: never field VALUES (a half-filled form or an
+   * autofilled credential stays out of the drafting prompt).
+   */
+  async describeForm(
+    owner: string,
+    pageIndex?: number
+  ): Promise<{ url: string; title: string; fields: string[] } | null> {
+    const views = this.urlViews(owner, pageIndex)
+    const view = views[0]
+    if (!view) return null
+    const script = `(() => {
+      ${PaneManager.FIELD_NAME_JS}
+      const out = []
+      for (const el of document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="combobox"], [role="checkbox"], [role="radio"], button, [role="button"], input[type="submit"]')) {
+        if (!visible(el) || el.type === 'hidden') continue
+        const tag = el.tagName.toLowerCase()
+        const type = (el.getAttribute('type') || el.getAttribute('role') || tag).toLowerCase()
+        const name = tag === 'button' || type === 'button' || type === 'submit'
+          ? clean(el.innerText || el.value || el.getAttribute('aria-label'))
+          : (namesOf(el)[0] || '')
+        if (!name) continue
+        let line = (tag === 'button' || type === 'button' || type === 'submit' ? 'button' : type) + ': ' + name
+        if (el.required || el.getAttribute('aria-required') === 'true') line += ' (required)'
+        if (tag === 'select') line += ' — options: ' + Array.from(el.options).slice(0, 12).map((o) => clean(o.text)).filter(Boolean).join(' | ')
+        out.push(line.slice(0, 220))
+        if (out.length >= 80) break
+      }
+      return out
+    })()`
+    const fields: string[] = []
+    for (const frame of view.webContents.mainFrame.framesInSubtree.slice(0, 15)) {
+      try {
+        const lines = (await frame.executeJavaScript(script, true)) as string[]
+        for (const l of lines) if (!fields.includes(l)) fields.push(l)
+      } catch {
+        // frame inaccessible
+      }
+      if (fields.length >= 80) break
+    }
+    return { url: view.webContents.getURL(), title: view.webContents.getTitle(), fields: fields.slice(0, 80) }
+  }
+
   async existsByLabel(owner: string, label: string, pageIndex?: number): Promise<boolean> {
     return this.existsCondition(owner, { label }, pageIndex)
   }
@@ -1420,8 +1737,9 @@ class PaneManager {
 
   /** Smoke tests only — where every visible pane actually sits, in DIP. */
   boundsForSmoke(): [string, { x: number; y: number; width: number; height: number }][] {
+    // Hidden under an overlay (the command bar) means not on screen.
     return [...this.panes.entries()]
-      .filter(([, p]) => p.desiredVisible)
+      .filter(([, p]) => p.desiredVisible && !this.allHidden)
       .map(([id, p]) => [id, p.view.getBounds()] as [
         string,
         { x: number; y: number; width: number; height: number }

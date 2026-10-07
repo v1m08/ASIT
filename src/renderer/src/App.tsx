@@ -9,7 +9,7 @@ import { useFocusRing } from './hooks/useFocusRing'
 import { useFileDropGuard } from './hooks/useFileDrop'
 import HistoryModal from './components/HistoryModal'
 import AutomationsModal from './components/AutomationsModal'
-import CommandPalette from './components/CommandPalette'
+import CommandBar from './browser/CommandBar'
 import ShortcutsModal from './components/ShortcutsModal'
 import SettingsModal from './components/SettingsModal'
 
@@ -76,7 +76,7 @@ export default function App(): JSX.Element {
       {/* Mounted at the top so Ctrl+H reaches it from Home and a workspace. */}
       <HistoryModal />
       <AutomationsModal />
-      <CommandPalette />
+      <CommandBar />
       <ShortcutsModal />
       {/* Same reason: Ctrl+, used to set settingsOpen from a workspace, but
           the modal only existed on Home — nothing appeared until you went

@@ -29,6 +29,7 @@ export const IPC = {
 
   // panes (Phase 2)
   PANES_OPEN: 'panes:open',
+  PANES_CAPTURE_VISIBLE: 'panes:capture-visible',
   PANES_SET_BOUNDS: 'panes:set-bounds',
   PANES_SET_VISIBLE: 'panes:set-visible',
   PANES_NAVIGATE: 'panes:navigate',
@@ -80,6 +81,8 @@ export const IPC = {
 
   // Ad/tracker blocking + Chrome extensions for the embedded browser.
   BROWSER_STATS: 'browser:stats',
+  SEARCH_SUGGEST: 'search:suggest',
+  SEARCH_PRECONNECT: 'search:preconnect',
   BROWSER_EXT_LIST: 'browser:ext-list',
   BROWSER_EXT_ADD: 'browser:ext-add',
   BROWSER_EXT_REMOVE: 'browser:ext-remove',
@@ -271,6 +274,7 @@ export const IPC = {
   WORKFLOWS_CONFIRM: 'workflows:confirm', // the ONLY approval path (user click)
   WORKFLOWS_RUNS: 'workflows:runs',
   WORKFLOWS_RUN_STATE: 'workflows:run-state',
+  WORKFLOWS_DRAFT: 'workflows:draft', // describe → drafted steps; never saves or runs
   WORKFLOWS_IMPORT_SKILL: 'workflows:import-skill',
   WORKFLOWS_EVENT: 'workflows:event', // push M→R: step progress, confirm, done
 

@@ -24,7 +24,8 @@ function rowTo(row: Record<string, unknown>): HistoryEntry {
     title: (row.title as string) ?? '',
     taskId: (row.task_id as string) ?? null,
     visitCount: (row.visit_count as number) ?? 1,
-    lastVisitedAt: row.last_visited_at as string
+    lastVisitedAt: row.last_visited_at as string,
+    favicon: (row.favicon as string) ?? null
   }
 }
 
@@ -57,6 +58,14 @@ export function recordVisit(url: string, title: string, taskId: string | null): 
   ).run(newId(), clean, title.slice(0, 300), taskId, nowIso())
 }
 
+/** The page's icon, once Chromium reports it (arrives after the title). */
+export function recordFavicon(url: string, favicon: string | null): void {
+  if (!favicon || skip(url) || !/^(https?:|data:image\/)/i.test(favicon)) return
+  getDb()
+    .prepare('UPDATE history SET favicon = ? WHERE url = ?')
+    .run(favicon.slice(0, 2000), url.slice(0, 2000))
+}
+
 /**
  * Address-bar autocomplete. Ranked the way a browser ranks: things you go to
  * often and recently beat a closer string match you visited once.
@@ -78,12 +87,13 @@ export function searchHistory(query: string, limit = 8): HistoryEntry[] {
        WHERE lower(url) LIKE ? ESCAPE '\\' OR lower(title) LIKE ? ESCAPE '\\'
        ORDER BY
          -- a prefix hit on the host is what you almost always meant
-         CASE WHEN lower(url) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+         CASE WHEN lower(url) LIKE ? ESCAPE '\\' OR lower(url) LIKE ? ESCAPE '\\'
+              OR lower(url) LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
          visit_count DESC,
          last_visited_at DESC
        LIMIT ?`
     )
-    .all(like, like, `https://${q}%`, limit) as Record<string, unknown>[]
+    .all(like, like, `https://${q}%`, `https://www.${q}%`, `http://${q}%`, limit) as Record<string, unknown>[]
   return rows.map(rowTo)
 }
 

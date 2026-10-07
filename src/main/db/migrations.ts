@@ -272,6 +272,12 @@ const migrations: string[] = [
   CREATE INDEX idx_workflow_runs_recent ON workflow_runs(started_at DESC);
   ALTER TABLE schedules ADD COLUMN workflow_id TEXT;
   ALTER TABLE schedules ADD COLUMN params_json TEXT;
+  `,
+  // 16: history remembers each page's favicon, so the command bar can show
+  // icons for pages that aren't open (the URL Chromium reported; never fetched
+  // by main).
+  `
+  ALTER TABLE history ADD COLUMN favicon TEXT;
   `
 ]
 

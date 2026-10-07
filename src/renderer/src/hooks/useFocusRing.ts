@@ -207,7 +207,10 @@ export function installFocusRing(): () => void {
     const tabs = store.tabSurface
     switch (id) {
       case 'new-tab':
-        return tabs?.newTab?.()
+        // Arc: a new tab starts as the command bar, not a blank page. Picking
+        // nothing (Enter on an empty box) still gives you the new-tab page.
+        if (!tabs) return
+        return store.openCommandBar('new')
       case 'close-tab':
         return tabs?.closeTab?.()
       case 'reopen-tab':
@@ -238,6 +241,10 @@ export function installFocusRing(): () => void {
         // A split workspace has TWO address bars. Plain querySelector always
         // grabs the left one, so Ctrl+L in the right pane retyped the left
         // pane's URL. Prefer the bar inside whichever zone is focused.
+        // With a tab surface up, Ctrl+L is Arc's: the command bar, starting
+        // from the focused tab's address (whichever split side has focus —
+        // currentUrl follows focusedSlot).
+        if (tabs) return store.openCommandBar('current', tabs.currentUrl() ?? '')
         return focusSelector('.browser-address', '[data-focus-active]')
       case 'cycle-zone':
         return cycle(false)
@@ -298,7 +305,7 @@ export function installFocusRing(): () => void {
         return
       }
       case 'open-palette':
-        return store.setPaletteOpen(true)
+        return store.openCommandBar('new')
       case 'toggle-sidebar':
         return store.toggleSidebar()
       case 'toggle-chat': {

@@ -1,39 +1,25 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { HistoryEntry } from '@shared/types'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useOverlay } from '../hooks/useOverlay'
-import { searchUrl } from '../lib/search'
+import { useStore } from '../store/useStore'
+import { toNavUrl } from '../lib/url'
+import { OmniRowView, useOmnibox } from '../browser/useOmnibox'
 
-// The address bar, for every surface that shows a web page.
+// The address bar, for every surface that shows a web page — the sidebar
+// pill, the new-tab page's search box and the compact toolbar.
 //
 // The workspace had no editable address bar at all: the URL was a read-only
 // span, so the only ways to reach a page were the search tab or a link. Ctrl+L
 // targeted `.browser-address`, which existed solely on the standalone browser
 // screen — the shortcut was real and did nothing in a workspace. Rather than
 // give the workspace its own copy, both surfaces now render this.
+//
+// Its dropdown is the omnibox (browser/useOmnibox) — the same ranking as the
+// Ctrl+T command bar, minus the app-wide rows: the top row is always what
+// Enter does, then open tabs, engine suggestions, bookmarks and history, with
+// inline completion of the sites you visit.
 
-export function looksLikeUrl(v: string): boolean {
-  const t = v.trim()
-  if (!t || /\s/.test(t)) return false
-  if (/^(https?|file):\/\//i.test(t)) return true
-  if (/^localhost(:\d+)?(\/|$)/i.test(t)) return true
-  return /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?(\/|$|\?|#)/i.test(t)
-}
-
-/** What the user typed → where to go. Anything that isn't a URL is a search. */
-export function toNavUrl(v: string): string {
-  const t = v.trim()
-  if (/^(https?|file):/i.test(t)) return t
-  if (looksLikeUrl(t)) return `https://${t}`
-  return searchUrl(t)
-}
-
-export function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '')
-  } catch {
-    return url
-  }
-}
+// Re-exported for the many callers that import them from here.
+export { hostOf, looksLikeUrl, toNavUrl } from '../lib/url'
 
 export default function AddressBar({
   url,
@@ -67,8 +53,11 @@ export default function AddressBar({
   // null means "not editing" — show the live URL. A plain value-state would
   // freeze the bar on whatever was last typed while the page navigates on.
   const [draft, setDraft] = useState<string | null>(null)
-  const [suggestions, setSuggestions] = useState<HistoryEntry[]>([])
-  const [highlight, setHighlight] = useState(-1)
+  const [highlight, setHighlight] = useState(0)
+  const [allowComplete, setAllowComplete] = useState(false)
+  // Focusing swaps in the full URL; until you change it, there is nothing to
+  // suggest (and Enter just reloads where you are, as before).
+  const [edited, setEdited] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
 
@@ -81,55 +70,63 @@ export default function AddressBar({
 
   const close = useCallback((): void => {
     setDraft(null)
-    setSuggestions([])
-    setHighlight(-1)
+    setHighlight(0)
+    setAllowComplete(false)
+    setEdited(false)
   }, [])
 
-  // Debounced, and guarded against out-of-order replies: history lookups are
-  // async, so a slow one for "g" could otherwise land after "github" and
-  // replace good suggestions with stale ones.
+  const goUrl = (target: string, newTab: boolean): void => {
+    close()
+    inputRef.current?.blur()
+    const tabs = newTab ? useStore.getState().tabSurface : null
+    if (tabs) tabs.openInNewTab(target)
+    else onNavigate(target)
+  }
+
+  // Nothing typed, nothing to suggest: simply focusing the box must not drop
+  // a list over whatever is behind it (the NTP autofocuses its box).
+  const typed = draft ?? ''
+  const editing = draft !== null && edited
+  const { rows, completion } = useOmnibox(editing ? typed : '', {
+    open: editing,
+    includeApp: false,
+    emptyRows: false,
+    allowComplete,
+    go: goUrl
+  })
+  const shown =
+    draft === null ? (idleLabel ?? url ?? '') : typed + (editing ? (completion?.text ?? '') : '')
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el || !completion || document.activeElement !== el) return
+    el.setSelectionRange(typed.length, shown.length)
+  }, [shown, typed, completion])
   useEffect(() => {
-    if (draft === null) return
-    // Nothing typed, nothing to suggest. An empty query returns the top-sites
-    // ranking, which meant simply focusing the box dropped a list over
-    // whatever was behind it — on the new-tab page that is the dashboard, and
-    // the box autofocuses, so the page opened with its own content covered.
-    if (!draft.trim()) {
-      setSuggestions([])
-      setHighlight(-1)
-      return
-    }
-    let live = true
-    const t = setTimeout(() => {
-      void window.asit.history.search(draft, 8).then((rows) => {
-        if (live) {
-          setSuggestions(rows)
-          setHighlight(-1)
-        }
-      })
-    }, 90)
-    return () => {
-      live = false
-      clearTimeout(t)
-    }
-  }, [draft])
+    setHighlight((h) => Math.min(h, Math.max(0, rows.length - 1)))
+  }, [rows.length])
 
   // Clicking anywhere else closes the dropdown. Pages paint over app DOM, so
   // a click that lands on a pane never reaches us — blur covers that case.
   useEffect(() => {
-    if (suggestions.length === 0) return
+    if (rows.length === 0) return
     const onDown = (e: MouseEvent): void => {
       if (!boxRef.current?.contains(e.target as Node)) close()
     }
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
-  }, [suggestions.length, close])
+  }, [rows.length, close])
 
-  const go = (value: string): void => {
-    if (!value.trim()) return
-    close()
-    inputRef.current?.blur()
-    onNavigate(toNavUrl(value))
+  const submit = (newTab: boolean): void => {
+    const pick = rows[highlight]
+    if (pick) {
+      close()
+      inputRef.current?.blur()
+      pick.run({ newTab })
+      return
+    }
+    const value = draft ?? url
+    if (!value?.trim()) return
+    goUrl(toNavUrl(value), newTab)
   }
 
   return (
@@ -140,12 +137,18 @@ export default function AddressBar({
         autoFocus={autoFocus}
         placeholder={placeholder}
         spellCheck={false}
-        value={draft ?? idleLabel ?? url ?? ''}
+        autoComplete="off"
+        value={shown}
         onChange={(e) => {
+          const kind = (e.nativeEvent as InputEvent).inputType ?? ''
+          setAllowComplete(!kind.startsWith('delete'))
           setDraft(e.target.value)
+          setEdited(true)
+          setHighlight(0)
           onDraftChange?.(e.target.value)
         }}
         onFocus={(e) => {
+          window.asit.browser.preconnect()
           // The real address, not the idle label — then select it all once
           // React has swapped it in.
           setDraft(url ?? e.target.value)
@@ -159,7 +162,7 @@ export default function AddressBar({
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && e.shiftKey && onAltSubmit) {
-            const value = (draft ?? '').trim()
+            const value = typed.trim()
             if (value) {
               close()
               onAltSubmit(value)
@@ -167,8 +170,14 @@ export default function AddressBar({
             return
           }
           if (e.key === 'Enter') {
-            const pick = highlight >= 0 ? suggestions[highlight] : null
-            go(pick ? pick.url : (draft ?? url))
+            submit(e.metaKey || e.ctrlKey)
+            return
+          }
+          if (e.key === 'Tab' && completion && !e.shiftKey) {
+            e.preventDefault()
+            setDraft(typed + completion.text)
+            setEdited(true)
+            setAllowComplete(false)
             return
           }
           if (e.key === 'Escape') {
@@ -176,32 +185,32 @@ export default function AddressBar({
             inputRef.current?.blur()
             return
           }
-          if (e.key === 'ArrowDown' && suggestions.length > 0) {
+          if (e.key === 'ArrowDown' && rows.length > 0) {
             e.preventDefault()
-            setHighlight((h) => (h + 1) % suggestions.length)
+            setHighlight((h) => (h + 1) % rows.length)
             return
           }
-          if (e.key === 'ArrowUp' && suggestions.length > 0) {
+          if (e.key === 'ArrowUp' && rows.length > 0) {
             e.preventDefault()
-            setHighlight((h) => (h <= 0 ? suggestions.length - 1 : h - 1))
+            setHighlight((h) => (h <= 0 ? rows.length - 1 : h - 1))
           }
         }}
       />
-      {draft !== null && suggestions.length > 0 && (
-        <div className="address-suggestions">
-          {suggestions.map((s, i) => (
-            <div
-              key={s.id}
-              className={`address-suggestion ${i === highlight ? 'address-suggestion-on' : ''}`}
-              onMouseEnter={() => setHighlight(i)}
-              onMouseDown={(e) => {
-                e.preventDefault() // keep focus so onBlur doesn't race the click
-                go(s.url)
+      {editing && typed.trim() && rows.length > 0 && (
+        <div className="address-suggestions omni-list">
+          {rows.map((row, i) => (
+            <OmniRowView
+              key={row.id}
+              row={row}
+              query={typed}
+              on={i === highlight}
+              onHover={() => setHighlight(i)}
+              onPick={(newTab) => {
+                close()
+                inputRef.current?.blur()
+                row.run({ newTab })
               }}
-            >
-              <span className="address-suggestion-title">{s.title || hostOf(s.url)}</span>
-              <span className="address-suggestion-url">{hostOf(s.url)}</span>
-            </div>
+            />
           ))}
         </div>
       )}

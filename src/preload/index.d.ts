@@ -70,6 +70,7 @@ declare global {
         park: () => Promise<void>
         typeActive: (text: string) => Promise<string>
         focus: (paneId: string) => Promise<void>
+        captureVisible: () => Promise<{ x: number; y: number; w: number; h: number; src: string }[]>
         domFocus: (focused: boolean) => void
         find: (paneId: string, text: string, forward?: boolean, findNext?: boolean) => Promise<void>
         findStop: (paneId: string) => Promise<void>
@@ -120,6 +121,8 @@ declare global {
       }
       browser: {
         stats: () => Promise<{ blocked: number }>
+        suggest: (q: string) => Promise<string[]>
+        preconnect: () => void
         extList: () => Promise<{ name: string; id: string; path: string }[]>
         extAdd: () => Promise<{ ok: boolean; message: string }>
         extRemove: (path: string) => Promise<void>
@@ -178,6 +181,23 @@ declare global {
         runs: (limit?: number) => Promise<WorkflowRun[]>
         runState: () => Promise<WorkflowRun | null>
         importSkill: (name: string) => Promise<{ ok: boolean; reason?: string }>
+        draft: (input: {
+          description: string
+          taskId: string | null
+          usePage?: boolean
+          current?: { name: string; description: string; params: WorkflowParam[]; steps: WorkflowStep[] }
+        }) => Promise<{
+          ok: boolean
+          reason?: string
+          warning?: string
+          draft?: {
+            name: string
+            description: string
+            params: WorkflowParam[]
+            steps: WorkflowStep[]
+            taskId: string | null
+          }
+        }>
       }
       schedules: {
         list: () => Promise<

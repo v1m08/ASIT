@@ -10,6 +10,8 @@ import { getSettings, setSettings } from './settings'
 // domain blocking kills the requests that cost bandwidth, battery and tracking,
 // with no per-request regex work on the hot path. Custom domains from settings
 // are merged in, so anything missed can be added without a code change.
+// Matching happens in Chromium's URL filter, never per request in JS (see
+// initBrowserFilters).
 
 const BLOCKLIST = [
   // ad exchanges / serving
@@ -34,44 +36,46 @@ const BLOCKLIST = [
 ]
 
 let blockedCount = 0
-let wired = false
-
-/** Host matches the domain, or is a subdomain of it. */
-function hostMatches(host: string, domain: string): boolean {
-  return host === domain || host.endsWith('.' + domain)
-}
+let filterKey: string | null = null
 
 function activeBlocklist(): string[] {
   const custom = (getSettings().blockedDomains ?? [])
     .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, ''))
-    .filter(Boolean)
-  return [...BLOCKLIST, ...custom]
+    .filter((d) => /^[a-z0-9.-]+$/.test(d))
+  return [...new Set([...BLOCKLIST, ...custom])]
 }
 
 /**
- * Installed once on the browse partition. The handler stays installed and
- * checks the setting per request, so toggling takes effect immediately
- * without re-registering (Electron allows only one handler per session).
+ * Blocking lives in the URL FILTER, not the handler. A catch-all filter
+ * (`*://*\/*`) sent every request a page made — a results page makes well
+ * over a hundred — to the main process and made it wait there for a JS
+ * callback. Whenever main was busy (sqlite, a snapshot, an agent turn), every
+ * page load stalled with it. Measured on a Google search: the catch-all
+ * hooks added ~15–20% to load time even with main idle. Now Chromium does
+ * the matching natively, and only requests to a blocked host ever reach JS,
+ * where the answer is always "cancel".
+ *
+ * `*.example.com` in a match pattern also matches example.com itself.
+ * Re-registering replaces the previous listener (one per session), so a
+ * settings change re-runs this; null unregisters it when blocking is off.
  */
 export function initBrowserFilters(): void {
-  if (wired) return
-  wired = true
+  const settings = getSettings()
+  const domains = settings.adBlock ? activeBlocklist() : []
+  const key = domains.join(',')
+  if (key === filterKey) return
+  filterKey = key
   const ses = session.fromPartition('persist:asit-browse')
-  ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (details, callback) => {
-    if (!getSettings().adBlock) return callback({})
+  if (domains.length === 0) {
+    ses.webRequest.onBeforeRequest(null)
+    return
+  }
+  const urls = domains.map((d) => `*://*.${d}/*`)
+  ses.webRequest.onBeforeRequest({ urls }, (details, callback) => {
     // Never block the page the user actually asked for — only subresources.
     if (details.resourceType === 'mainFrame') return callback({})
-    let host: string
-    try {
-      host = new URL(details.url).hostname.toLowerCase()
-    } catch {
-      return callback({})
-    }
-    if (activeBlocklist().some((d) => hostMatches(host, d))) {
-      blockedCount++
-      return callback({ cancel: true })
-    }
-    callback({})
+    blockedCount++
+    callback({ cancel: true })
   })
 }
 

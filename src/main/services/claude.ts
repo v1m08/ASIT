@@ -365,10 +365,12 @@ export function runClaudeOnce(opts: {
   allowedTools?: string
   maxTurns?: number
   timeoutMs?: number
+  model?: string
 }): Promise<{ text: string; claudeSessionId: string | null; usage: ClaudeUsage }> {
   return new Promise((resolve, reject) => {
     const args = ['-p', '--output-format', 'json', '--max-turns', String(opts.maxTurns ?? 10)]
     if (opts.allowedTools !== undefined) args.push('--allowedTools', opts.allowedTools)
+    if (opts.model && opts.model !== 'default') args.push('--model', opts.model)
 
     let child: ChildProcess
     try {

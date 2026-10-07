@@ -22,6 +22,7 @@ const DEFAULTS: Settings = {
   jarvisModel: 'default',
   searchEngine: 'google',
   searchUrlCustom: '',
+  searchSuggestions: true,
   adBlock: true, // the user asked for ads filtered by default
   blockedDomains: [],
   declutter: true,

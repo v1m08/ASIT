@@ -78,6 +78,7 @@ export interface HistoryEntry {
   taskId: string | null
   visitCount: number
   lastVisitedAt: string
+  favicon?: string | null
 }
 
 export interface ChatMessage {
@@ -110,6 +111,7 @@ export interface Settings {
   // Browser behaviour the user controls.
   searchEngine: SearchEngine
   searchUrlCustom: string // used when searchEngine === 'custom'; {q} = query
+  searchSuggestions: boolean // type-ahead from the engine in the command bar
   adBlock: boolean
   blockedDomains: string[]
   // Cosmetic decluttering of embedded pages (consent walls, chat bubbles,
@@ -183,7 +185,10 @@ export interface WorkspaceLayout {
 // A workflow is a saved sequence of steps a user (or chat, via save_workflow)
 // authored: deterministic app actions for cheap replay, bounded model steps
 // for the parts needing judgment, confirm gates for the irreversible bits.
-// Deliberately NOT a DAG: branching's escape hatch is a prompt step.
+// Control flow is deliberately small: `if` on a page condition and `foreach`
+// over a list — enough to apply to N postings deterministically, without
+// growing into a programming language. Values flow between steps as run
+// VARIABLES: params, `extract`, `set`, and a prompt step's `into`.
 
 export type WorkflowStepFailure = 'stop' | 'continue' | { retry: number; delay_ms?: number }
 
@@ -200,6 +205,8 @@ export type WorkflowStep =
        *  (never Bash, never send authority — see services/workflows.ts). */
       prompt: string
       timeout_min?: number
+      /** Store the model's final answer in this variable ({{into}} later). */
+      into?: string
       on_failure?: WorkflowStepFailure
     }
   | {
@@ -224,6 +231,59 @@ export type WorkflowStep =
       /** true = assert the condition is ABSENT. */
       invert?: boolean
       on_failure?: WorkflowStepFailure
+    }
+  | {
+      /** Fill many labelled fields at once: { "First name": "{{first_name}}" }.
+       *  Matches <label>, aria-labelledby, placeholder, name and the question
+       *  above the field; sets selects, checkboxes and radios too. */
+      kind: 'fill_form'
+      fields: Record<string, string>
+      page?: number
+      /** Succeed even if some fields weren't on the page. */
+      allow_missing?: boolean
+      on_failure?: WorkflowStepFailure
+    }
+  | {
+      /** Read a value off the page into a variable. One of label / selector /
+       *  pattern (regex, first group) / from ('url' | 'title'). */
+      kind: 'extract'
+      into: string
+      label?: string
+      selector?: string
+      pattern?: string
+      from?: 'url' | 'title'
+      page?: number
+      on_failure?: WorkflowStepFailure
+    }
+  | {
+      /** Set a variable from a template: "{{first}} {{last}}". */
+      kind: 'set'
+      name: string
+      value: string
+    }
+  | {
+      /** Run `steps` once per item. `items` is a template that expands to a
+       *  list — one item per line (or comma-separated on a single line). */
+      kind: 'foreach'
+      items: string
+      as: string
+      steps: WorkflowStep[]
+      /** What a failed item does: skip to the next (default) or stop. */
+      on_item_failure?: 'continue' | 'stop'
+      max_items?: number
+    }
+  | {
+      /** Branch on a page condition (same matching as wait_for/assert), or
+       *  on a variable being non-empty (`var`). */
+      kind: 'if'
+      label?: string
+      text?: string
+      url_contains?: string
+      var?: string
+      invert?: boolean
+      page?: number
+      then: WorkflowStep[]
+      else?: WorkflowStep[]
     }
 
 export interface WorkflowParam {
@@ -255,6 +315,8 @@ export type WorkflowRunStatus =
 
 export interface WorkflowStepResult {
   index: number
+  /** "3", or "3[2/5].1" inside a loop, "4.then.1" inside a branch. */
+  path?: string
   kind: string
   outcome: string
   ok: boolean

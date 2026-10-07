@@ -648,8 +648,12 @@ export default function PaneGrid({
   const openWebTabRef = useRef(openWebTab)
   const closeActiveTabRef = useRef<(() => void) | null>(null)
   const cycleTabRef = useRef<((dir: 1 | -1) => void) | null>(null)
+  const navigateFocusedRef = useRef(navigateFocused)
+  const tabLabelRef = useRef(tabLabel)
   openResourceRef.current = openResource
   openWebTabRef.current = openWebTab
+  navigateFocusedRef.current = navigateFocused
+  tabLabelRef.current = tabLabel
   closeActiveTabRef.current = () => {
     const slot = focusSlot()
     const id = validLayout.active[slot]
@@ -817,7 +821,36 @@ export default function PaneGrid({
           }
         })
       },
-      toggleDirection
+      toggleDirection,
+      listTabs: () => {
+        const live = layoutRef.current
+        const activeNow = live.active[focusSlot()]
+        return [...live.slots[0], ...live.slots[1]].flatMap((id) => {
+          const info = tabInfoFor(id, task, resources, live.webTabs)
+          if (!info) return []
+          const nav = info.viewBacked ? navStatesRef.current[id] : undefined
+          const raw = nav?.url || live.webTabs?.[id] || info.resource?.url || null
+          const url = raw && !isNewTabUrl(raw) ? raw : null
+          return [
+            {
+              id,
+              title: tabLabelRef.current(info),
+              url,
+              favicon: nav?.favicon ?? null,
+              active: id === activeNow,
+              kind: info.kind
+            }
+          ]
+        })
+      },
+      selectTab: (id) => {
+        const live = layoutRef.current
+        const slot: 0 | 1 = live.slots[1].includes(id) ? 1 : 0
+        if (live.slots[slot].includes(id)) selectTab(slot, id)
+      },
+      navigateCurrent: (url) => navigateFocusedRef.current(url),
+      openInNewTab: (url) => openWebTabRef.current?.(url),
+      currentUrl: activeUrl
     })
     return () => setTabSurface(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -987,7 +1020,12 @@ export default function PaneGrid({
           const t = tabs.find((x) => x.id === id)
           if (t) void tabMenu(slotIndex, t)
         }}
-        onNewTab={() => openWebTab(NEW_TAB_URL, slotIndex)}
+        onNewTab={() => {
+          // Arc: "+ New Tab" is the command bar. Focus the side it was
+          // clicked on first, so the tab lands there.
+          setFocusedSlot(slotIndex)
+          useStore.getState().openCommandBar('new')
+        }}
         // In the sidebar ⇄ only earns its row space during a split; "open in
         // split" stays on the tab's context menu.
         onMoveTab={vertical && !bothSlotsUsed ? undefined : (id) => moveTab(slotIndex, id)}

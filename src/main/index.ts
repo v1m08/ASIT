@@ -238,6 +238,10 @@ app.whenReady().then(() => {
     runWorkflowsSmokeTest()
     return
   }
+  if (process.env.ASIT_SMOKE_DRAFT === '1') {
+    runDraftSmokeTest()
+    return
+  }
   if (process.env.ASIT_SMOKE_GOOGLE === '1') {
     runGoogleSigninProbe()
     return
@@ -1785,6 +1789,49 @@ async function runUiSmokeTest(): Promise<void> {
     }
     console.log(`[ui-smoke] no pane overlaps any of the ${chrome.length} app controls on screen`)
 
+    // The command bar (Ctrl+T / Ctrl+L): it floats over the page, so it must
+    // photograph the visible pages, then hide them (invariant 2) — and what
+    // you type must actually go somewhere.
+    {
+      const before = await evalIn<number>(`document.querySelectorAll('.tab-strip .tab').length`)
+      await evalIn(`window.__asitStore.getState().openCommandBar('new')`)
+      await waitFor(`document.querySelector('.cmdbar-input')`, 'the command bar')
+      await waitFor(
+        `document.activeElement === document.querySelector('.cmdbar-input')`,
+        'the command bar to take the caret'
+      )
+      // Rows exist on an empty box (new-tab page + your tabs).
+      await waitFor(`document.querySelectorAll('.cmdbar .omni-row').length > 0`, 'empty-box rows')
+      await evalIn(`(() => {
+        const el = document.querySelector('.cmdbar-input')
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, ${JSON.stringify(siteUrl + '?from=cmdbar')})
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      })()`)
+      await waitFor(
+        `document.querySelector('.cmdbar .omni-row-on.omni-go')`,
+        'the top row to be "open this address"'
+      )
+      await evalIn(`document.querySelector('.cmdbar-input').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`)
+      await waitFor(`!document.querySelector('.cmdbar')`, 'the command bar to close')
+      await waitFor(
+        `document.querySelectorAll('.tab-strip .tab').length === ${before + 1}`,
+        'Ctrl+T + Enter to open a new tab'
+      )
+      // Ctrl+L on that tab starts from its address.
+      await new Promise((r) => setTimeout(r, 600))
+      await evalIn(`window.__asitStore.getState().openCommandBar('current',
+        window.__asitStore.getState().tabSurface.currentUrl() || '')`)
+      await waitFor(`document.querySelector('.cmdbar-input')`, 'the Ctrl+L bar')
+      const prefilled = await evalIn<string>(`document.querySelector('.cmdbar-input').value`)
+      if (!prefilled.includes('from=cmdbar')) fail(`Ctrl+L did not start from the tab's URL ("${prefilled}")`)
+      await evalIn(`document.querySelector('.cmdbar-input').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+      await waitFor(`!document.querySelector('.cmdbar')`, 'Escape to close the bar')
+    }
+    console.log('[ui-smoke] command bar: opens over the page, Enter opens a tab, Ctrl+L starts from the URL')
+
     // Call the bridge the way the screens do. A registered handler can still
     // throw on real data, and the renderer only ever sees "Error invoking
     // remote method 'x'" with the cause buried — so exercise the read-only
@@ -1915,6 +1962,39 @@ async function runUiSmokeTest(): Promise<void> {
         await clickTab('Field Notes')
         await shoot(`${base}-compact.png`)
         await clickTitle('Show sidebar')
+        // The command bar over a page, with a query that has rows.
+        await clickTab('Field Notes')
+        await evalIn(`window.__asitStore.getState().openCommandBar('new')`)
+        await new Promise((r) => setTimeout(r, 400))
+        await evalIn(`(() => {
+          const el = document.querySelector('.cmdbar-input')
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+          setter.call(el, 'fi')
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+        })()`)
+        await shoot(`${base}-cmdbar.png`)
+        await evalIn(`window.__asitStore.getState().closeCommandBar()`)
+        // The workflow editor on a real multi-step workflow (cards, loop,
+        // params) — drafted ones land in exactly this view.
+        await evalIn(`window.asit.workflows.save({
+          name: 'apply-to-internships', taskId: ${JSON.stringify(task.id)},
+          description: 'Apply to each posting with my details; ask before submitting',
+          params: [{ name: 'job_urls', label: 'Posting links' }, { name: 'first_name', label: 'First name', default: 'Ada' },
+                   { name: 'email', label: 'Email', default: 'ada@example.com' }],
+          steps: [{ kind: 'foreach', items: '{{job_urls}}', as: 'job', steps: [
+            { kind: 'action', action: { action: 'navigate', url: '{{job}}' } },
+            { kind: 'extract', into: 'company', selector: 'h1 .company' },
+            { kind: 'fill_form', allow_missing: true, fields: { 'First Name': '{{first_name}}', 'Email': '{{email}}' } },
+            { kind: 'prompt', prompt: 'Write a 3-sentence answer to “Why {{company}}?” from the posting.', into: 'why' },
+            { kind: 'confirm', message: 'Submit the application to {{company}}?' },
+            { kind: 'action', action: { action: 'page_click', label: 'Submit application' } }
+          ] }]
+        })`)
+        await evalIn(`window.__asitStore.getState().setAutomationsOpen(true)`)
+        await new Promise((r) => setTimeout(r, 700))
+        await evalIn(`document.querySelector('.automations-modal button[title="Edit"]')?.click()`)
+        await shoot(`${base}-workflows.png`)
+        await evalIn(`window.__asitStore.getState().setAutomationsOpen(false)`)
         win.setBounds({ x: -3000, y: -3000, width: 1400, height: 900 })
         console.log(`[ui-smoke] screenshot written to ${shotPath}`)
       } catch (err) {
@@ -2401,6 +2481,85 @@ async function runGoogleSigninProbe(): Promise<void> {
   }
 }
 
+// MANUAL (needs a logged-in Claude CLI, so not in scripts/smoke.cjs):
+// ASIT_SMOKE_DRAFT=1 drafts the internship workflow from plain words against
+// a local application form, with "use the open page" on, and checks the
+// draft is valid, uses the page's real labels, and gates the submit.
+async function runDraftSmokeTest(): Promise<void> {
+  const { createServer } = await import('http')
+  const tasksSvc = await import('./services/tasks')
+  const { draftWorkflow } = await import('./services/workflowDraft')
+  const fail = (msg: string): never => {
+    console.error('[draft-smoke] FAIL:', msg)
+    app.exit(1)
+    throw new Error(msg)
+  }
+  try {
+    const server = createServer((_req, res) => {
+      res.setHeader('content-type', 'text/html')
+      res.end(
+        `<title>Apply — Acme</title><h1>Software Intern · <span class="company">Acme</span></h1>` +
+          `<label for="fn">Legal First Name *</label><input id="fn" required>` +
+          `<label for="ln">Legal Last Name *</label><input id="ln" required>` +
+          `<label for="em">Email *</label><input id="em" type="email" required>` +
+          `<label for="sc">School</label><input id="sc">` +
+          `<label for="why">Why do you want to work at Acme?</label><textarea id="why"></textarea>` +
+          `<label for="cv">Resume/CV</label><input id="cv" type="file">` +
+          `<button>Submit Application</button>`
+      )
+    })
+    const port = await new Promise<number>((r) =>
+      server.listen(0, '127.0.0.1', () => r((server.address() as { port: number }).port))
+    )
+    const win = new BrowserWindow({ show: false, width: 900, height: 700, x: -3000, y: -3000 })
+    paneManager.attach(win)
+    const task = tasksSvc.createTask({ title: 'Draft Smoke' })
+    paneManager.open('draft-pane', { url: `http://127.0.0.1:${port}/` }, task.id)
+    paneManager.setBounds('draft-pane', { x: 0, y: 0, width: 900, height: 700 })
+    paneManager.setVisible('draft-pane', true)
+    for (let i = 0; i < 20 && !(await paneManager.existsCondition(task.id, { text: 'Submit Application' })); i++)
+      await new Promise((r) => setTimeout(r, 300))
+
+    const t0 = Date.now()
+    const res = await draftWorkflow({
+      description:
+        'Fill this internship application with my details (first name, last name, email, school), write a short ' +
+        'answer to the why-this-company question, remind me to attach my resume, and ask me before submitting.',
+      taskId: task.id,
+      usePage: true
+    })
+    console.log(`[draft-smoke] drafted in ${((Date.now() - t0) / 1000).toFixed(1)}s`)
+    if (!res.ok || !res.draft) fail(`draft failed: ${res.reason}`)
+    console.log(JSON.stringify(res.draft, null, 2))
+    if (res.warning) fail(`draft still invalid after repair: ${res.warning}`)
+    const flat: Record<string, unknown>[] = []
+    const walk = (steps: unknown[]): void => {
+      for (const st of steps as Record<string, unknown>[]) {
+        flat.push(st)
+        for (const k of ['steps', 'then', 'else']) if (Array.isArray(st[k])) walk(st[k] as unknown[])
+      }
+    }
+    walk(res.draft!.steps)
+    const labels = flat.flatMap((st) => (st.kind === 'fill_form' ? Object.keys(st.fields as object) : []))
+    if (!labels.some((l) => /legal first name/i.test(l)))
+      fail(`draft did not use the page's real label "Legal First Name" (got ${labels.join(', ')})`)
+    const submitAt = flat.findIndex(
+      (st) => st.kind === 'action' && /submit/i.test(String((st.action as Record<string, unknown>)?.label ?? ''))
+    )
+    const confirmAt = flat.findIndex((st) => st.kind === 'confirm')
+    if (submitAt >= 0 && (confirmAt < 0 || confirmAt > submitAt)) fail('no confirm gate before the submit click')
+    if (!flat.some((st) => st.kind === 'prompt' && st.into)) fail('the why-us answer is not a prompt step with "into"')
+    console.log('[draft-smoke] real labels, confirm before submit, judgment isolated in a prompt→variable ✓')
+    tasksSvc.deleteTask(task.id)
+    server.close()
+    console.log('[draft-smoke] ALL PASS')
+    app.exit(0)
+  } catch (err) {
+    console.error('[draft-smoke] FAIL:', err)
+    app.exit(1)
+  }
+}
+
 // Headless workflow-engine check: ASIT_SMOKE_WORKFLOWS=1 electron out/main/index.js
 // CLI-free: proves the runner end to end — param substitution, per-step
 // outcomes, on_failure continue vs stop, wait_for timeout against a live
@@ -2435,8 +2594,27 @@ async function runWorkflowsSmokeTest(): Promise<void> {
   }
 
   try {
-    const server = createServer((_req, res) => {
+    const server = createServer((req, res) => {
       res.setHeader('content-type', 'text/html')
+      // /form?c=X — shaped like a real applicant-tracking form: fields named
+      // by <label for>, a question above a radio group, a select, a checkbox,
+      // and the two inputs a workflow must refuse (password, file).
+      if (req.url?.startsWith('/form')) {
+        const company = new URL(req.url, 'http://x').searchParams.get('c') ?? 'Nobody'
+        res.end(
+          `<title>Apply — ${company}</title><h1>Application · <span class="company">${company}</span></h1>` +
+            `<label for="fn">First Name *</label><input id="fn" name="job_application[first_name]">` +
+            `<label for="em">Email address</label><input id="em" type="email">` +
+            `<label for="gy">Graduation year</label><select id="gy"><option>Select…</option><option>2026</option><option>2027</option></select>` +
+            `<label><input type="checkbox" id="auth"> I am authorized to work in the US</label>` +
+            `<fieldset><legend>Will you need sponsorship?</legend>` +
+            `<label><input type="radio" name="sp" value="y"> Yes</label><label><input type="radio" name="sp" value="n"> No</label></fieldset>` +
+            `<label for="pw">Password</label><input id="pw" type="password">` +
+            `<label for="cv">Resume</label><input id="cv" type="file">` +
+            `<button>Submit application</button>`
+        )
+        return
+      }
       res.end('<title>WF</title><button aria-label="Alpha Button">Alpha Button</button>')
     })
     const port = await new Promise<number>((resolve) => {
@@ -2518,6 +2696,99 @@ async function runWorkflowsSmokeTest(): Promise<void> {
     if (todos.listTodos().some((t) => t.text === 'must-not-exist'))
       fail('a step after a failure still executed')
     console.log('[workflows-smoke] a failed step stops the run by default ✓')
+
+    // The deterministic application loop: foreach over postings, extract,
+    // fill_form across label shapes, if-on-variable, set — no model at all.
+    const base = `http://127.0.0.1:${port}`
+    const apply = wf.saveWorkflow({
+      name: 'smoke-apply',
+      taskId: task.id,
+      params: [
+        { name: 'job_urls', required: true },
+        { name: 'first_name', default: 'Ada' }
+      ],
+      steps: [
+        {
+          kind: 'foreach',
+          items: '{{job_urls}}',
+          as: 'job',
+          steps: [
+            { kind: 'action', action: { action: 'navigate', url: '{{job}}' } },
+            { kind: 'wait_for', text: 'Submit application', timeout_min: 0.5 },
+            { kind: 'extract', into: 'company', selector: 'h1 .company' },
+            {
+              kind: 'fill_form',
+              allow_missing: true,
+              fields: {
+                'First Name': '{{first_name}}',
+                'Email address': 'ada@example.com',
+                'Graduation year': '2027',
+                'I am authorized to work': 'true',
+                'Will you need sponsorship?': 'No',
+                Password: 'hunter2',
+                Resume: 'cv.pdf'
+              }
+            },
+            { kind: 'extract', into: 'typed', label: 'First Name' },
+            {
+              kind: 'if',
+              var: 'company',
+              then: [{ kind: 'action', action: { action: 'add_todo', value: 'Applied to {{company}} as {{typed}}' } }]
+            }
+          ]
+        },
+        { kind: 'set', name: 'summary', value: '{{first_name}} applied' }
+      ]
+    })
+    if (!apply.ok) fail(`smoke-apply save failed: ${apply.reason}`)
+    const applyRun = await wf.runWorkflow('smoke-apply', {
+      params: { job_urls: `${base}/form?c=Acme\n${base}/form?c=Globex` }
+    })
+    if (!applyRun.started) fail(`smoke-apply did not start: ${applyRun.reason}`)
+    await waitRun(applyRun.runId!, 'succeeded', 120_000)
+    for (const c of ['Acme', 'Globex'])
+      if (!todos.listTodos().some((t) => t.text === `Applied to ${c} as Ada`))
+        fail(`no "Applied to ${c} as Ada" to-do — loop/extract/if did not carry variables`)
+    const applied = wf.getRun(applyRun.runId!)!
+    const fillLines = applied.stepResults.filter((r) => r.kind === 'fill_form')
+    if (fillLines.length !== 2) fail(`expected 2 fill_form results, got ${fillLines.length}`)
+    if (!/filled 5\/7/.test(fillLines[0].outcome)) fail(`fill_form did not fill the 5 fillable fields: ${fillLines[0].outcome}`)
+    if (!/Password \(password field/.test(fillLines[0].outcome) || !/Resume \(file upload/.test(fillLines[0].outcome))
+      fail(`fill_form did not refuse password/file fields: ${fillLines[0].outcome}`)
+    const wc = paneManager.viewForSmoke('wf-pane')!.webContents
+    const state = (await wc.executeJavaScript(`({
+      fn: document.getElementById('fn').value,
+      gy: document.getElementById('gy').value,
+      auth: document.getElementById('auth').checked,
+      sp: (document.querySelector('input[name=sp]:checked') || {}).value || null,
+      pw: document.getElementById('pw').value
+    })`)) as { fn: string; gy: string; auth: boolean; sp: string | null; pw: string }
+    if (state.fn !== 'Ada' || state.gy !== '2027' || !state.auth || state.sp !== 'n')
+      fail(`form not filled as expected: ${JSON.stringify(state)}`)
+    if (state.pw) fail('a workflow typed into a password field')
+    if (!applied.stepResults.some((r) => r.path === '1[2/2].4')) fail('nested step paths missing from results')
+    console.log('[workflows-smoke] foreach/extract/fill_form/if/set: two applications filled, no model ✓')
+
+    // Nested blocks get the same walls as the top level.
+    const nestedBad = wf.saveWorkflow({
+      name: 'smoke-nested-bad',
+      taskId: task.id,
+      steps: [{ kind: 'foreach', items: 'a', as: 'x', steps: [{ kind: 'action', action: { action: 'send_whatsapp', value: 'hi' } }] }]
+    })
+    if (nestedBad.ok) fail('a forbidden verb inside a foreach was accepted')
+    const tooDeep = wf.saveWorkflow({
+      name: 'smoke-too-deep',
+      taskId: task.id,
+      steps: [{ kind: 'if', var: 'a', then: [{ kind: 'if', var: 'b', then: [{ kind: 'if', var: 'c', then: [{ kind: 'set', name: 'd', value: '1' }] }] }] }]
+    })
+    if (tooDeep.ok) fail('nesting deeper than the cap was accepted')
+    const globalModel = wf.saveWorkflow({
+      name: 'smoke-global-nested-model',
+      taskId: null,
+      steps: [{ kind: 'foreach', items: 'a', as: 'x', steps: [{ kind: 'prompt', prompt: 'hi' }] }]
+    })
+    if (globalModel.ok) fail('a global workflow hid a model step inside a loop')
+    console.log('[workflows-smoke] nested forbidden verbs, depth cap, nested global model steps refused ✓')
 
     // Runs persist; a row left "running" by a dead process sweeps to interrupted.
     if (wf.listRuns().length < 2) fail('run history missing rows')

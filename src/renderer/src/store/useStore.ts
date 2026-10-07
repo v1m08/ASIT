@@ -37,6 +37,35 @@ export interface TabSurface {
   addFile?: () => void
   toggleSplit?: () => void
   toggleDirection?: () => void
+  // What the command bar needs. All read live state (refs), never a render
+  // closure — the bar calls them long after the surface registered.
+  /** Every tab in this space, both split sides, in strip order. */
+  listTabs: () => SurfaceTab[]
+  /** Bring a tab of this space to the front (its own split side). */
+  selectTab: (id: string) => void
+  /** Load a URL in the focused tab (converting a new-tab page in place). */
+  navigateCurrent: (url: string) => void
+  /** Open a URL in a new tab beside the focused one. */
+  openInNewTab: (url: string) => void
+  /** The focused tab's page address, or null (NTP, notes, …). */
+  currentUrl: () => string | null
+}
+
+export interface SurfaceTab {
+  id: string
+  title: string
+  url: string | null
+  favicon: string | null
+  active: boolean
+  kind: string
+}
+
+/** The command bar: 'new' opens what you pick in a new tab (Ctrl+T, +);
+ *  'current' replaces the focused tab and starts from its URL (Ctrl+L). */
+export interface CommandBarState {
+  mode: 'new' | 'current'
+  initial: string
+  at: number
 }
 
 interface AsitState {
@@ -114,6 +143,9 @@ interface AsitState {
   setAutomationsOpen: (open: boolean) => void
   paletteOpen: boolean
   setPaletteOpen: (open: boolean) => void
+  commandBar: CommandBarState | null
+  openCommandBar: (mode: 'new' | 'current', initial?: string) => void
+  closeCommandBar: () => void
   shortcutsOpen: boolean
   setShortcutsOpen: (open: boolean) => void
   // Whichever browsing surface is on screen registers itself here, so
@@ -232,7 +264,13 @@ export const useStore = create<AsitState>((set, get) => ({
   automationsOpen: false,
   setAutomationsOpen: (automationsOpen) => set({ automationsOpen }),
   paletteOpen: false,
-  setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  // The palette and the command bar are one box now (Arc's): opening the
+  // "palette" opens the bar.
+  setPaletteOpen: (paletteOpen) =>
+    set(paletteOpen ? { commandBar: { mode: 'new', initial: '', at: Date.now() } } : { commandBar: null }),
+  commandBar: null,
+  openCommandBar: (mode, initial = '') => set({ commandBar: { mode, initial, at: Date.now() } }),
+  closeCommandBar: () => set({ commandBar: null }),
   shortcutsOpen: false,
   setShortcutsOpen: (shortcutsOpen) => set({ shortcutsOpen }),
   activePageUrl: null,
