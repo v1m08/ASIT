@@ -1720,15 +1720,67 @@ async function runUiSmokeTest(): Promise<void> {
 
     // Typing into it must actually change it (a controlled input wired to the
     // wrong state looks fine and silently discards every keystroke).
-    ui.focus()
-    await evalIn(`document.querySelector('.pane-toolbar .browser-address').focus()`)
-    for (const ch of 'abc') ui.sendInputEvent({ type: 'char', keyCode: ch })
-    await new Promise((r) => setTimeout(r, 250))
-    const typed = await evalIn<string>(
-      `document.querySelector('.pane-toolbar .browser-address').value`
-    )
+    //
+    // Real keystrokes need the page to HOLD keyboard focus first. The window
+    // sits off screen and was shown inactive, and while the page is unfocused
+    // el.focus() only moves activeElement: the focus event (AddressBar's
+    // onFocus, which opens the draft) waits for the OS to activate the window,
+    // which is asynchronous on macOS and can bounce focus out and back in.
+    // Typing into that race failed about half the runs there. So: ask for
+    // focus until the page reports it and it has stayed put across a settle
+    // window, THEN type. Nothing here edits the field — the keys still go
+    // through sendInputEvent like a user's.
+    const addr = `document.querySelector('.pane-toolbar .browser-address')`
+    const focusState = (): Promise<{ page: boolean; field: boolean; value: string }> =>
+      evalIn(`({ page: document.hasFocus(), field: document.activeElement === ${addr},
+                 value: ${addr}.value })`)
+    const takeFocus = async (): Promise<void> => {
+      const deadline = Date.now() + 8000
+      let held = 0
+      for (;;) {
+        const st = await focusState()
+        if (st.page && st.field) {
+          if (++held >= 3) return
+        } else {
+          held = 0
+          if (Date.now() > deadline)
+            fail(
+              `the address bar never held keyboard focus (page focused: ${st.page}, ` +
+                `field focused: ${st.field}) — typed keys would have nowhere to go`
+            )
+          if (process.platform === 'darwin') app.focus({ steal: true })
+          win.focus()
+          ui.focus()
+          await evalIn(`${addr}.focus()`)
+        }
+        await new Promise((r) => setTimeout(r, 100))
+      }
+    }
+    const typeAndRead = async (text: string, settleMs: number): Promise<string> => {
+      for (const ch of text) ui.sendInputEvent({ type: 'char', keyCode: ch })
+      await new Promise((r) => setTimeout(r, settleMs))
+      return (await focusState()).value
+    }
+
+    await takeFocus()
+    const typed = await typeAndRead('abc', 250)
     if (!typed.includes('abc')) fail(`typing did nothing — the field still reads "${typed}"`)
     console.log('[ui-smoke] typing into the address bar works')
+
+    // The macOS failure above, made deterministic: focus leaves and comes
+    // straight back (what a window activation does), then the user types.
+    // The blur used to schedule a close that the refocus never cancelled, so
+    // ~120ms later it threw the typed text away and the field reverted to its
+    // idle label. Waits past that delay — and past the ~1s timer throttling
+    // an off-screen renderer gets — so a stale close has every chance to fire.
+    // Typed immediately, no settle: the bug lived in the gap.
+    await evalIn(`(() => { const el = ${addr}; el.blur(); el.focus() })()`)
+    const bounced = await focusState()
+    if (!bounced.page || !bounced.field) fail('the address bar did not take focus back')
+    const kept = await typeAndRead('xyz', 1500)
+    if (!kept.includes('xyz'))
+      fail(`a focus bounce threw away what was typed — the field reads "${kept}"`)
+    console.log('[ui-smoke] a focus bounce keeps what was typed')
 
     // Selection + copy: "I can't even copy it" is its own bug.
     const selected = await evalIn<string>(`(() => {
