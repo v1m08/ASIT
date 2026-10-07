@@ -1,6 +1,6 @@
 import { app, session } from 'electron'
 import { spawn, execFileSync, type ChildProcess } from 'child_process'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import type { Readable, Writable } from 'stream'
 
@@ -15,11 +15,14 @@ import type { Readable, Writable } from 'stream'
 //   1. launch the user's installed Chrome / Edge / Brave on a THROWAWAY
 //      profile ASIT owns (userData/signin-bridge — never the user's real
 //      profile, whose cookies are app-bound-encrypted and off limits, see
-//      CLAUDE.md invariant 7), talking CDP over --remote-debugging-pipe:
-//      inherited fds, so no port exists for any other local process to reach;
+//      CLAUDE.md invariant 7) with NO debugging pipe or port: during sign-in
+//      it is just a browser, which is the whole point;
 //   2. the user signs in there — a real browser, so Google is satisfied;
-//   3. ASIT reads that profile's cookies over the pipe, writes them into
-//      persist:asit-browse, closes the browser and deletes the profile.
+//   3. once signed in (cookie names in the profile's store, a click on
+//      "I'm signed in", or the window closing), ASIT lets it quit, reopens
+//      the profile off screen with --remote-debugging-pipe (inherited fds —
+//      no port any other process could reach) on about:blank, reads the
+//      cookies, writes them into persist:asit-browse, and deletes the profile.
 //
 // Device-bound session credentials are switched off in the borrowed browser:
 // a DBSC-bound Google cookie refreshes only with a key held by THAT browser,
@@ -219,7 +222,7 @@ export function toElectronCookie(c: CdpCookie): Electron.CookiesSetDetails {
 }
 
 /** True once Google has issued the cookies that only exist after a real sign-in. */
-export function googleSignedIn(cookies: CdpCookie[]): boolean {
+export function googleSignedIn(cookies: CookieName[]): boolean {
   return cookies.some(
     (c) =>
       /(^|\.)google\.com$/.test(c.domain) && (c.name === 'SAPISID' || c.name === '__Secure-1PSID')
@@ -235,7 +238,6 @@ export interface BridgeResult {
 
 interface Active {
   child: ChildProcess
-  cdp: CdpPipe
   profileDir: string
   finishNow: () => void
   cancelNow: () => void
@@ -278,39 +280,186 @@ export function cancelBridge(): void {
   active?.cancelNow()
 }
 
+/** Just enough of a cookie to recognise a sign-in: what the on-disk store
+ *  shows without decrypting anything (names and hosts are stored in clear). */
+export interface CookieName {
+  domain: string
+  name: string
+}
+
+/**
+ * Cookie NAMES in a (running) profile, read from a copy of its SQLite store —
+ * the browser holds the live file, so we never open it in place. Values are
+ * encrypted at rest and never read here. Best-effort: [] on any failure.
+ */
+export async function profileCookieNames(dir: string): Promise<CookieName[]> {
+  const candidates = [join(dir, 'Default', 'Network', 'Cookies'), join(dir, 'Default', 'Cookies')]
+  const src = candidates.find((p) => existsSync(p))
+  if (!src) return []
+  const tmp = join(dir, '..', `signin-bridge-peek-${process.pid}`)
+  try {
+    copyFileSync(src, tmp)
+    if (existsSync(`${src}-wal`)) copyFileSync(`${src}-wal`, `${tmp}-wal`)
+    const { default: Database } = await import('better-sqlite3')
+    const db = new Database(tmp, { readonly: true, fileMustExist: true })
+    try {
+      return (db.prepare('SELECT host_key AS domain, name FROM cookies').all() as CookieName[]) ?? []
+    } finally {
+      db.close()
+    }
+  } catch {
+    return [] // locked or mid-write — the next poll tries again
+  } finally {
+    for (const f of [tmp, `${tmp}-wal`, `${tmp}-shm`]) rmSync(f, { force: true })
+  }
+}
+
+/** DBSC off (see top of file). Unknown feature names are ignored. Chromium
+ *  refuses to start as root without --no-sandbox (CI containers only). */
+const COMMON_ARGS = [
+  ...(process.getuid?.() === 0 ? ['--no-sandbox'] : []),
+  '--no-first-run',
+  '--no-default-browser-check',
+  '--disable-sync',
+  '--disable-features=EnableBoundSessionCredentials,DeviceBoundSessions,DeviceBoundSessionCredentials'
+]
+
+/**
+ * Wait until the profile's cookie store on disk shows the sign-in.
+ *
+ * Measured (signin smoke + a direct probe): Chrome batches cookie writes and
+ * commits them about every 30s; a SIGTERM shutdown exits cleanly WITHOUT that
+ * final commit, so a cookie set eight seconds earlier is simply lost. Closing
+ * the window the normal way does commit. Where we can't close it the normal
+ * way (macOS/Linux — no window-close message), we wait for the periodic
+ * commit to land on disk first, bounded.
+ */
+async function waitForCommit(
+  dir: string,
+  ready: (names: CookieName[]) => boolean,
+  ms = 33_000
+): Promise<void> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (ready(await profileCookieNames(dir))) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
+/** Ask a browser to quit, forcing it only if it ignores us. On Windows the
+ *  ask is a window-close message — the same flushing shutdown as a user
+ *  closing the window. On POSIX it is SIGTERM, which does NOT flush pending
+ *  cookies (see waitForCommit), so callers wait for the commit first. */
+async function closeGracefully(child: ChildProcess, ms = 10_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  const exited = new Promise<void>((r) => child.once('exit', () => r()))
+  try {
+    if (process.platform === 'win32' && child.pid) {
+      // No /F: WM_CLOSE to its windows — a normal, flushing shutdown.
+      spawn('taskkill', ['/PID', String(child.pid), '/T'], { stdio: 'ignore' })
+    } else {
+      child.kill('SIGTERM') // Chrome treats SIGTERM as a clean quit on POSIX
+    }
+  } catch {
+    /* already gone */
+  }
+  const timedOut = await Promise.race([
+    exited.then(() => false),
+    new Promise<boolean>((r) => setTimeout(() => r(true), ms))
+  ])
+  if (timedOut) {
+    try {
+      if (process.platform === 'win32' && child.pid)
+        spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+      else child.kill('SIGKILL')
+    } catch {
+      /* gone */
+    }
+    await Promise.race([exited, new Promise((r) => setTimeout(r, 3000))])
+  }
+}
+
+/**
+ * Phase 2: reopen the (now closed) profile with the debugging pipe and read
+ * its cookies. Nothing is navigated — the window shows about:blank and is
+ * parked off screen — so no website ever sees a DevTools-attached browser.
+ * Headful rather than headless on purpose: headless Chrome may use a mock
+ * keychain on macOS/Linux and could not decrypt what phase 1 stored.
+ */
+async function harvestCookies(
+  browser: BridgeBrowser,
+  dir: string,
+  headless: boolean
+): Promise<CdpCookie[]> {
+  const args = [
+    `--user-data-dir=${dir}`,
+    '--remote-debugging-pipe',
+    ...COMMON_ARGS,
+    ...(headless
+      ? ['--headless=new']
+      : ['--window-position=-32000,-32000', '--window-size=1,1', '--no-startup-window']),
+    'about:blank'
+  ]
+  const child = spawn(browser.path, args, { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] })
+  child.on('error', () => undefined)
+  const toBrowser = child.stdio[3] as Writable | null
+  const fromBrowser = child.stdio[4] as Readable | null
+  if (!toBrowser || !fromBrowser) {
+    child.kill()
+    return []
+  }
+  const cdp = new CdpPipe(toBrowser, fromBrowser)
+  try {
+    // The pipe answers once the browser is up; retry briefly while it boots.
+    for (let i = 0; i < 40; i++) {
+      try {
+        const r = await Promise.race([
+          cdp.send<{ cookies: CdpCookie[] }>('Storage.getCookies'),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('slow')), 1500))
+        ])
+        return r.cookies ?? []
+      } catch {
+        if (child.exitCode !== null) return []
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    return []
+  } finally {
+    await cdp.send('Browser.close').catch(() => undefined)
+    await closeGracefully(child, 5000)
+    cdp.fail(new Error('done'))
+  }
+}
+
 /**
  * Opens `url` in a borrowed real browser and resolves once the session has
- * been imported (or the user cancelled / closed it / the timeout hit).
- * `doneWhen` lets a known provider finish on its own (Google: SAPISID);
- * otherwise the user clicks Done in ASIT, or simply closes the browser.
+ * been imported (or the user cancelled / the timeout hit).
+ *
+ * TWO PHASES, deliberately. While the user signs in, the browser runs with
+ * NO debugging pipe or port — it is an ordinary Chrome on a fresh profile,
+ * the thing Google's sign-in accepts. (A DevTools-attached Chrome is exactly
+ * what Google's "browser may not be secure" check refuses: it is how
+ * credential-phishing automation works.) Only after it has quit does phase 2
+ * reopen the profile with the pipe to read the cookies.
+ *
+ * Done is detected from cookie NAMES in the profile's store (`doneWhen`,
+ * Google: SAPISID), by the user clicking "I'm signed in", or by the browser
+ * exiting because the user closed it.
  */
 export async function signInWithRealBrowser(
   url: string,
   opts: {
-    doneWhen?: (cookies: CdpCookie[]) => boolean
+    doneWhen?: (cookies: CookieName[]) => boolean
     headless?: boolean
     timeoutMs?: number
   } = {}
 ): Promise<BridgeResult> {
   if (!/^https?:\/\//i.test(url))
-    return {
-      ok: false,
-      imported: 0,
-      reason: 'only http(s) pages can be opened'
-    }
+    return { ok: false, imported: 0, reason: 'only http(s) pages can be opened' }
   if (active)
-    return {
-      ok: false,
-      imported: 0,
-      reason: 'a sign-in is already open in your browser'
-    }
+    return { ok: false, imported: 0, reason: 'a sign-in is already open in your browser' }
   const browser = findBridgeBrowser()
-  if (!browser)
-    return {
-      ok: false,
-      imported: 0,
-      reason: 'no Chrome, Edge or Brave installed'
-    }
+  if (!browser) return { ok: false, imported: 0, reason: 'no Chrome, Edge or Brave installed' }
 
   const dir = profileDir()
   wipeProfile(dir)
@@ -318,21 +467,15 @@ export async function signInWithRealBrowser(
 
   const args = [
     `--user-data-dir=${dir}`,
-    '--remote-debugging-pipe',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-sync',
-    // DBSC off (see top of file). Unknown feature names are ignored, so
-    // listing both the Chrome-side and net-side names is harmless.
-    '--disable-features=EnableBoundSessionCredentials,DeviceBoundSessions,DeviceBoundSessionCredentials',
-    ...(opts.headless ? ['--headless=new', '--no-sandbox'] : ['--new-window']),
+    ...COMMON_ARGS,
+    ...(opts.headless
+      ? ['--headless=new']
+      : ['--new-window']),
     url
   ]
   let child: ChildProcess
   try {
-    child = spawn(browser.path, args, {
-      stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe']
-    })
+    child = spawn(browser.path, args, { stdio: 'ignore' })
   } catch (err) {
     wipeProfile(dir)
     return {
@@ -342,47 +485,29 @@ export async function signInWithRealBrowser(
       reason: `could not start ${browser.name}: ${String(err)}`
     }
   }
-  const toBrowser = child.stdio[3] as Writable | null
-  const fromBrowser = child.stdio[4] as Readable | null
-  if (!toBrowser || !fromBrowser) {
-    child.kill()
-    wipeProfile(dir)
-    return {
-      ok: false,
-      imported: 0,
-      browser: browser.name,
-      reason: 'debugging pipe unavailable'
-    }
-  }
-  const cdp = new CdpPipe(toBrowser, fromBrowser)
 
   return new Promise<BridgeResult>((resolve) => {
-    let last: CdpCookie[] = []
     let settled = false
     let markerAt = 0
-    let exited = false
-
-    const read = async (): Promise<boolean> => {
-      try {
-        const r = await cdp.send<{ cookies: CdpCookie[] }>('Storage.getCookies')
-        last = r.cookies ?? []
-        return true
-      } catch {
-        return false
-      }
-    }
+    let polling = false
 
     const end = async (mode: 'import' | 'cancel', reason?: string): Promise<void> => {
       if (settled) return
       settled = true
       clearInterval(poll)
       clearTimeout(timeout)
-      if (mode === 'import' && !exited) await read()
+      // Phase 1 over: get the cookies onto disk, then let the browser quit.
+      if (mode === 'import' && child.exitCode === null && process.platform !== 'win32')
+        await waitForCommit(dir, (names) =>
+          opts.doneWhen ? opts.doneWhen(names) : names.length > 0
+        )
+      await closeGracefully(child)
 
       let imported = 0
       if (mode === 'import') {
+        const cookies = await harvestCookies(browser, dir, !!opts.headless)
         const ses = session.fromPartition(BROWSE_PARTITION)
-        for (const c of last) {
+        for (const c of cookies) {
           if (c.partitionKey) continue // CHIPS cookies don't map onto cookies.set
           try {
             await ses.cookies.set(toElectronCookie(c))
@@ -393,26 +518,6 @@ export async function signInWithRealBrowser(
         }
         await ses.cookies.flushStore().catch(() => undefined)
       }
-
-      if (!exited) {
-        await cdp.send('Browser.close').catch(() => undefined)
-        await new Promise<void>((r) => {
-          if (exited) return r()
-          const t = setTimeout(() => {
-            try {
-              child.kill()
-            } catch {
-              /* already gone */
-            }
-            r()
-          }, 5000)
-          child.once('exit', () => {
-            clearTimeout(t)
-            r()
-          })
-        })
-      }
-      cdp.fail(new Error('done'))
       wipeProfile(dir)
       active = null
       resolve({
@@ -427,27 +532,28 @@ export async function signInWithRealBrowser(
       })
     }
 
-    child.once('exit', () => {
-      exited = true
-      // The user closed the browser themselves: keep what we last saw.
-      void end('import')
-    })
-    child.once('error', (err) => {
-      exited = true
+    // The user closed the browser themselves: take what the profile holds.
+    child.once('exit', () => void end('import'))
+    child.once('error', (err) =>
       void end('cancel', `could not start ${browser.name}: ${err.message}`)
-    })
+    )
 
     const poll = setInterval(async () => {
-      if (settled || !(await read())) return
-      if (!opts.doneWhen || !opts.doneWhen(last)) return
-      if (!markerAt) markerAt = Date.now()
-      else if (Date.now() - markerAt >= SETTLE_MS) void end('import')
+      if (settled || polling || !opts.doneWhen) return
+      polling = true
+      try {
+        const names = await profileCookieNames(dir)
+        if (!opts.doneWhen(names)) return
+        if (!markerAt) markerAt = Date.now()
+        else if (Date.now() - markerAt >= SETTLE_MS) void end('import')
+      } finally {
+        polling = false
+      }
     }, POLL_MS)
     const timeout = setTimeout(() => void end('import', 'timed out'), opts.timeoutMs ?? TIMEOUT_MS)
 
     active = {
       child,
-      cdp,
       profileDir: dir,
       finishNow: () => void end('import'),
       cancelNow: () => void end('cancel', 'cancelled')
