@@ -32,6 +32,10 @@ import { app, session } from 'electron'
  */
 const MIN_CLAIMED_CHROME = 140
 
+function realChromeMajor(): string {
+  return (process.versions.chrome ?? '130').split('.')[0]
+}
+
 function chromeMajor(): string {
   const real = Number((process.versions.chrome ?? '130').split('.')[0])
   return String(Math.max(Number.isFinite(real) ? real : 130, MIN_CLAIMED_CHROME))
@@ -104,6 +108,13 @@ export function applyBrowserIdentity(partition: string): void {
 
   const ses = session.fromPartition(partition)
   ses.setUserAgent(browserUserAgent())
+  // The header rewrite below sends EVERY request a page makes through a JS
+  // callback in main (Gmail fires hundreds) — the same per-request round trip
+  // browser.ts measured at 15–20% of load time, and far worse whenever main
+  // is busy. It only exists to make Sec-CH-UA agree with a CLAIMED version
+  // newer than the engine. When the engine is already at the claimed version,
+  // Chromium's own client hints say the same thing natively, so skip it.
+  if (chromeMajor() === realChromeMajor()) return
   ses.webRequest.onBeforeSendHeaders((details, callback) => {
     const headers = { ...details.requestHeaders }
     // Only for real web requests; leave anything else untouched.

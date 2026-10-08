@@ -184,11 +184,19 @@ interface TailscaleInfo {
 // The Windows installer puts tailscale.exe here but PATH only updates for
 // NEW processes/logins — an already-running ASIT would see ENOENT and wrongly
 // report "not installed". Probe the standard locations directly.
+// macOS: a GUI-launched app gets launchd's PATH, so neither the App Store /
+// standalone app's bundled CLI nor Homebrew's is on it.
 function tailscaleBin(): string {
-  const candidates = [
-    'C:\\Program Files\\Tailscale\\tailscale.exe',
-    'C:\\Program Files (x86)\\Tailscale\\tailscale.exe'
-  ]
+  const candidates =
+    process.platform === 'win32'
+      ? ['C:\\Program Files\\Tailscale\\tailscale.exe', 'C:\\Program Files (x86)\\Tailscale\\tailscale.exe']
+      : process.platform === 'darwin'
+        ? [
+            '/Applications/Tailscale.app/Contents/MacOS/Tailscale',
+            '/opt/homebrew/bin/tailscale',
+            '/usr/local/bin/tailscale'
+          ]
+        : ['/usr/bin/tailscale', '/usr/local/bin/tailscale']
   for (const c of candidates) if (existsSync(c)) return c
   return 'tailscale' // fall back to PATH (correct on fresh shells / other setups)
 }

@@ -91,7 +91,16 @@ function resolveShell(requested?: string): { file: string; args: string[] } | nu
 }
 
 export function listShells(): string[] {
-  return Object.keys(shellTable()).filter((s) => resolveShell(s) !== null)
+  // The platform default first — the renderer opens it when nothing is chosen.
+  // Filter on the file actually existing (resolveShell would substitute the
+  // default for a missing one, listing shells the user can't really get).
+  const table = shellTable()
+  const def = defaultShell()
+  const ok = Object.keys(table).filter((s) => {
+    const f = table[s].file
+    return !isAbsolute(f) || existsSync(f)
+  })
+  return [...ok.filter((s) => s === def), ...ok.filter((s) => s !== def)]
 }
 
 export function openTerminal(

@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { basename, join } from 'path'
+import { asitRoot } from './paths'
 
 // Skills: saved procedures ("how to get the X url: click …, then …") that the
 // model records once via the save_skill action and the user replays with
@@ -8,7 +9,7 @@ import { basename, join } from 'path'
 // are wasted re-deriving the flow. Global across tasks.
 
 export function skillsRoot(): string {
-  return join(app.getPath('documents'), 'ASIT', 'skills')
+  return join(asitRoot(), 'skills')
 }
 
 export interface Skill {
@@ -69,7 +70,7 @@ export function deleteSkill(name: string): void {
   const file = join(skillsRoot(), `${basename(name)}.md`)
   if (!existsSync(file)) return
   // Same never-hard-delete rule as everything else.
-  const trash = join(app.getPath('documents'), 'ASIT', '.trash', 'skills')
+  const trash = join(asitRoot(), '.trash', 'skills')
   mkdirSync(trash, { recursive: true })
   renameSync(file, join(trash, `${Date.now()}-${basename(name)}.md`))
 }

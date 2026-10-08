@@ -1,5 +1,6 @@
 import type { Task } from '@shared/types'
 import { useStore } from '../store/useStore'
+import { askText } from '../components/TextPrompt'
 
 // Spaces (the code calls them groups; a group is a task).
 //
@@ -86,13 +87,13 @@ export async function groupMenu(id: string, pinned: boolean): Promise<void> {
 
   if (picked === 'new') return void newGroup()
   if (picked === 'rename') {
-    const name = window.prompt('Rename space', t.title)
+    const name = await askText('Rename space', t.title)
     if (name?.trim()) {
       await window.asit.tasks.update(id, { title: name.trim() })
       await reload()
     }
   } else if (picked === 'due') {
-    const v = window.prompt('Due date (YYYY-MM-DD, blank to clear)', t.dueDate ?? '')
+    const v = await askText('Due date (YYYY-MM-DD, blank to clear)', t.dueDate ?? '')
     if (v !== null) {
       const clean = v.trim()
       if (clean && !/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
@@ -157,7 +158,7 @@ export async function groupMenu(id: string, pinned: boolean): Promise<void> {
 // one click rather than a form plus re-opening everything.
 export async function newGroup(): Promise<void> {
   const store = useStore.getState()
-  const name = window.prompt('Name this space')
+  const name = await askText('Name this space')
   if (!name?.trim()) return
   const inScratch = store.activeTask?.id === store.scratchTask?.id
   try {

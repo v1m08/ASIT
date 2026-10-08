@@ -93,6 +93,9 @@ export const IPC = {
   APPWIN_BOUNDS: 'appwin:bounds',
   APPWIN_VISIBLE: 'appwin:visible',
   APPWIN_RELEASE: 'appwin:release',
+  APPWIN_STATUS: 'appwin:status',
+  APPWIN_RAISE: 'appwin:raise',
+  APPWIN_REQUEST_PERMISSION: 'appwin:request-permission',
 
   // notes
   NOTES_READ: 'notes:read',

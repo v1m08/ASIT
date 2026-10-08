@@ -1,6 +1,6 @@
 name: Release
 
-# Push a version tag and this builds installers for Windows and macOS and
+# Push a version tag and this builds the macOS (Apple silicon) app and
 # attaches them to a GitHub Release. That release is also the update feed the
 # app itself polls, so shipping a fix and delivering it are the same action:
 #
@@ -23,10 +23,9 @@ jobs:
       # half-published release.
       fail-fast: false
       matrix:
+        # macOS only for now (Apple silicon). Windows builds are paused; the
+        # code paths stay working, they just aren't shipped.
         include:
-          - os: windows-latest
-            name: windows
-            build: npm run release
           - os: macos-latest
             name: mac
             build: npm run release:mac

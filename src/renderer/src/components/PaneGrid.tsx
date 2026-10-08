@@ -328,10 +328,16 @@ export default function PaneGrid({
   const slot0Drop = useFileDrop((paths) => void dropFilesIntoSlot(0, paths))
   const slot1Drop = useFileDrop((paths) => void dropFilesIntoSlot(1, paths))
 
-  // Open view-backed panes that appear in the layout.
+  // Open view-backed panes as they come ON SCREEN — the active tab of each
+  // slot — not every tab in the layout. Restoring a group used to start every
+  // tab loading at once, so the one you were looking at (Gmail, say) fought a
+  // dozen background pages for network and CPU. A background tab now loads
+  // the first time you switch to it, as in Chrome; once opened it stays
+  // alive (parked) like before.
   useEffect(() => {
-    for (const slot of validLayout.slots) {
+    for (const [i, slot] of validLayout.slots.entries()) {
       for (const id of slot) {
+        if (id !== validLayout.active[i] && !openedPanes.current.has(id)) continue
         const tab = tabInfoFor(id, task, resources, validLayout.webTabs)
         if (tab?.viewBacked && !openedPanes.current.has(id)) {
           openedPanes.current.add(id)

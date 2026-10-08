@@ -25,6 +25,19 @@ export interface ShortcutDef {
   label: string
 }
 
+// Works in BOTH halves: main has `process`, the sandboxed renderer only has
+// `navigator`. Read through globalThis so neither tsconfig needs the other's
+// ambient types.
+const IS_MAC: boolean = (() => {
+  const g = globalThis as {
+    process?: { platform?: string }
+    navigator?: { platform?: string; userAgent?: string }
+  }
+  if (g.process?.platform) return g.process.platform === 'darwin'
+  const nav = g.navigator
+  return !!nav && /Mac/i.test(nav.platform || nav.userAgent || '')
+})()
+
 export const SHORTCUTS: ShortcutDef[] = [
   // --- tabs (whichever surface owns them: workspace panes or the scratchpad)
   { id: 'new-tab', accel: 'CommandOrControl+T', key: 't', ctrl: true, label: 'New tab' },
@@ -200,21 +213,45 @@ export const SHORTCUTS: ShortcutDef[] = [
     shift: true,
     label: 'Add a to-do'
   },
-  {
-    id: 'dictate-toggle',
-    accel: 'CommandOrControl+Shift+Space',
-    key: ' ',
-    ctrl: true,
-    shift: true,
-    label: 'Dictate into the focused field'
-  },
-  {
-    id: 'voice-toggle',
-    accel: 'CommandOrControl+Space',
-    key: ' ',
-    ctrl: true,
-    label: 'Talk to the assistant'
-  }
+  // Voice keys are per-platform. Cmd+Space is Spotlight and Cmd+Shift+Space
+  // is taken by the input-source switcher on macOS, so the OS eats them
+  // before the app ever sees the key; Option is free there. On Windows the
+  // reverse holds — Alt+Space opens the window's system menu — so Ctrl stays.
+  ...(IS_MAC
+    ? [
+        {
+          id: 'dictate-toggle',
+          accel: 'Alt+Shift+Space',
+          key: ' ',
+          alt: true,
+          shift: true,
+          label: 'Dictate into the focused field'
+        },
+        {
+          id: 'voice-toggle',
+          accel: 'Alt+Space',
+          key: ' ',
+          alt: true,
+          label: 'Talk to the assistant'
+        }
+      ]
+    : [
+        {
+          id: 'dictate-toggle',
+          accel: 'CommandOrControl+Shift+Space',
+          key: ' ',
+          ctrl: true,
+          shift: true,
+          label: 'Dictate into the focused field'
+        },
+        {
+          id: 'voice-toggle',
+          accel: 'CommandOrControl+Space',
+          key: ' ',
+          ctrl: true,
+          label: 'Talk to the assistant'
+        }
+      ])
 ]
 
 /** Ctrl+1…9 jump to a panel; generated rather than listed nine times. */
@@ -224,7 +261,31 @@ export const ZONE_ACCELERATORS = Array.from({ length: 9 }, (_, i) => ({
   index: i
 }))
 
-/** Does this renderer keydown match a shortcut? */
+/**
+ * The key for an action, written the way this platform writes keys
+ * ("⌥Space" on a Mac, "Ctrl+Space" elsewhere). For UI copy, so a hint can
+ * never name a key that is not the one actually bound.
+ */
+export function shortcutLabel(id: string): string {
+  const def = SHORTCUTS.find((s) => s.id === id)
+  if (!def) return ''
+  const parts = def.accel.split('+')
+  if (IS_MAC) {
+    const sym: Record<string, string> = {
+      CommandOrControl: '⌘',
+      Command: '⌘',
+      Control: '⌃',
+      Alt: '⌥',
+      Shift: '⇧'
+    }
+    // macOS order: ⌃⌥⇧⌘ then the key.
+    const order = ['Control', 'Alt', 'Shift', 'CommandOrControl', 'Command']
+    const mods = parts.slice(0, -1).sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    return mods.map((m) => sym[m] ?? m).join('') + parts[parts.length - 1]
+  }
+  return parts.map((p) => (p === 'CommandOrControl' ? 'Ctrl' : p)).join('+')
+}
+
 /**
  * Accelerators claimed by more than one action. Two entries for one id is
  * intentional (Ctrl+R and F5 both reload); two DIFFERENT ids on one key means
@@ -316,7 +377,9 @@ export function matchShortcut(e: {
   altKey: boolean
   metaKey: boolean
 }): ShortcutDef | null {
-  const key = e.key.toLowerCase()
+  // Option+Space on a Mac TYPES a non-breaking space, so that is the e.key
+  // the Option-based voice keys arrive with.
+  const key = e.key === '\u00a0' ? ' ' : e.key.toLowerCase()
   for (const def of SHORTCUTS) {
     if (def.key !== key) continue
     if (!!def.ctrl !== (e.ctrlKey || e.metaKey)) continue

@@ -11,6 +11,7 @@ import HistoryModal from './components/HistoryModal'
 import AutomationsModal from './components/AutomationsModal'
 import CommandBar from './browser/CommandBar'
 import ShortcutsModal from './components/ShortcutsModal'
+import TextPrompt from './components/TextPrompt'
 import SettingsModal from './components/SettingsModal'
 
 function SettingsGate(): JSX.Element | null {
@@ -78,6 +79,7 @@ export default function App(): JSX.Element {
       <AutomationsModal />
       <CommandBar />
       <ShortcutsModal />
+      <TextPrompt />
       {/* Same reason: Ctrl+, used to set settingsOpen from a workspace, but
           the modal only existed on Home — nothing appeared until you went
           home, where it then popped open unexpectedly. */}

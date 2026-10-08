@@ -162,8 +162,9 @@ export default function AddressBar({
           if (closeTimer.current) {
             clearTimeout(closeTimer.current)
             closeTimer.current = null
-            if (draft !== null) return
           }
+          // Still mid-edit (focus left with the window, see onBlur): keep it.
+          if (draft !== null) return
           // The real address, not the idle label — then select it all once
           // React has swapped it in.
           setDraft(url ?? e.target.value)
@@ -171,6 +172,11 @@ export default function AddressBar({
           requestAnimationFrame(() => inputRef.current?.select())
         }}
         onBlur={() => {
+          // The whole WINDOW lost focus (app switch, another window came
+          // forward): the user didn't leave the field, so keep what they
+          // typed — as Chrome does. Closing here was the macOS "typing
+          // vanished" bug: activation changes blur the field behind your back.
+          if (!document.hasFocus()) return
           // Deferred: a click on a suggestion blurs the input first, and
           // closing immediately would unmount the row before it registers.
           if (closeTimer.current) clearTimeout(closeTimer.current)

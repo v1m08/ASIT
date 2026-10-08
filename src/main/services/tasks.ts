@@ -6,9 +6,10 @@ import { getDb, newId, nowIso } from '../db'
 import type { CreateTaskInput, Resource, Task, UpdateTaskInput } from '@shared/types'
 import { addUrlResource, ensurePdfText, listResources } from './resources'
 import { getSettings } from './settings'
+import { asitRoot } from './paths'
 
 export function tasksRoot(): string {
-  return join(app.getPath('documents'), 'ASIT', 'tasks')
+  return join(asitRoot(), 'tasks')
 }
 
 // Private (no-AI) tasks live OUTSIDE the AI's readable tree. Every Claude
@@ -16,7 +17,7 @@ export function tasksRoot(): string {
 // and the global assistant's cwd is tasksRoot() — so folders here are
 // physically unreachable by any AI session, not just policy-hidden.
 export function privateRoot(): string {
-  return join(app.getPath('documents'), 'ASIT', 'private')
+  return join(asitRoot(), 'private')
 }
 
 function rowToTask(row: Record<string, unknown>): Task {
@@ -227,7 +228,7 @@ export function openTask(id: string): { task: Task; resources: Resource[] } | nu
 // assistant's cwd) and the private root, so deleted content (especially from
 // private tasks) is never inside any AI-readable tree.
 export function trashRoot(): string {
-  return join(app.getPath('documents'), 'ASIT', '.trash')
+  return join(asitRoot(), '.trash')
 }
 
 export function deleteTask(id: string): { ok: boolean; reason?: string } {
@@ -495,7 +496,11 @@ export function writeClaudeMd(task: Task, resources: Resource[]): void {
       '- Iterate fast: make the change, run it, show the real output. Keep explanations to a minimum.',
       '- The user works in VS Code (web) and Kaggle in adjacent panes; files you create/edit here are immediately visible to them.',
       '- Never run destructive commands (rm -rf outside this folder, force pushes) without being asked explicitly.',
-      '- Windows quirk: uninstalled commands with App Execution Aliases (python, python3) OPEN THE MICROSOFT STORE instead of failing. Check availability first (`where.exe python`) and prefer the `py` launcher.'
+      process.platform === 'win32'
+        ? '- Windows quirk: uninstalled commands with App Execution Aliases (python, python3) OPEN THE MICROSOFT STORE instead of failing. Check availability first (`where.exe python`) and prefer the `py` launcher.'
+        : process.platform === 'darwin'
+          ? '- macOS: use `python3` / `pip3` (there is usually no `python`). Check availability first (`command -v python3`); /usr/bin/python3 may be the Xcode CLT stub that prompts for an install — prefer Homebrew (`/opt/homebrew/bin`) when present.'
+          : '- Linux: use `python3` / `pip3`; check availability first (`command -v python3`).'
     )
   }
 
@@ -604,6 +609,12 @@ export function writeClaudeMd(task: Task, resources: Resource[]): void {
   )
 
   try {
+    // The folder can be missing (macOS root move without Documents access —
+    // see paths.ts); recreate the skeleton rather than fail every spawn.
+    mkdirSync(join(task.folderPath, 'pdfs'), { recursive: true })
+    mkdirSync(join(task.folderPath, '.asit'), { recursive: true })
+    const notes = join(task.folderPath, 'notes.md')
+    if (!existsSync(notes)) writeFileSync(notes, `# Notes — ${task.title}\n\n`)
     writeFileSync(join(task.folderPath, 'CLAUDE.md'), lines.join('\n'))
   } catch (err) {
     console.error('Failed to write CLAUDE.md:', err)

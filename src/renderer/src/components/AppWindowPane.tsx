@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Task } from '@shared/types'
 
 // Hosts a real native window (Emacs, Excel, a game — anything with a window)
-// inside the slot. The window itself is drawn by Windows, not by us: this
+// inside the slot. The window itself is drawn by the OS, not by us: this
 // component only reserves the rectangle and tells main where to put it.
+// Windows reparents it into ASIT; macOS can't, so there it "follows" the slot
+// (kept over this rectangle via the Accessibility API — needs permission).
 
 interface AppWindow {
   handle: string
@@ -16,10 +18,14 @@ export default function AppWindowPane({ task }: { task: Task }): JSX.Element {
   const [embedded, setEmbedded] = useState<AppWindow | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [status, setStatus] = useState<{ platform: string; supported: boolean; needsPermission: boolean } | null>(null)
+  const isMac = status?.platform === 'darwin'
 
   const refresh = useCallback(async (): Promise<void> => {
     setLoading(true)
-    setWindows(await window.asit.appwin.list())
+    const st = await window.asit.appwin.status()
+    setStatus(st)
+    setWindows(st.supported && !st.needsPermission ? await window.asit.appwin.list() : [])
     setLoading(false)
   }, [])
 
@@ -106,7 +112,31 @@ export default function AppWindowPane({ task }: { task: Task }): JSX.Element {
 
       {error && <p className="terminal-error">{error}</p>}
 
-      {!embedded && (
+      {!embedded && status && !status.supported && (
+        <div className="appwin-picker">
+          <p className="slot-empty-hint">
+            Embedding app windows isn’t available on this system — it works on Windows and macOS.
+          </p>
+        </div>
+      )}
+
+      {!embedded && status?.needsPermission && (
+        <div className="appwin-picker">
+          <p className="slot-empty-hint">
+            To keep another app’s window inside this slot, ASIT needs Accessibility permission
+            (System Settings › Privacy &amp; Security › Accessibility). It’s used only to move and
+            resize the window you pick — ASIT and its AI still can’t read what’s inside it.
+          </p>
+          <button className="btn btn-ghost" onClick={() => void window.asit.appwin.requestPermission()}>
+            Open Accessibility settings…
+          </button>
+          <button className="btn btn-ghost" onClick={() => void refresh()}>
+            I’ve allowed it — check again
+          </button>
+        </div>
+      )}
+
+      {!embedded && status?.supported && !status.needsPermission && (
         <div className="appwin-picker">
           {loading && <p className="slot-empty-hint">Looking for open windows…</p>}
           {!loading && windows.length === 0 && (
@@ -119,14 +149,33 @@ export default function AppWindowPane({ task }: { task: Task }): JSX.Element {
               ▢ <span className="appwin-title">{w.title}</span>
             </button>
           ))}
-          <p className="slot-empty-hint appwin-note"> The window is moved into this slot, not copied. Its menus and dialogs still open as
-            separate windows, and closing ASIT hands it back to the desktop.
-          </p>
+          {isMac ? (
+            <p className="slot-empty-hint appwin-note"> The window stays its own window but is kept exactly over this slot, following ASIT as
+              it moves. If you click ASIT in front of it, click the slot to bring it back. Releasing it
+              (or closing ASIT) puts it back where it was.
+            </p>
+          ) : (
+            <p className="slot-empty-hint appwin-note"> The window is moved into this slot, not copied. Its menus and dialogs still open as
+              separate windows, and closing ASIT hands it back to the desktop.
+            </p>
+          )}
         </div>
       )}
 
       {/* The native window is positioned over this box by the OS. */}
-      <div className="appwin-host" ref={hostRef} style={{ display: embedded ? 'block' : 'none' }} />
+      <div
+        className="appwin-host"
+        ref={hostRef}
+        style={{ display: embedded ? 'block' : 'none', cursor: isMac ? 'pointer' : undefined }}
+        onClick={isMac && embedded ? () => void window.asit.appwin.raise(embedded.handle) : undefined}
+      >
+        {/* macOS follow mode: only visible when ASIT is in front of the window. */}
+        {isMac && embedded && (
+          <p className="slot-empty-hint">
+            “{embedded.title}” lives here — click to bring it in front of ASIT.
+          </p>
+        )}
+      </div>
     </div>
   )
 }

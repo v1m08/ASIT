@@ -90,7 +90,10 @@ const api = {
       ipcRenderer.invoke(IPC.APPWIN_BOUNDS, handle, b),
     visible: (handle: string, visible: boolean) =>
       ipcRenderer.invoke(IPC.APPWIN_VISIBLE, handle, visible),
-    release: (handle: string) => ipcRenderer.invoke(IPC.APPWIN_RELEASE, handle)
+    release: (handle: string) => ipcRenderer.invoke(IPC.APPWIN_RELEASE, handle),
+    status: () => ipcRenderer.invoke(IPC.APPWIN_STATUS),
+    raise: (handle: string) => ipcRenderer.invoke(IPC.APPWIN_RAISE, handle),
+    requestPermission: () => ipcRenderer.invoke(IPC.APPWIN_REQUEST_PERMISSION)
   },
   browser: {
     stats: () => ipcRenderer.invoke(IPC.BROWSER_STATS),

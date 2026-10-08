@@ -4,13 +4,14 @@ import { basename, join } from 'path'
 import { getDb, newId, nowIso } from './../db'
 import type { Resource } from '@shared/types'
 import { getTask, refreshClaudeMd } from './tasks'
+import { asitRoot } from './paths'
 
 // Global file library: Documents\ASIT\library. Files here (resume.pdf,
 // transcript, ...) are attachable to any task in two clicks. Attaching COPIES
 // the file into the task folder so each task stays self-contained for the AI.
 
 export function libraryRoot(): string {
-  return join(app.getPath('documents'), 'ASIT', 'library')
+  return join(asitRoot(), 'library')
 }
 
 export interface LibraryFile {
@@ -66,7 +67,7 @@ export function removeFromLibrary(name: string): LibraryFile[] {
   const target = join(libraryRoot(), basename(name)) // basename() blocks path escapes
   if (existsSync(target)) {
     // Never hard-delete user files — same .trash rule as tasks.
-    const trash = join(app.getPath('documents'), 'ASIT', '.trash', 'library')
+    const trash = join(asitRoot(), '.trash', 'library')
     mkdirSync(trash, { recursive: true })
     try {
       renameSync(target, join(trash, `${Date.now()}-${basename(name)}`))

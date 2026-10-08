@@ -121,7 +121,11 @@ function spawnClaude(args: string[], cwd: string, prompt: string): ChildProcess 
     windowsHide: true,
     shell: useShell,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env }
+    env: { ...process.env },
+    // Unix: own process group, so killTree's process.kill(-pid) reaches the
+    // CLI's helpers too. Not unref'd and stdio stays piped, so nothing else
+    // changes; app quit still reaps it via killAllClaudeChildren.
+    detached: process.platform !== 'win32'
   })
   activeChildren.add(child)
   child.once('close', () => activeChildren.delete(child))

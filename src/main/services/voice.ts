@@ -1,6 +1,6 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog, shell, systemPreferences } from 'electron'
 import { execFile, spawn, type ChildProcess } from 'child_process'
-import { createWriteStream, existsSync, mkdirSync, renameSync, statSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
 import { Readable } from 'stream'
 import { pipeline } from 'stream/promises'
 import { join } from 'path'
@@ -9,18 +9,24 @@ import { askJarvis } from './jarvis'
 
 // Voice: ears and a mouth on the SAME Jarvis core the panel and phone use.
 // Design for "lightweight + fast":
-//   ears   silero VAD (2MB) + Moonshine-tiny int8 (~130MB total, one-time
+//   ears   silero VAD (2MB) + Moonshine-base int8 (~290MB total, one-time
 //          download) via sherpa-onnx — fully local, decodes an utterance in
 //          a few hundred ms on CPU. You talk; ~0.7s of silence finalizes.
-//   mouth  the Windows speech engine (zero download, starts speaking
-//          instantly). A premium local voice (Kokoro) can slot in later —
-//          it's one config object away, same pipeline.
+//          (Was Moonshine-tiny: half the size, but noticeably worse on
+//          names, numbers and anything not read out slowly.)
+//   mouth  the OS speech engine (Windows SAPI / macOS `say`; zero download,
+//          starts speaking instantly), or Kokoro once downloaded.
 //   brain  askJarvis() — bounded session, full app control, unchanged.
 //
 // The heavy native module loads lazily on first use: voice OFF costs zero
 // RAM/startup time.
 
 const MODEL_BASE = 'https://huggingface.co/csukuangfj'
+// The recognizer lives in its own subfolder named after the model: the file
+// NAMES are identical across Moonshine sizes, so a flat folder could not tell
+// an old tiny install from a base one and would happily load the wrong model.
+const ASR_MODEL = 'sherpa-onnx-moonshine-base-en-int8'
+const ASR_SUBDIR = 'moonshine-base-en-int8'
 const MODELS: { name: string; url: string; minBytes: number }[] = [
   {
     name: 'silero_vad.onnx',
@@ -28,31 +34,45 @@ const MODELS: { name: string; url: string; minBytes: number }[] = [
     minBytes: 500_000
   },
   {
-    name: 'preprocess.onnx',
-    url: `${MODEL_BASE}/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/preprocess.onnx`,
-    minBytes: 100_000
-  },
-  {
-    name: 'encode.int8.onnx',
-    url: `${MODEL_BASE}/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/encode.int8.onnx`,
+    name: `${ASR_SUBDIR}/preprocess.onnx`,
+    url: `${MODEL_BASE}/${ASR_MODEL}/resolve/main/preprocess.onnx`,
     minBytes: 1_000_000
   },
   {
-    name: 'uncached_decode.int8.onnx',
-    url: `${MODEL_BASE}/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/uncached_decode.int8.onnx`,
-    minBytes: 1_000_000
+    name: `${ASR_SUBDIR}/encode.int8.onnx`,
+    url: `${MODEL_BASE}/${ASR_MODEL}/resolve/main/encode.int8.onnx`,
+    minBytes: 10_000_000
   },
   {
-    name: 'cached_decode.int8.onnx',
-    url: `${MODEL_BASE}/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/cached_decode.int8.onnx`,
-    minBytes: 1_000_000
+    name: `${ASR_SUBDIR}/uncached_decode.int8.onnx`,
+    url: `${MODEL_BASE}/${ASR_MODEL}/resolve/main/uncached_decode.int8.onnx`,
+    minBytes: 10_000_000
   },
   {
-    name: 'tokens.txt',
-    url: `${MODEL_BASE}/sherpa-onnx-moonshine-tiny-en-int8/resolve/main/tokens.txt`,
+    name: `${ASR_SUBDIR}/cached_decode.int8.onnx`,
+    url: `${MODEL_BASE}/${ASR_MODEL}/resolve/main/cached_decode.int8.onnx`,
+    minBytes: 10_000_000
+  },
+  {
+    name: `${ASR_SUBDIR}/tokens.txt`,
+    url: `${MODEL_BASE}/${ASR_MODEL}/resolve/main/tokens.txt`,
     minBytes: 10_000
   }
 ]
+
+// Moonshine-tiny's files from earlier installs sat directly in voice-models/.
+// Once the base model is in place they are dead weight (~120MB).
+const LEGACY_TINY_FILES = [
+  'preprocess.onnx',
+  'encode.int8.onnx',
+  'uncached_decode.int8.onnx',
+  'cached_decode.int8.onnx',
+  'tokens.txt'
+]
+
+// Decoding is CPU-bound and synchronous; more threads = less time the main
+// process is busy. Apple silicon has plenty of performance cores.
+const VOICE_THREADS = process.platform === 'darwin' ? 4 : 2
 
 function modelsDir(): string {
   return join(app.getPath('userData'), 'voice-models')
@@ -77,7 +97,7 @@ export async function downloadVoiceModels(
   if (downloading) throw new Error('already downloading')
   downloading = true
   try {
-    mkdirSync(modelsDir(), { recursive: true })
+    mkdirSync(join(modelsDir(), ASR_SUBDIR), { recursive: true })
     for (let i = 0; i < MODELS.length; i++) {
       const m = MODELS[i]
       const dest = join(modelsDir(), m.name)
@@ -97,6 +117,13 @@ export async function downloadVoiceModels(
         throw new Error(`${m.name}: truncated download (${actual}/${expected || '?'} bytes)`)
       renameSync(part, dest)
     }
+    for (const f of LEGACY_TINY_FILES) {
+      try {
+        rmSync(join(modelsDir(), f), { force: true })
+      } catch {
+        // harmless leftover
+      }
+    }
     onProgress(100, 'done')
   } finally {
     downloading = false
@@ -104,8 +131,8 @@ export async function downloadVoiceModels(
 }
 
 // ---------------------------------------------------------------------------
-// Kokoro TTS (optional upgrade over the built-in Windows voice). Downloaded on
-// demand as one .tar.bz2 (Windows' bundled bsdtar extracts it — the espeak
+// Kokoro TTS (optional upgrade over the built-in OS voice). Downloaded on
+// demand as one .tar.bz2 (the OS's bundled bsdtar extracts it — the espeak
 // data is 355 tiny files, impractical to fetch individually). Generation runs
 // in main; samples are streamed to the renderer for playback so barge-in is a
 // clean node stop.
@@ -162,18 +189,20 @@ export async function downloadTts(onProgress: (pct: number, file: string) => voi
       pump()
     })
     onProgress(88, 'extracting')
-    // Windows System32 bsdtar handles .tar.bz2 natively; the release extracts
-    // to a top-level kokoro-en-v0_19/ folder alongside the archive.
+    // Windows 10+ ships bsdtar as System32\tar.exe; macOS's /usr/bin/tar is
+    // bsdtar too. Both handle .tar.bz2 natively; the release extracts to a
+    // top-level kokoro-en-v0_19/ folder alongside the archive.
+    const tarBin = process.platform === 'win32' ? 'tar.exe' : '/usr/bin/tar'
     await new Promise<void>((resolve, reject) => {
       execFile(
-        'tar.exe',
+        existsSync(tarBin) || process.platform === 'win32' ? tarBin : 'tar',
         ['-xf', archive, '-C', base],
         { windowsHide: true, maxBuffer: 1 << 24 },
-        (err) => (err ? reject(err) : resolve())
+        (err, _out, stderr) =>
+          err ? reject(new Error(`extracting the voice failed: ${String(stderr || err.message).trim()}`)) : resolve()
       )
     })
     try {
-      const { rmSync } = await import('fs')
       rmSync(archive, { force: true })
     } catch {
       // leftover archive is harmless
@@ -220,7 +249,7 @@ async function ensureKokoro(): Promise<SherpaTts | null> {
             tokens: join(d, 'tokens.txt'),
             dataDir: join(d, 'espeak-ng-data')
           },
-          numThreads: 2,
+          numThreads: VOICE_THREADS,
           provider: 'cpu'
         }
       })
@@ -277,7 +306,7 @@ let vad: SherpaVad | null = null
 let recognizer: SherpaRecognizer | null = null
 let engineInit: Promise<void> | null = null
 
-// Single-flight: two rapid Ctrl+Space presses must not construct the native
+// Single-flight: two rapid voice-key presses must not construct the native
 // engine twice (the wrapper exposes no free() — a duplicate pair would leak
 // the whole model's RAM).
 function ensureEngine(): Promise<void> {
@@ -295,18 +324,19 @@ async function buildEngine(): Promise<void> {
   const mod = (await import('sherpa-onnx-node')) as unknown as Record<string, unknown>
   const sherpa = (mod.default ?? mod) as typeof import('sherpa-onnx-node')
   const dir = modelsDir()
+  const asr = join(dir, ASR_SUBDIR)
   // Recognizer FIRST: if a corrupt model makes it throw, we must not leak a
   // freshly-built Vad on every retry (no free() in the wrapper).
   recognizer = new sherpa.OfflineRecognizer({
     modelConfig: {
       moonshine: {
-        preprocessor: join(dir, 'preprocess.onnx'),
-        encoder: join(dir, 'encode.int8.onnx'),
-        uncachedDecoder: join(dir, 'uncached_decode.int8.onnx'),
-        cachedDecoder: join(dir, 'cached_decode.int8.onnx')
+        preprocessor: join(asr, 'preprocess.onnx'),
+        encoder: join(asr, 'encode.int8.onnx'),
+        uncachedDecoder: join(asr, 'uncached_decode.int8.onnx'),
+        cachedDecoder: join(asr, 'cached_decode.int8.onnx')
       },
-      tokens: join(dir, 'tokens.txt'),
-      numThreads: 2,
+      tokens: join(asr, 'tokens.txt'),
+      numThreads: VOICE_THREADS,
       provider: 'cpu'
     }
   }) as SherpaRecognizer
@@ -410,14 +440,61 @@ function pushState(state: string, detail?: string): void {
   if (win && !win.isDestroyed()) win.webContents.send(IPC.VOICE_STATE, { state, detail })
 }
 
-// Warm the STT engine ahead of the first Ctrl+Space so recording starts with
+// Warm the STT engine ahead of the first activation so recording starts with
 // no model-load stall — the delay that was eating the start of utterances.
 export function prewarmVoice(): void {
   if (voiceModelsReady()) void ensureEngine().catch(() => undefined)
   if (ttsReady()) void ensureKokoro().catch(() => undefined)
 }
 
+// ---------------------------------------------------------------------------
+// Microphone permission (macOS). The renderer's getUserMedia only reports a
+// bare NotAllowedError; asking here first gets the real OS prompt on first
+// use and, once refused, a way to the one place it can be turned back on.
+// The settings URL is a FIXED constant opened only from the user's click in
+// a native dialog — never anything an agent or page can influence (inv. 13).
+// ---------------------------------------------------------------------------
+
+const MAC_MIC_SETTINGS =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+let micDialogOpen = false
+
+async function ensureMicAccess(): Promise<void> {
+  if (process.platform !== 'darwin') return
+  let status = systemPreferences.getMediaAccessStatus('microphone')
+  if (status === 'not-determined') {
+    const ok = await systemPreferences.askForMediaAccess('microphone')
+    status = ok ? 'granted' : 'denied'
+  }
+  if (status === 'granted') return
+  if (!micDialogOpen) {
+    micDialogOpen = true
+    const win = getWindow?.()
+    const opts = {
+      type: 'warning' as const,
+      message: 'ASIT can\'t use the microphone',
+      detail:
+        'Voice and dictation need microphone access. Turn on ASIT under System Settings → Privacy & Security → Microphone, then try again.',
+      buttons: ['Open System Settings', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1
+    }
+    void (win && !win.isDestroyed() ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts))
+      .then((r) => {
+        if (r.response === 0) void shell.openExternal(MAC_MIC_SETTINGS)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        micDialogOpen = false
+      })
+  }
+  throw new Error(
+    'Microphone access is off for ASIT — allow it in System Settings → Privacy & Security → Microphone.'
+  )
+}
+
 export async function voiceStart(): Promise<void> {
+  await ensureMicAccess()
   await ensureEngine()
   stopSpeaking() // barge-in: starting to talk silences the reply
   epoch++
@@ -434,6 +511,7 @@ export async function voiceStart(): Promise<void> {
  * one activation per sentence.
  */
 export async function dictateStart(): Promise<void> {
+  await ensureMicAccess()
   await ensureEngine()
   stopSpeaking()
   epoch++
@@ -720,7 +798,7 @@ export function speak(text: string, onDone?: () => void): void {
   const id = ++speakSeq
 
   // Kokoro path: generate samples in main, play in the renderer (clean
-  // barge-in via node stop). Falls back to the built-in Windows voice while
+  // barge-in via node stop). Falls back to the built-in OS voice while
   // Kokoro isn't downloaded, so voice always works.
   void ensureKokoro()
     .then((tts) => {
@@ -747,7 +825,7 @@ export function speak(text: string, onDone?: () => void): void {
     })
 }
 
-// Built-in Windows voice fallback (instant, no download).
+// Built-in OS voice fallback (instant, no download).
 function speakSapi(text: string, id: number, onDone?: () => void): void {
   const proc = ensureTts()
   ttsDoneCb = () => {

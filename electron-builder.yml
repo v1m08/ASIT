@@ -1,4 +1,5 @@
 appId: com.vedansh.asit
+afterPack: scripts/adhoc-sign.cjs
 productName: ASIT
 directories:
   output: dist
@@ -52,21 +53,27 @@ nsis:
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
 mac:
-  # Both architectures: Apple silicon natively, Intel for older machines.
+  # Apple silicon only. npm installs only the host's native payloads
+  # (sherpa-onnx, node-pty), so an x64 build made on an arm64 Mac shipped
+  # without them — voice and the terminal were dead on Intel. Add x64 back
+  # only from an x64 build host.
   target:
     - target: dmg
-      arch: [arm64, x64]
-    - target: zip # electron-updater needs the zip; the dmg is for humans
-      arch: [arm64, x64]
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
   icon: build/icon.png
   category: public.app-category.productivity
   # The app asks for the mic (dictation) and reaches the network. macOS kills
   # apps that use these without declaring why.
   extendInfo:
     NSMicrophoneUsageDescription: ASIT uses your microphone for local dictation and voice commands. Audio never leaves your machine.
-  # Unsigned builds: Gatekeeper quarantines a downloaded app unless the
-  # quarantine bit is cleared. Documented in the README rather than pretended
-  # away — signing needs a paid Apple Developer account.
+    NSAppleEventsUsageDescription: ASIT opens Terminal to sign you in to the Claude CLI.
+  # Ad-hoc signed (scripts/adhoc-sign.cjs), not Developer ID: Apple silicon refuses to run code
+  # with NO signature, and an unsigned bundle whose Info.plist was edited
+  # reads as "damaged". Ad-hoc fixes that; Gatekeeper still asks on first
+  # open (right-click → Open) because there is no paid identity/notarization.
+  # identity null skips electron-builder's keychain signing; afterPack signs.
   identity: null
 dmg:
   writeUpdateInfo: false

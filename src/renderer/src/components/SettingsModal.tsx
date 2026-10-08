@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
+import { shortcutLabel } from '@shared/shortcuts'
+import { voiceErrorMessage } from '../lib/micCapture'
 import type { Settings } from '@shared/types'
 import { useOverlay } from '../hooks/useOverlay'
 import { useStore } from '../store/useStore'
@@ -47,7 +49,7 @@ function CliSection({
             </>
           )}
           <button className="btn btn-ghost" onClick={() => void browse()}>
-            Use a different claude.exe…
+            Use a different {window.asit.ui.platform === 'win32' ? 'claude.exe' : 'claude binary'}…
           </button>
         </>
       ) : (
@@ -586,6 +588,8 @@ function VoiceSection(): JSX.Element {
   const [tts, setTts] = useState<boolean | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [pct, setPct] = useState<number | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const isMac = navigator.platform.startsWith('Mac')
 
   useEffect(() => {
     window.asit.voice.status().then((s) => setStt(s.modelsReady))
@@ -605,9 +609,12 @@ function VoiceSection(): JSX.Element {
   async function getStt(): Promise<void> {
     setBusy('stt')
     setPct(0)
+    setErr(null)
     try {
       await window.asit.voice.download()
       setStt(true)
+    } catch (e) {
+      setErr(`Speech recognition download failed: ${voiceErrorMessage(e)}`)
     } finally {
       setBusy(null)
       setPct(null)
@@ -616,9 +623,12 @@ function VoiceSection(): JSX.Element {
   async function getTts(): Promise<void> {
     setBusy('tts')
     setPct(0)
+    setErr(null)
     try {
       await window.asit.voice.ttsDownload()
       setTts(true)
+    } catch (e) {
+      setErr(`Natural voice install failed: ${voiceErrorMessage(e)}`)
     } finally {
       setBusy(null)
       setPct(null)
@@ -628,23 +638,28 @@ function VoiceSection(): JSX.Element {
   return (
     <div className="phone-section">
       <div className="row-between">
-        <span>◉ Voice (talk to Jarvis — Ctrl+Space)</span>
+        <span>
+          ◉ Voice (talk to Jarvis — {shortcutLabel('voice-toggle')}; dictate — {shortcutLabel('dictate-toggle')})
+        </span>
       </div>
       <p className="transfer-note"> Speech recognition and the spoken voice both run fully on your machine. Models download
         once.
       </p>
       <div className="transfer-buttons">
         <button className="btn" disabled={!!busy || stt === true} onClick={getStt}>
-          {stt ? '✓ Recognition ready' : busy === 'stt' ? `Downloading… ${pct ?? 0}%` : '↓ Speech recognition (~130MB)'}
+          {stt ? '✓ Recognition ready' : busy === 'stt' ? `Downloading… ${pct ?? 0}%` : '↓ Speech recognition (~290MB)'}
         </button>
         <button className="btn" disabled={!!busy || tts === true} onClick={getTts}>
           {tts ? '✓ Natural voice ready' : busy === 'tts' ? `Downloading… ${pct ?? 0}%` : '＋ Natural voice (~370MB)'}
         </button>
       </div>
       {tts !== true && (
-        <p className="transfer-note"> Until the natural voice is installed, replies use the built-in Windows voice.
+        <p className="transfer-note">
+          {' '}
+          Until the natural voice is installed, replies use the built-in {isMac ? 'macOS system' : 'Windows'} voice.
         </p>
       )}
+      {err && <p className="transfer-msg">{err}</p>}
     </div>
   )
 }

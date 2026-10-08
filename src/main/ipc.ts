@@ -130,6 +130,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const wasWatched = isWatchingTask(id)
     paneManager.closeByOwner(id) // pane file handles would block the folder move
     terminal.closeTerminalsForTask(id) // same: a shell cwd'd into it blocks the move
+    appwindows.releaseForTask(id) // invariant 17: hand embedded app windows back on a privacy move
     stopWatchingTask(id)
     if (aiDisabled) stopWatchesForTask(id)
     const result = tasks.setTaskPrivacy(id, aiDisabled)
@@ -325,6 +326,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     appwindows.setWindowVisible(handle, visible)
   )
   handle(IPC.APPWIN_RELEASE, (_e, handle: string) => appwindows.releaseWindow(handle))
+  handle(IPC.APPWIN_STATUS, () => appwindows.status())
+  handle(IPC.APPWIN_RAISE, (_e, handle: string) => appwindows.raiseWindow(handle))
+  // macOS: OS prompt + a FIXED System Settings URL; nothing from the caller.
+  handle(IPC.APPWIN_REQUEST_PERMISSION, () => appwindows.requestPermission())
 
   // --- browser: ad blocking + extensions ---
   handle(IPC.BROWSER_STATS, () => ({ blocked: browser.blockedRequestCount() }))
@@ -793,10 +798,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   handle(IPC.CLAUDE_CLI_LOCATE, async () => {
     const win = getWindow()
     if (!win) return { path: null }
+    // macOS/Linux: the CLI is an extensionless file (often a symlink in the
+    // hidden ~/.local/bin), so no extension filter and hidden files shown.
+    const isWin = process.platform === 'win32'
     const result = await dialog.showOpenDialog(win, {
-      title: 'Locate claude.exe',
-      filters: [{ name: 'claude.exe', extensions: ['exe'] }],
-      properties: ['openFile']
+      title: isWin ? 'Locate claude.exe' : 'Locate claude',
+      ...(isWin ? { filters: [{ name: 'claude.exe', extensions: ['exe'] }] } : {}),
+      properties: isWin ? ['openFile'] : ['openFile', 'showHiddenFiles']
     })
     if (result.canceled || result.filePaths.length === 0) {
       // picked:false so the caller knows cancel changed NOTHING — it must

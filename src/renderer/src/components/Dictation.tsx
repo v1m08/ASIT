@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
-import { openMicGate, warmMic } from '../lib/micCapture'
+import { shortcutLabel } from '@shared/shortcuts'
+import { acquireMic, voiceErrorMessage } from '../lib/micCapture'
 
 // Dictate into whatever has focus.
 //
@@ -67,22 +68,38 @@ export default function Dictation(): JSX.Element | null {
     void window.asit.voice.dictateStop()
   }, [])
 
+  const starting = useRef(false)
   const start = useCallback(async (): Promise<void> => {
-    const status = await window.asit.voice.status()
-    if (!status.modelsReady) {
-      useStore
-        .getState()
-        .pushNotice('Speech models are not downloaded yet — Settings → Voice.', 'error')
-      return
+    if (starting.current) return
+    starting.current = true
+    try {
+      const status = await window.asit.voice.status()
+      if (!status.modelsReady) {
+        useStore
+          .getState()
+          .pushNotice('Speech models are not downloaded yet — Settings → Voice.', 'error')
+        return
+      }
+      // Main first: it checks (and on macOS asks for) microphone permission
+      // and starts the recognizer listening, so the first audio chunk lands.
+      await window.asit.voice.dictateStart()
+      const release = await acquireMic()
+      closeGate.current?.()
+      closeGate.current = release
+      setOn(true)
+    } catch (err) {
+      // Was an unhandled rejection: a refused mic left main "dictating" with
+      // no audio and no word to the user.
+      closeGate.current?.()
+      closeGate.current = null
+      void window.asit.voice.dictateStop()
+      useStore.getState().pushNotice(`Dictation: ${voiceErrorMessage(err)}`, 'error')
+    } finally {
+      starting.current = false
     }
-    await warmMic()
-    await window.asit.voice.dictateStart()
-    closeGate.current?.()
-    closeGate.current = openMicGate()
-    setOn(true)
   }, [])
 
-  // Ctrl+Shift+Space bumps a counter in the store (the key may have been
+  // The dictation key (⌥⇧Space on a Mac, Ctrl+Shift+Space elsewhere) bumps a counter in the store (the key may have been
   // pressed inside a page, in which case it reaches main first and comes back
   // as an app event) — same pattern the Jarvis mic toggle uses.
   useEffect(() => {
@@ -147,7 +164,7 @@ export default function Dictation(): JSX.Element | null {
   if (!on) return null
 
   return (
-    <button className="dictating-pill" onClick={stop} title="Stop dictating (Ctrl+Shift+Space)">
+    <button className="dictating-pill" onClick={stop} title={`Stop dictating (${shortcutLabel('dictate-toggle')})`}>
       <span className="working-dot" />
       Dictating… <span className="dictating-hint">Esc or click to stop</span>
     </button>

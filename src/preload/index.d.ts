@@ -118,6 +118,9 @@ declare global {
         ) => Promise<void>
         visible: (handle: string, visible: boolean) => Promise<void>
         release: (handle: string) => Promise<void>
+        status: () => Promise<{ platform: string; supported: boolean; needsPermission: boolean }>
+        raise: (handle: string) => Promise<void>
+        requestPermission: () => Promise<void>
       }
       browser: {
         stats: () => Promise<{ blocked: number }>

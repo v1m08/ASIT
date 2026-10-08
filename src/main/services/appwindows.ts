@@ -1,4 +1,17 @@
 import { BrowserWindow, screen } from 'electron'
+import {
+  macEmbed,
+  macEmbeddedHandles,
+  macEmbeddedTitle,
+  macListWindows,
+  macOwnerOf,
+  macRaise,
+  macRelease,
+  macRequestPermission,
+  macSetBounds,
+  macSetVisible,
+  macStatus
+} from './appwindows-mac'
 
 // Embed a REAL native window (Emacs, Excel, anything) inside a workspace slot
 // by reparenting its HWND under ASIT's window.
@@ -13,6 +26,10 @@ import { BrowserWindow, screen } from 'electron'
 //     pixels, it does not create context. Only the window's title is known.
 //   * Some apps misbehave when their parent changes. Everything is restored
 //     on release and on quit, and a failed embed leaves the window alone.
+//
+// macOS can't reparent another process's window, so appwindows-mac.ts does
+// "follow mode" instead (the real window is kept over the slot via the
+// Accessibility API). Same contract, same restore-on-release discipline.
 //
 // Nothing here is reachable by an agent: there is no action verb, and the
 // only callers are user-driven IPC handlers.
@@ -76,8 +93,33 @@ const SWP_SHOWWINDOW = 0x0040
 const GW_OWNER = 4
 
 export interface AppWindow {
-  handle: string // decimal HWND as a string (BigInt doesn't cross IPC)
+  handle: string // Windows: decimal HWND (BigInt doesn't cross IPC). macOS: "pid:CGWindowID"
   title: string
+}
+
+export interface AppWindowStatus {
+  platform: NodeJS.Platform
+  /** Embedding works on this OS at all (native bridge loaded). */
+  supported: boolean
+  /** macOS: Accessibility permission still has to be granted. */
+  needsPermission: boolean
+}
+
+const IS_MAC = process.platform === 'darwin'
+
+export function status(): AppWindowStatus {
+  if (IS_MAC) return macStatus()
+  return { platform: process.platform, supported: win32(), needsPermission: false }
+}
+
+/** macOS only: user clicked "Allow" — OS prompt + the Accessibility pane. */
+export function requestPermission(): void {
+  if (IS_MAC) macRequestPermission()
+}
+
+/** macOS follow mode: bring the window in front of ASIT (user click). Windows: no-op (it's a child). */
+export function raiseWindow(handle: string): void {
+  if (IS_MAC) macRaise(handle)
 }
 
 interface Embedded {
@@ -100,6 +142,7 @@ function textOf(fn: string, hwnd: bigint, max = 512): string {
 
 /** Visible, titled, top-level application windows — what a task switcher shows. */
 export function listWindows(): AppWindow[] {
+  if (IS_MAC) return macListWindows(new Set(macEmbeddedHandles()))
   if (!win32()) return []
   const out: AppWindow[] = []
   const self = new Set(
@@ -158,7 +201,8 @@ function hwndOf(win: BrowserWindow): bigint | null {
 
 /** Embed `handle` into `parent`. Returns an error string, or null on success. */
 export function embedWindow(handle: string, parent: BrowserWindow, owner: string): string | null {
-  if (!win32()) return 'window embedding needs Windows'
+  if (IS_MAC) return macEmbed(handle, parent, owner)
+  if (!win32()) return 'embedding app windows isn’t available on this OS'
   let hwnd: bigint
   try {
     hwnd = BigInt(handle)
@@ -195,6 +239,7 @@ export function setWindowBounds(
   bounds: { x: number; y: number; width: number; height: number },
   parent: BrowserWindow
 ): void {
+  if (IS_MAC) return macSetBounds(handle, bounds)
   const item = embedded.get(handle)
   if (!item || !win32()) return
   const scale = screen.getDisplayMatching(parent.getBounds()).scaleFactor || 1
@@ -220,6 +265,7 @@ export function setWindowBounds(
  * WebContentsViews follow (invariant 2).
  */
 export function setWindowVisible(handle: string, visible: boolean): void {
+  if (IS_MAC) return macSetVisible(handle, visible)
   const item = embedded.get(handle)
   if (!item || !win32()) return
   if (item.visible === visible) return
@@ -232,11 +278,14 @@ export function setWindowVisible(handle: string, visible: boolean): void {
 }
 
 export function setAllVisible(visible: boolean): void {
-  for (const handle of embedded.keys()) setWindowVisible(handle, visible)
+  for (const handle of IS_MAC ? macEmbeddedHandles() : [...embedded.keys()]) {
+    setWindowVisible(handle, visible)
+  }
 }
 
 /** Give the window back to the desktop, restoring its original frame. */
 export function releaseWindow(handle: string): void {
+  if (IS_MAC) return macRelease(handle)
   const item = embedded.get(handle)
   if (!item) return
   embedded.delete(handle)
@@ -263,6 +312,10 @@ export function releaseWindow(handle: string): void {
 }
 
 export function releaseForTask(taskId: string): void {
+  if (IS_MAC) {
+    for (const h of macEmbeddedHandles()) if (macOwnerOf(h) === taskId) macRelease(h)
+    return
+  }
   for (const [handle, item] of [...embedded.entries()]) {
     if (item.owner === taskId) releaseWindow(handle)
   }
@@ -270,9 +323,10 @@ export function releaseForTask(taskId: string): void {
 
 /** MUST run on quit — otherwise the user's app is left parented to nothing. */
 export function releaseAllWindows(): void {
-  for (const handle of [...embedded.keys()]) releaseWindow(handle)
+  for (const handle of IS_MAC ? macEmbeddedHandles() : [...embedded.keys()]) releaseWindow(handle)
 }
 
 export function embeddedTitle(handle: string): string | null {
+  if (IS_MAC) return macEmbeddedTitle(handle)
   return embedded.get(handle)?.title ?? null
 }

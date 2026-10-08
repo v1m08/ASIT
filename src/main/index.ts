@@ -7,7 +7,11 @@ import { registerIpc } from './ipc'
 import { errorLogPath, logError } from './log'
 import { applyBrowserIdentity, browserUserAgent } from './services/useragent'
 import { initUpdater } from './services/updater'
+import { mergeLoginShellPath } from './services/shellenv'
+import { killAllClaudeChildren } from './services/claude'
+import { releaseAllWindows } from './services/appwindows'
 import { paneManager } from './services/panes'
+import { migrateRootIfNeeded } from './services/paths'
 import { initBrowserFilters, loadExtensions } from './services/browser'
 import { initScheduler, stopScheduler } from './services/scheduler'
 import { lockdown } from './services/lockdown'
@@ -149,6 +153,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  void mergeLoginShellPath() // macOS GUI launch: adopt the login shell's PATH (background, silent)
   if (isSmokeMode) {
     // Full isolation: smoke tests must never touch the real user data. They
     // already get their own userData (electron run by script path); this keeps
@@ -158,6 +163,7 @@ app.whenReady().then(() => {
     const { rmSync } = require('fs') as typeof import('fs')
     const docs = joinPath(tmpdir(), 'asit-smoke-docs')
     app.setPath('documents', docs)
+    process.env.ASIT_ROOT = joinPath(docs, 'ASIT') // macOS root follows the redirect (paths.ts)
 
     // START FROM NOTHING. The smoke profile persisted between runs, so state
     // piled up across every invocation — thousands of leftover tasks — until
@@ -185,6 +191,7 @@ app.whenReady().then(() => {
   }
 
   getDb() // open DB + run migrations before any IPC arrives
+  migrateRootIfNeeded() // macOS: ~/Documents/ASIT -> ~/ASIT, once
 
   if (process.env.ASIT_SMOKE === '1') {
     runSmokeTest()
@@ -347,6 +354,10 @@ app.whenReady().then(() => {
 // running here and again below is harmless.
 app.on('before-quit', () => {
   cancelBridge() // close a borrowed sign-in browser; its profile is wiped
+  // Cmd+Q / app.quit() skip window-all-closed, so reap CLI children and hand
+  // embedded app windows back here too (both idempotent).
+  killAllClaudeChildren()
+  releaseAllWindows()
   try {
     closeDb()
   } catch (err) {
@@ -1090,9 +1101,10 @@ async function runTerminalSmokeTest(): Promise<void> {
 }
 
 // Headless voice check: ASIT_SMOKE_VOICE=1 electron out/main/index.js
-// Closed loop with no microphone: Windows TTS renders a known phrase to a
-// 16kHz WAV, and the local sherpa/Moonshine pipeline must transcribe it back.
-// Downloads the models on first run (~130MB, cached in userData).
+// Closed loop with no microphone: the OS's TTS (Windows SAPI / macOS `say`)
+// renders a known phrase to a 16kHz WAV, and the local sherpa/Moonshine
+// pipeline must transcribe it back.
+// Downloads the models on first run (~290MB, cached in userData).
 async function runVoiceSmokeTest(): Promise<void> {
   const voiceSvc = await import('./services/voice')
   const { execFile } = await import('child_process')
@@ -1117,29 +1129,61 @@ async function runVoiceSmokeTest(): Promise<void> {
 
     const wav = join(tmpdir(), 'asit-voice-smoke.wav')
     const phrase = 'open the biology notes and start a timer'
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          `Add-Type -AssemblyName System.Speech
+    if (process.platform === 'darwin') {
+      // macOS: the built-in `say`, rendered straight to 16kHz mono 16-bit PCM.
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          'say',
+          ['-o', wav, '--file-format=WAVE', '--data-format=LEI16@16000', phrase],
+          { timeout: 30000 },
+          (err) => (err ? reject(err) : resolve())
+        )
+      })
+      console.log('[voice-smoke] test WAV synthesized via macOS say')
+    } else if (process.platform === 'win32') {
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            `Add-Type -AssemblyName System.Speech
 $fmt = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
 $sp = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $sp.SetOutputToWaveFile('${wav.replace(/\\/g, '\\\\')}', $fmt)
 $sp.Speak('${phrase}')
 $sp.Dispose()`
-        ],
-        { timeout: 30000 },
-        (err) => (err ? reject(err) : resolve())
-      )
-    })
-    console.log('[voice-smoke] test WAV synthesized via Windows TTS')
+          ],
+          { timeout: 30000 },
+          (err) => (err ? reject(err) : resolve())
+        )
+      })
+      console.log('[voice-smoke] test WAV synthesized via Windows TTS')
+    } else {
+      console.log('[voice-smoke] SKIP: no built-in TTS to synthesize a test clip on this OS')
+      app.exit(0)
+      return
+    }
 
-    // WAV → Float32: 44-byte canonical header, 16-bit little-endian PCM.
+    // WAV → Float32. Walk the RIFF chunks to find 'data' — macOS writes
+    // extra chunks (FLLR padding), so the canonical 44-byte offset is wrong.
     const buf = readFileSync(wav)
-    const pcm = new Float32Array((buf.length - 44) / 2)
-    for (let i = 0; i < pcm.length; i++) pcm[i] = buf.readInt16LE(44 + i * 2) / 32768
+    let off = 12
+    let dataStart = -1
+    let dataLen = 0
+    while (off + 8 <= buf.length) {
+      const id = buf.toString('ascii', off, off + 4)
+      const size = buf.readUInt32LE(off + 4)
+      if (id === 'data') {
+        dataStart = off + 8
+        dataLen = Math.min(size, buf.length - dataStart)
+        break
+      }
+      off += 8 + size + (size & 1)
+    }
+    if (dataStart < 0) fail('synthesized wav has no data chunk')
+    const pcm = new Float32Array(Math.floor(dataLen / 2))
+    for (let i = 0; i < pcm.length; i++) pcm[i] = buf.readInt16LE(dataStart + i * 2) / 32768
     if (pcm.length < 16000) fail('synthesized wav suspiciously short')
 
     const t0 = Date.now()
@@ -1151,6 +1195,11 @@ $sp.Dispose()`
       if (!lower.includes(word)) fail(`transcript missing "${word}"`)
     }
     if (ms > 8000) fail(`decode too slow: ${ms}ms`)
+    // The first call includes loading the model; a live session prewarms it,
+    // so the WARM decode is how long main is actually busy per utterance.
+    const tWarm = Date.now()
+    await voiceSvc.transcribeSamples(pcm)
+    console.log(`[voice-smoke] warm decode (${(pcm.length / 16000).toFixed(1)}s clip): ${Date.now() - tWarm}ms`)
 
     // The FULL mic ingest path — chunking, VAD windows, front(false), pop —
     // under the same Electron memory-cage rules a real session runs under.
@@ -1774,6 +1823,9 @@ async function runUiSmokeTest(): Promise<void> {
     // idle label. Waits past that delay — and past the ~1s timer throttling
     // an off-screen renderer gets — so a stale close has every chance to fire.
     // Typed immediately, no settle: the bug lived in the gap.
+    // Re-take OS focus first: on a Mac in use, other apps can activate in
+    // between, and that is not what this step tests.
+    await takeFocus()
     await evalIn(`(() => { const el = ${addr}; el.blur(); el.focus() })()`)
     const bounced = await focusState()
     if (!bounced.page || !bounced.field) fail('the address bar did not take focus back')
@@ -2053,6 +2105,42 @@ async function runUiSmokeTest(): Promise<void> {
         // A picture is a nicety; never fail the suite over one.
         console.log('[ui-smoke] screenshot failed:', err)
       }
+    }
+
+    // "New space" end to end through the real button. It was built on
+    // window.prompt(), which Electron never shows — the click did nothing on
+    // every OS and no assertion noticed.
+    {
+      const clicked = await evalIn<boolean>(`(() => {
+        const b = document.querySelector('.group-add'); if (!b) return false; b.click(); return true })()`)
+      if (!clicked) fail('no "New space" button in the shell')
+      let asked = false
+      for (let i = 0; i < 30 && !asked; i++) {
+        asked = await evalIn<boolean>(`!!document.querySelector('.modal-backdrop form.modal input')`)
+        if (!asked) await new Promise((r) => setTimeout(r, 100))
+      }
+      if (!asked) fail('"New space" did not ask for a name')
+      await evalIn(`(() => {
+        const el = document.querySelector('.modal-backdrop form.modal input')
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+        setter.call(el, 'Smoke New Space')
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        el.form.requestSubmit()
+      })()`)
+      let made: ReturnType<typeof tasks.listTasks>[number] | undefined
+      for (let i = 0; i < 50 && !made; i++) {
+        made = tasks.listTasks().find((t) => t.title === 'Smoke New Space')
+        if (!made) await new Promise((r) => setTimeout(r, 100))
+      }
+      if (!made) fail('"New space" did not create the space')
+      let shown = ''
+      for (let i = 0; i < 30 && shown !== made!.id; i++) {
+        shown = await evalIn<string>(`window.__asitStore.getState().activeTask?.id ?? ''`)
+        if (shown !== made!.id) await new Promise((r) => setTimeout(r, 100))
+      }
+      if (shown !== made!.id) fail('the new space was created but not switched to')
+      console.log('[ui-smoke] "New space" asks for a name, creates the space and opens it')
+      tasks.deleteTask(made!.id)
     }
 
     tasks.deleteTask(task.id)

@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join, dirname } from 'path'
+import { asitRoot } from './paths'
 
 // Shared, cross-workspace memory.
 //
@@ -31,7 +32,7 @@ export interface MemoryFact {
 
 /** Exported so a backup can carry the shared facts to another machine. */
 export function memoryPath(): string {
-  return join(app.getPath('documents'), 'ASIT', 'memory.md')
+  return join(asitRoot(), 'memory.md')
 }
 
 function parse(content: string): MemoryFact[] {

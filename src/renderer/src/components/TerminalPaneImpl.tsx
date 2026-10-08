@@ -20,7 +20,9 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
   const idRef = useRef<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [exited, setExited] = useState<number | null>(null)
-  const [shell, setShell] = useState('powershell')
+  // '' = let main pick the platform default (powershell on Windows, the
+  // user's $SHELL on macOS/Linux). listShells() returns that default first.
+  const [shell, setShell] = useState('')
   const [shells, setShells] = useState<string[]>([])
   const [restartTick, setRestartTick] = useState(0)
 
@@ -36,7 +38,7 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
     setError(null)
 
     const term = new Terminal({
-      fontFamily: 'Cascadia Mono, Consolas, monospace',
+      fontFamily: "ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', Consolas, monospace",
       fontSize: 13,
       cursorBlink: true,
       scrollback: 5000,
@@ -63,7 +65,7 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
     }
 
     void (async () => {
-      const res = await window.asit.terminal.open(task.id, shell)
+      const res = await window.asit.terminal.open(task.id, shell || undefined)
       if (disposed) return
       if (!res.id) {
         setError(res.error ?? 'could not start a terminal')
@@ -111,11 +113,13 @@ export default function TerminalPaneImpl({ task }: Props): JSX.Element {
       <div className="terminal-bar">
         <select
           className="terminal-shell"
-          value={shell}
-          onChange={(e) => setShell(e.target.value)}
+          value={shell || shells[0] || ''}
+          onChange={(e) => {
+            if (e.target.value !== (shell || shells[0])) setShell(e.target.value)
+          }}
           title="Shell"
         >
-          {(shells.length ? shells : [shell]).map((s) => (
+          {(shells.length ? shells : [shell || 'default']).map((s) => (
             <option key={s} value={s}>
               {s}
             </option>

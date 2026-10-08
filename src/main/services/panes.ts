@@ -17,11 +17,12 @@ import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import { isMailHost, mailSendBlocked, sendRefusalReason } from './guardrails'
 import type { DownloadItem } from '@shared/types'
-import { SHORTCUTS, ZONE_ACCELERATORS } from '@shared/shortcuts'
+import { SHORTCUTS, ZONE_ACCELERATORS, matchShortcut } from '@shared/shortcuts'
 import { setAllVisible as setAllAppWindowsVisible } from './appwindows'
 import { applyDeclutter } from './declutter'
 import { recordFavicon, recordVisit } from './history'
 import { searchUrlFor } from './search'
+import { tracePane } from './perf'
 
 // All embedded browser panes share one persistent partition so logins
 // (Overleaf, Google, ...) survive restarts and are shared across tasks.
@@ -328,6 +329,22 @@ class PaneManager {
       }
       // Plain Tab is deliberately NOT handled: it belongs to the page, so a
       // form's fields tab in order. Panel cycling is F6 (see NAV_ACCELERATORS).
+      // Voice keys are per-platform (⌥Space on macOS, Ctrl+Space elsewhere),
+      // so they come from the shared table rather than a hardcoded Control.
+      if (input.code === 'Space') {
+        const def = matchShortcut({
+          key: ' ',
+          ctrlKey: input.control,
+          shiftKey: input.shift,
+          altKey: input.alt,
+          metaKey: input.meta
+        })
+        if (def?.id === 'voice-toggle' || def?.id === 'dictate-toggle') {
+          event.preventDefault()
+          this.sendAppEvent({ type: def.id })
+          return
+        }
+      }
       if (!input.control || input.alt || input.meta) return
       const k = input.key.toLowerCase()
       if (k === 'k') {
@@ -336,9 +353,6 @@ class PaneManager {
       } else if (k === 'j') {
         event.preventDefault()
         this.sendAppEvent({ type: 'focus-jarvis' })
-      } else if (k === ' ' || input.code === 'Space') {
-        event.preventDefault()
-        this.sendAppEvent({ type: 'voice-toggle' })
       } else if (k === 'l') {
         event.preventDefault()
         this.sendAppEvent({ type: 'focus-address' })
@@ -411,6 +425,7 @@ class PaneManager {
     view.webContents.on('did-navigate-in-page', pushNavState)
     view.webContents.on('page-title-updated', pushNavState)
 
+    tracePane(paneId, view.webContents)
     if (target.url) {
       view.webContents.loadURL(
         target.url,
@@ -425,6 +440,12 @@ class PaneManager {
     view.setVisible(false) // hidden until the renderer sends bounds
     this.win.contentView.addChildView(view)
     this.panes.set(paneId, { view, desiredVisible: false, lastActive: Date.now(), owner })
+    const early = this.pendingGeom.get(paneId)
+    if (early) {
+      this.pendingGeom.delete(paneId)
+      if (early.bounds) this.setBounds(paneId, early.bounds)
+      if (early.visible !== undefined) this.setVisible(paneId, early.visible)
+    }
   }
 
   /** A pane went away for a reason the renderer did not ask for. */
@@ -433,9 +454,18 @@ class PaneManager {
     this.win.webContents.send(IPC.PANES_GONE, { paneId })
   }
 
+  // Geometry that arrived before its pane existed. Tabs open lazily (only
+  // the one on screen loads), and the renderer measures in a layout effect —
+  // which runs BEFORE the effect that opens the pane. Dropping those calls
+  // left a freshly opened tab hidden at 0x0 until something else re-measured.
+  private pendingGeom = new Map<string, { bounds?: PaneBounds; visible?: boolean }>()
+
   setBounds(paneId: string, bounds: PaneBounds): void {
     const pane = this.panes.get(paneId)
-    if (!pane) return
+    if (!pane) {
+      this.pendingGeom.set(paneId, { ...this.pendingGeom.get(paneId), bounds })
+      return
+    }
     pane.view.setBounds({
       x: Math.round(bounds.x),
       y: Math.round(bounds.y),
@@ -446,7 +476,10 @@ class PaneManager {
 
   setVisible(paneId: string, visible: boolean): void {
     const pane = this.panes.get(paneId)
-    if (!pane) return
+    if (!pane) {
+      this.pendingGeom.set(paneId, { ...this.pendingGeom.get(paneId), visible })
+      return
+    }
     pane.desiredVisible = visible
     if (visible) pane.lastActive = Date.now()
     pane.view.setVisible(visible && !this.allHidden)
@@ -726,6 +759,7 @@ class PaneManager {
   }
 
   close(paneId: string): void {
+    this.pendingGeom.delete(paneId)
     const pane = this.panes.get(paneId)
     if (!pane) return
     this.favicons.delete(paneId)

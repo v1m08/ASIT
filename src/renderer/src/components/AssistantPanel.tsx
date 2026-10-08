@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
 import { useStore } from '../store/useStore'
-import { openMicGate, warmMic } from '../lib/micCapture'
+import { shortcutLabel } from '@shared/shortcuts'
+import { acquireMic, voiceErrorMessage } from '../lib/micCapture'
 import { useSnippets } from '../hooks/useSnippets'
 import { fmtCost } from '../utils/fmt'
 import Markdown from './Markdown'
@@ -95,13 +96,14 @@ export default function AssistantPanel(): JSX.Element | null {
   const voiceStateRef = useRef(voiceState)
   voiceStateRef.current = voiceState
 
+  // Releasing the lease releases the device (when dictation isn't also
+  // holding it) — the mic is live only while this panel is listening.
   const closeGate = (): void => {
     closeGateRef.current?.()
     closeGateRef.current = null
   }
 
   const stopCapture = (): void => closeGate()
-  const warmCapture = (): Promise<void> => warmMic()
 
   // Play a Kokoro clip streamed from main; keep the node for barge-in.
   const playAudio = (sampleRate: number, samples: Float32Array): void => {
@@ -144,7 +146,7 @@ export default function AssistantPanel(): JSX.Element | null {
   const toggleInFlight = useRef(false)
 
   const toggleVoice = async (): Promise<void> => {
-    // Two rapid Ctrl+Space presses must collapse into one action — a double
+    // Two rapid voice-key presses must collapse into one action — a double
     // start opened TWO mic streams and kept the first one hot forever.
     if (toggleInFlight.current) return
     toggleInFlight.current = true
@@ -181,15 +183,19 @@ export default function AssistantPanel(): JSX.Element | null {
       setDownloadPct(null)
     }
     try {
-      // Mic is already warm (panel-open prewarm) — flip the gate FIRST so the
-      // very first frames after Ctrl+Space are captured, then tell main.
-      await warmCapture()
-      closeGate()
-      closeGateRef.current = openMicGate()
+      // Main first: it checks (on macOS, asks for) mic permission, silences
+      // any reply, and starts the VAD listening — so the very first chunk the
+      // mic produces is accepted. The engine is prewarmed on panel open.
+      await window.asit.voice.start()
       setVoiceState('listening')
-      await window.asit.voice.start() // engine prewarmed; also silences a reply
+      voiceStateRef.current = 'listening' // read below, before the next render
+      closeGate()
+      const release = await acquireMic()
+      // Cancelled (or the utterance ended) while the device was opening.
+      if (voiceStateRef.current !== 'listening') release()
+      else closeGateRef.current = release
     } catch (err) {
-      setError(`Mic failed: ${err instanceof Error ? err.message : String(err)}`)
+      setError(`Mic failed: ${voiceErrorMessage(err)}`)
       setVoiceState('off')
       stopCapture()
       // Main may already be listening with no audio source — release it.
@@ -199,19 +205,20 @@ export default function AssistantPanel(): JSX.Element | null {
   const toggleVoiceRef = useRef(toggleVoice)
   toggleVoiceRef.current = toggleVoice
 
-  // Ctrl+Space from anywhere (bumpVoice also opens the panel in agent scope).
+  // The voice key from anywhere (bumpVoice also opens the panel in agent scope).
   useEffect(() => {
     if (voiceTick > 0) void toggleVoiceRef.current()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceTick])
 
-  // On panel open: prewarm the STT/TTS engines AND the mic, so the first
-  // Ctrl+Space records instantly. On close: fully release the mic + engines'
-  // audio and any playback.
+  // On panel open: prewarm the STT/TTS engines (models in RAM, no device
+  // held) so the first activation records promptly. The MIC is deliberately
+  // NOT opened here — holding it lights the macOS mic indicator and drops
+  // Bluetooth headsets into call-quality audio for as long as the panel is
+  // open. On close: release everything and stop any playback.
   useEffect(() => {
     if (open) {
       window.asit.voice.prewarm()
-      void warmCapture().catch(() => undefined)
     } else {
       closeGate()
       stopAudio()
@@ -227,8 +234,8 @@ export default function AssistantPanel(): JSX.Element | null {
       const p = args[0] as { state: string; detail?: string }
       if (p.state === 'idle') setVoiceState('off')
       else setVoiceState(p.state as 'listening' | 'thinking' | 'speaking')
-      // Utterance captured (main left 'listening') → stop feeding chunks, but
-      // keep the mic WARM so the next turn is instant.
+      // Utterance captured (main left 'listening') → release the mic now;
+      // the next activation re-acquires it (fast).
       if (p.state !== 'listening') closeGate()
       if (p.state === 'thinking' && p.detail) setStatus(p.detail)
     })
@@ -457,12 +464,12 @@ export default function AssistantPanel(): JSX.Element | null {
             className={`voice-btn voice-${voiceState}`}
             title={
               voiceState === 'listening'
-                ? 'Listening — pause to send, click to cancel (Ctrl+Space)'
+                ? `Listening — pause to send, click to cancel (${shortcutLabel('voice-toggle')})`
                 : voiceState === 'download'
                   ? `Downloading voice models… ${downloadPct ?? 0}%`
                   : voiceState === 'speaking'
                     ? 'Speaking — click to interrupt and talk'
-                    : 'Talk to the agent (Ctrl+Space) — first use downloads ~130MB of local speech models'
+                    : `Talk to the agent (${shortcutLabel('voice-toggle')}) — first use downloads ~290MB of local speech models`
             }
             onClick={() => void toggleVoice()}
           >

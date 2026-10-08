@@ -53,7 +53,12 @@ export function initUpdater(getWin: () => BrowserWindow | null): void {
   getWindow = getWin
   // Unpackaged builds have no update feed, and a smoke run must never phone
   // home or mutate an install.
-  state.supported = app.isPackaged && !process.env.ASIT_NO_UPDATE
+  // macOS: electron-updater installs through Squirrel.Mac, which refuses any
+  // build that isn't code-signed — so on our unsigned Mac builds it would
+  // download, then fail at install with a signature error. Off until the Mac
+  // build is signed; Mac users update from the GitHub Releases page.
+  state.supported =
+    app.isPackaged && !process.env.ASIT_NO_UPDATE && process.platform !== 'darwin'
   if (!state.supported) return
 
   void (async () => {
