@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { IPC } from '@shared/ipc-contract'
-import type { Task, Workflow, WorkflowRun, WorkflowStep } from '@shared/types'
+import type { Workflow, WorkflowRun, WorkflowStep } from '@shared/types'
 import { useStore } from '../store/useStore'
 import { useOverlay } from '../hooks/useOverlay'
+import WorkflowEditor from './WorkflowEditor'
 
 // Automations: the one place to see and manage everything the app does on
 // its own — saved workflows (run, edit, history, approve paused runs) and
@@ -16,123 +17,25 @@ function stepSummary(step: WorkflowStep): string {
     case 'action':
       return `⚙ ${step.action.action}${typeof step.action.label === 'string' ? ` "${step.action.label}"` : ''}`
     case 'prompt':
-      return `🤖 ${step.prompt.replace(/\s+/g, ' ').slice(0, 70)}`
+      return `✦ ${step.prompt.replace(/\s+/g, ' ').slice(0, 60)}${step.into ? ` → {{${step.into}}}` : ''}`
     case 'confirm':
-      return `⏸ confirm: ${step.message.slice(0, 60)}`
+      return `⏸ ${step.message.slice(0, 50)}`
     case 'wait_for':
       return `👁 wait for ${step.label ?? step.text ?? `gone: ${step.gone_label ?? step.gone_text}`}`
     case 'assert':
-      return `✓ assert ${step.invert ? 'absent' : 'present'}: ${step.label ?? step.text}`
+      return `✓ check ${step.invert ? 'absent' : 'present'}: ${step.label ?? step.text}`
+    case 'fill_form':
+      return `✎ fill ${Object.keys(step.fields).length} fields`
+    case 'extract':
+      return `⤓ {{${step.into}}}`
+    case 'set':
+      return `= {{${step.name}}}`
+    case 'foreach':
+      return `↻ each ${step.as} (${step.steps.length} steps)`
+    case 'if':
+      return `⑂ if ${step.text ?? step.label ?? step.url_contains ?? step.var ?? ''}`
   }
-}
-
-function WorkflowEditor({
-  existing,
-  tasks,
-  onClose
-}: {
-  existing: Workflow | null
-  tasks: Task[]
-  onClose: (saved: boolean) => void
-}): JSX.Element {
-  const [name, setName] = useState(existing?.name ?? '')
-  const [description, setDescription] = useState(existing?.description ?? '')
-  const [taskId, setTaskId] = useState<string | ''>(existing?.taskId ?? '')
-  const [stepsJson, setStepsJson] = useState(
-    JSON.stringify(existing?.steps ?? [{ kind: 'action', action: { action: 'page_snapshot' } }], null, 2)
-  )
-  const [paramsJson, setParamsJson] = useState(JSON.stringify(existing?.params ?? [], null, 2))
-  const [error, setError] = useState<string | null>(null)
-
-  async function save(): Promise<void> {
-    let steps: WorkflowStep[]
-    let params
-    try {
-      steps = JSON.parse(stepsJson)
-    } catch {
-      setError('Steps are not valid JSON.')
-      return
-    }
-    try {
-      params = JSON.parse(paramsJson)
-    } catch {
-      setError('Params are not valid JSON.')
-      return
-    }
-    const res = await window.asit.workflows.save({
-      name: name.trim(),
-      description,
-      taskId: taskId || null,
-      params,
-      steps
-    })
-    if (!res.ok) {
-      setError(res.reason)
-      return
-    }
-    onClose(true)
-  }
-
-  return (
-    <div className="workflow-editor">
-      <div className="form-row">
-        <input
-          autoFocus={!existing}
-          placeholder="workflow-name (slug)"
-          value={name}
-          disabled={!!existing}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <select value={taskId} onChange={(e) => setTaskId(e.target.value)}>
-          <option value="">Global (no model steps)</option>
-          {tasks
-            .filter((t) => !t.aiDisabled && t.status === 'active')
-            .map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}
-              </option>
-            ))}
-        </select>
-      </div>
-      <input
-        placeholder="What this workflow does"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      <label className="settings-field">
-        <span>
-          Steps — JSON array. Kinds: action, prompt (model), confirm, wait_for, assert.{' '}
-          {'{{param}}'} substitutes into string values.
-        </span>
-        <textarea
-          rows={10}
-          spellCheck={false}
-          className="settings-css-input"
-          value={stepsJson}
-          onChange={(e) => setStepsJson(e.target.value)}
-        />
-      </label>
-      <label className="settings-field">
-        <span>Params — e.g. {'[{"name":"query","required":true}]'}</span>
-        <textarea
-          rows={2}
-          spellCheck={false}
-          className="settings-css-input"
-          value={paramsJson}
-          onChange={(e) => setParamsJson(e.target.value)}
-        />
-      </label>
-      {error && <p className="transfer-note" style={{ color: 'var(--danger)' }}>{error}</p>}
-      <div className="form-row">
-        <button className="btn btn-primary" onClick={() => void save()} disabled={!name.trim()}>
-          Save workflow
-        </button>
-        <button className="btn btn-ghost" onClick={() => onClose(false)}>
-          Cancel
-        </button>
-      </div>
-    </div>
-  )
+  return ''
 }
 
 function RunView({ run, live }: { run: WorkflowRun; live: boolean }): JSX.Element {
@@ -162,9 +65,10 @@ function RunView({ run, live }: { run: WorkflowRun; live: boolean }): JSX.Elemen
       </div>
       {run.stepResults.length > 0 && (
         <div className="workflow-run-steps">
-          {run.stepResults.map((s) => (
-            <div key={s.index} className="workflow-run-step">
-              {s.ok ? '✓' : '✗'} <b>{s.kind}</b> — {s.outcome.slice(0, 160)}
+          {run.stepResults.map((s, i) => (
+            <div key={i} className="workflow-run-step">
+              {s.ok ? '✓' : '✗'} <span className="workflow-run-path">{s.path ?? s.index + 1}</span>{' '}
+              <b>{s.kind}</b> — {s.outcome.slice(0, 200)}
             </div>
           ))}
         </div>
@@ -298,9 +202,18 @@ export default function AutomationsModal(): JSX.Element | null {
               <WorkflowEditor
                 existing={editing === 'new' ? null : editing}
                 tasks={tasks}
-                onClose={(saved) => {
+                onClose={(saved, runName) => {
                   setEditing(null)
-                  if (saved) void reload()
+                  if (!saved) return
+                  void reload().then(async () => {
+                    if (!runName) return
+                    const wf = (await window.asit.workflows.list()).find((w) => w.name === runName)
+                    if (!wf) return
+                    if (wf.params.some((p) => p.required && !p.default)) {
+                      setRunFor(wf)
+                      setRunParams({})
+                    } else void startRun(wf, {})
+                  })
                 }}
               />
             ) : runFor ? (
@@ -312,10 +225,19 @@ export default function AutomationsModal(): JSX.Element | null {
                       {p.label ?? p.name}
                       {p.required ? ' *' : ''}
                     </span>
-                    <input
-                      value={runParams[p.name] ?? p.default ?? ''}
-                      onChange={(e) => setRunParams({ ...runParams, [p.name]: e.target.value })}
-                    />
+                    {/(urls|links|list|items)$/i.test(p.name) ? (
+                      <textarea
+                        rows={5}
+                        placeholder="One per line"
+                        value={runParams[p.name] ?? p.default ?? ''}
+                        onChange={(e) => setRunParams({ ...runParams, [p.name]: e.target.value })}
+                      />
+                    ) : (
+                      <input
+                        value={runParams[p.name] ?? p.default ?? ''}
+                        onChange={(e) => setRunParams({ ...runParams, [p.name]: e.target.value })}
+                      />
+                    )}
                   </label>
                 ))}
                 <div className="form-row">
@@ -334,7 +256,7 @@ export default function AutomationsModal(): JSX.Element | null {
                 </button>
                 {workflows.length === 0 && (
                   <p className="library-empty">
-                    No workflows yet. Build one here, or ask a chat to “save this as a workflow”.
+                    No workflows yet. Click “+ New workflow” and describe what to automate, or ask a chat to “save this as a workflow”.
                   </p>
                 )}
                 {workflows.map((wf) => (

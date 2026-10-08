@@ -29,6 +29,8 @@ import * as todos from './services/todos'
 import * as terminal from './services/terminal'
 import * as vault from './services/vault'
 import * as browser from './services/browser'
+import * as search from './services/search'
+import { draftWorkflow } from './services/workflowDraft'
 import * as appwindows from './services/appwindows'
 import * as companion from './services/companion'
 import * as jarvis from './services/jarvis'
@@ -326,6 +328,10 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
   // --- browser: ad blocking + extensions ---
   handle(IPC.BROWSER_STATS, () => ({ blocked: browser.blockedRequestCount() }))
+  // Omnibox type-ahead + connection warm-up. User-driven (keystrokes in the
+  // command bar); deliberately not reachable from any action verb.
+  handle(IPC.SEARCH_SUGGEST, (_e, q: string) => search.suggest(String(q ?? '')))
+  ipcMain.on(IPC.SEARCH_PRECONNECT, () => search.preconnectSearch())
   handle(IPC.BROWSER_EXT_LIST, () => browser.listExtensions())
   handle(IPC.BROWSER_EXT_ADD, () => browser.addExtension(getWindow()))
   handle(IPC.BROWSER_EXT_REMOVE, (_e, path: string) => browser.removeExtension(path))
@@ -373,6 +379,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     paneManager.typeToFirstVisible(text)
   )
   handle(IPC.PANES_FOCUS, (_e, paneId: string) => paneManager.focusPane(paneId))
+  handle(IPC.PANES_CAPTURE_VISIBLE, () => paneManager.captureVisible())
   ipcMain.on(IPC.PANES_DOM_FOCUS, (_e, focused: boolean) => paneManager.setDomFocused(focused))
 
   // --- notes ---
@@ -717,6 +724,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   handle(IPC.WORKFLOWS_RUNS, (_e, limit?: number) => workflows.listRuns(limit))
   handle(IPC.WORKFLOWS_RUN_STATE, () => workflows.activeRunState())
   handle(IPC.WORKFLOWS_IMPORT_SKILL, (_e, name: string) => workflows.importSkillAsWorkflow(name))
+  // User-driven only (the Automations editor). Returns a DRAFT for review —
+  // saving stays a separate, explicit WORKFLOWS_SAVE click.
+  handle(IPC.WORKFLOWS_DRAFT, (_e, input: Parameters<typeof draftWorkflow>[0]) => draftWorkflow(input))
 
   // --- schedules (user-visible management; agents keep their action verbs) ---
   handle(IPC.SCHEDULES_LIST, () => scheduler.listSchedules())
@@ -762,6 +772,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   handle(IPC.SETTINGS_SET, (_e, patch: Partial<Settings>) => {
     const result = settings.setSettings(patch)
     invalidateClaudePathCache()
+    // Ad-block domains live in the session's URL filter — re-register it
+    // (a no-op unless adBlock/blockedDomains actually changed).
+    if ('adBlock' in patch || 'blockedDomains' in patch) browser.initBrowserFilters()
     return result
   })
   // The CLI is what every AI feature runs on, and installing ASIT doesn't

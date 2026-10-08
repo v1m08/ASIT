@@ -22,7 +22,7 @@ import { getOrCreateJarvis, getTask, jarvisTaskId, refreshClaudeMd } from './tas
 import { extractFlow, listSkills } from './skills'
 import { paneManager } from './panes'
 import { runClaudeStream } from './claude'
-import { clearSendAuthorization } from './guardrails'
+import { clearSendAuthorization, filterSensitiveLines } from './guardrails'
 import { getSettings } from './settings'
 import { logUsage } from './usage'
 import { clearActivity, reportActivity } from './activity'
@@ -59,7 +59,14 @@ import { bus } from './bus'
 
 const MAX_STEPS = 100
 const MAX_MODEL_STEPS = 10
+/** Model turns actually executed in one run (a prompt step inside a loop
+ *  runs once per item — 10 written steps must not become 1,000 turns). */
+const MAX_MODEL_RUNS = 30
+const MAX_DEPTH = 3 // foreach/if nesting
+const DEFAULT_MAX_ITEMS = 25
+const HARD_MAX_ITEMS = 100
 const MAX_RUN_MS = 30 * 60_000
+const VAR_NAME = /^[a-z0-9_]{1,40}$/i
 const MODEL_STEP_TOOLS = 'Read(**),Glob,Grep(**),Edit(**),Write(**)' // never Bash
 
 let getWindow: (() => BrowserWindow | null) | null = null
@@ -144,15 +151,35 @@ export function validateWorkflow(input: {
   if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(input.name))
     return 'name must be a slug: lowercase letters, digits, dashes'
   if (!Array.isArray(input.steps) || input.steps.length === 0) return 'a workflow needs steps'
-  if (input.steps.length > MAX_STEPS) return `too many steps (max ${MAX_STEPS})`
   if (input.taskId) {
     const owner = getTask(input.taskId)
     if (!owner) return 'owning workspace not found'
     if (owner.aiDisabled) return 'private workspaces cannot own workflows'
   }
-  let modelSteps = 0
-  for (const [i, step] of input.steps.entries()) {
-    const at = `step ${i + 1}`
+  const count = { steps: 0, model: 0 }
+  const reason = validateSteps(input.steps, input.taskId, count, 1, '')
+  if (reason) return reason
+  if (count.steps > MAX_STEPS) return `too many steps (max ${MAX_STEPS}, counting nested ones)`
+  if (count.model > MAX_MODEL_STEPS) return `too many model steps (max ${MAX_MODEL_STEPS})`
+  for (const p of input.params ?? []) {
+    if (!VAR_NAME.test(p.name)) return `bad param name "${p.name}"`
+  }
+  return null
+}
+
+/** One block (top level, a loop body, an if branch). Recursive, depth-capped. */
+function validateSteps(
+  steps: WorkflowStep[],
+  taskId: string | null,
+  count: { steps: number; model: number },
+  depth: number,
+  prefix: string
+): string | null {
+  if (!Array.isArray(steps)) return `${prefix || 'steps'}: must be a list of steps`
+  for (const [i, step] of steps.entries()) {
+    count.steps++
+    const at = `step ${prefix}${i + 1}`
+    if (!step || typeof step !== 'object') return `${at}: not a step object`
     if (step.kind === 'action') {
       const a = step.action
       if (!a || typeof a.action !== 'string') return `${at}: action step needs an action object`
@@ -161,10 +188,11 @@ export function validateWorkflow(input: {
       if ('workspace' in a && a.workspace !== undefined)
         return `${at}: workflow steps may not re-target another workspace`
     } else if (step.kind === 'prompt') {
-      modelSteps++
+      count.model++
       if (!step.prompt?.trim()) return `${at}: prompt step needs prompt text`
-      if (!input.taskId)
+      if (!taskId)
         return `${at}: global workflows cannot contain model steps — attach the workflow to a workspace`
+      if (step.into !== undefined && !VAR_NAME.test(step.into)) return `${at}: bad variable name "${step.into}"`
     } else if (step.kind === 'confirm') {
       if (!step.message?.trim()) return `${at}: confirm step needs a message`
     } else if (step.kind === 'wait_for') {
@@ -172,13 +200,48 @@ export function validateWorkflow(input: {
         return `${at}: wait_for needs label, text, gone_label or gone_text`
     } else if (step.kind === 'assert') {
       if (!step.label && !step.text) return `${at}: assert needs label or text`
+    } else if (step.kind === 'fill_form') {
+      if (!step.fields || typeof step.fields !== 'object' || Array.isArray(step.fields))
+        return `${at}: fill_form needs a fields object ({"Label": "value"})`
+      const n = Object.keys(step.fields).length
+      if (n === 0 || n > 60) return `${at}: fill_form needs 1–60 fields`
+      if (Object.values(step.fields).some((v) => typeof v !== 'string'))
+        return `${at}: fill_form values must be text`
+    } else if (step.kind === 'extract') {
+      if (!VAR_NAME.test(step.into ?? '')) return `${at}: extract needs a variable name in "into"`
+      if (!step.label && !step.selector && !step.pattern && !step.from)
+        return `${at}: extract needs label, selector, pattern or from`
+      if (step.from && step.from !== 'url' && step.from !== 'title') return `${at}: from must be url or title`
+      if (step.pattern) {
+        try {
+          new RegExp(step.pattern)
+        } catch {
+          return `${at}: pattern is not a valid regular expression`
+        }
+      }
+    } else if (step.kind === 'set') {
+      if (!VAR_NAME.test(step.name ?? '')) return `${at}: set needs a variable name`
+      if (typeof step.value !== 'string') return `${at}: set needs a text value`
+    } else if (step.kind === 'foreach') {
+      if (depth >= MAX_DEPTH) return `${at}: loops/branches nest at most ${MAX_DEPTH - 1} deep`
+      if (typeof step.items !== 'string' || !step.items.trim()) return `${at}: foreach needs items`
+      if (!VAR_NAME.test(step.as ?? '')) return `${at}: foreach needs a variable name in "as"`
+      if (!Array.isArray(step.steps) || step.steps.length === 0) return `${at}: foreach needs steps`
+      const r = validateSteps(step.steps, taskId, count, depth + 1, `${prefix}${i + 1}.`)
+      if (r) return r
+    } else if (step.kind === 'if') {
+      if (depth >= MAX_DEPTH) return `${at}: loops/branches nest at most ${MAX_DEPTH - 1} deep`
+      if (!step.label && !step.text && !step.url_contains && !step.var)
+        return `${at}: if needs label, text, url_contains or var`
+      if (step.var !== undefined && !VAR_NAME.test(step.var)) return `${at}: bad variable name "${step.var}"`
+      if (!Array.isArray(step.then)) return `${at}: if needs a "then" list`
+      const r =
+        validateSteps(step.then, taskId, count, depth + 1, `${prefix}${i + 1}.then.`) ??
+        (step.else ? validateSteps(step.else, taskId, count, depth + 1, `${prefix}${i + 1}.else.`) : null)
+      if (r) return r
     } else {
       return `${at}: unknown step kind "${(step as { kind?: string }).kind}"`
     }
-  }
-  if (modelSteps > MAX_MODEL_STEPS) return `too many model steps (max ${MAX_MODEL_STEPS})`
-  for (const p of input.params ?? []) {
-    if (!/^[a-z0-9_]{1,40}$/i.test(p.name)) return `bad param name "${p.name}"`
   }
   return null
 }
@@ -277,6 +340,8 @@ interface ActiveRun {
   confirmMessage: string | null
   resolveConfirm: ((approved: boolean) => void) | null
   cancelModelStep: (() => void) | null
+  /** Model turns spent so far (see MAX_MODEL_RUNS). */
+  modelRuns: number
 }
 
 let activeRun: ActiveRun | null = null
@@ -331,27 +396,66 @@ export function cancelRun(runId: string): string {
   return 'cancelling'
 }
 
-/** `{{param}}` substitution — string VALUE fields only, in main. The verb
- *  (`action`), step `kind`, and `workspace` can never be smuggled in. */
-function substitute(step: WorkflowStep, params: Record<string, string>): WorkflowStep {
+/** `{{var}}` substitution — string VALUE fields only, in main. The verb
+ *  (`action`), step `kind`, `workspace`, and every variable NAME (`into`,
+ *  `as`, `name`, `var`) can never be smuggled in. Nested blocks (loop body,
+ *  branches) are substituted when they run, with the variables of that
+ *  moment — so `{{job}}` means the current item. */
+function substitute(step: WorkflowStep, vars: Record<string, string>): WorkflowStep {
   const sub = (s: string): string =>
-    s.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (_m, name: string) => params[name] ?? _m)
-  if (step.kind === 'prompt') return { ...step, prompt: sub(step.prompt) }
-  if (step.kind === 'confirm') return { ...step, message: sub(step.message) }
-  if (step.kind === 'wait_for' || step.kind === 'assert') {
-    const next = { ...step } as Record<string, unknown>
-    for (const k of ['label', 'text', 'gone_label', 'gone_text']) {
-      if (typeof next[k] === 'string') next[k] = sub(next[k] as string)
+    s.replace(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi, (_m, name: string) => vars[name] ?? _m)
+  const subFields = <T extends object>(obj: T, keys: string[]): T => {
+    const next = { ...obj } as Record<string, unknown>
+    for (const k of keys) if (typeof next[k] === 'string') next[k] = sub(next[k] as string)
+    return next as T
+  }
+  switch (step.kind) {
+    case 'prompt':
+      return { ...step, prompt: sub(step.prompt) }
+    case 'confirm':
+      return { ...step, message: sub(step.message) }
+    case 'wait_for':
+    case 'assert':
+      return subFields(step, ['label', 'text', 'gone_label', 'gone_text'])
+    case 'fill_form': {
+      const fields: Record<string, string> = {}
+      for (const [k, v] of Object.entries(step.fields)) fields[sub(k)] = sub(String(v))
+      return { ...step, fields }
     }
-    return next as WorkflowStep
+    case 'extract':
+      return subFields(step, ['label', 'selector', 'pattern'])
+    case 'set':
+      return { ...step, value: sub(step.value) }
+    case 'foreach':
+      return { ...step, items: sub(step.items) }
+    case 'if':
+      return subFields(step, ['label', 'text', 'url_contains'])
+    case 'action': {
+      // every string field EXCEPT the verb itself.
+      const action = { ...step.action }
+      for (const [k, v] of Object.entries(action)) {
+        if (k === 'action' || k === 'workspace') continue
+        if (typeof v === 'string') (action as Record<string, unknown>)[k] = sub(v)
+      }
+      return { ...step, action }
+    }
   }
-  // action step: every string field EXCEPT the verb itself.
-  const action = { ...step.action }
-  for (const [k, v] of Object.entries(action)) {
-    if (k === 'action' || k === 'workspace') continue
-    if (typeof v === 'string') (action as Record<string, unknown>)[k] = sub(v)
-  }
-  return { ...step, action }
+  return step
+}
+
+/** A foreach list: one item per line, or comma-separated on a single line. */
+export function splitItems(text: string): string[] {
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+  const items = lines.length === 1 && lines[0].includes(',') && !/^https?:/i.test(lines[0])
+    ? lines[0].split(',').map((x) => x.trim()).filter(Boolean)
+    : lines
+  return items.map((x) => x.replace(/^[-*•]\s+/, ''))
+}
+
+/** Values read off pages pass the same sensitive-term filter as every other
+ *  agent-bound text (invariant 14): they can reach a model step later. */
+function screenValue(value: string): string {
+  return filterSensitiveLines(value.split('\n')).kept.join('\n').slice(0, 4000)
 }
 
 /** executeAction reports failures as prose; classify well-known shapes. */
@@ -398,8 +502,9 @@ async function runModelStep(
   stepIndex: number,
   totalSteps: number,
   prompt: string,
-  timeoutMin: number | undefined
-): Promise<{ ok: boolean; outcome: string; costUsd: number }> {
+  timeoutMin: number | undefined,
+  into?: string
+): Promise<{ ok: boolean; outcome: string; costUsd: number; text?: string }> {
   const task = getTask(taskId)
   if (!task || task.aiDisabled) return { ok: false, outcome: 'workspace unavailable', costUsd: 0 }
 
@@ -426,7 +531,9 @@ async function runModelStep(
           cwd: task.folderPath,
           prompt: [
             `You are executing ONE step of the saved workflow "${wf.name}" (step ${stepIndex + 1} of ${totalSteps}), unattended — the user is not watching.`,
-            'Do exactly this step, verify it via the action result file if you acted, then STOP and summarize the outcome in one short paragraph.',
+            into
+              ? `Do exactly this step, then STOP. Your final message is stored VERBATIM as the workflow variable "${into}" and pasted into later steps (e.g. typed into a form) — so reply with ONLY that content: no preamble, no summary, no quotes.`
+              : 'Do exactly this step, verify it via the action result file if you acted, then STOP and summarize the outcome in one short paragraph.',
             '',
             prompt
           ].join('\n'),
@@ -450,7 +557,8 @@ async function runModelStep(
             resolve({
               ok: !isError,
               outcome: (text || (isError ? 'model step failed' : 'done')).slice(0, 500),
-              costUsd: usage.costUsd
+              costUsd: usage.costUsd,
+              text: text ?? ''
             })
           },
           onError: (message) => resolve({ ok: false, outcome: message.slice(0, 300), costUsd: 0 })
@@ -465,14 +573,17 @@ async function runModelStep(
   }
 }
 
+type StepOutcome = { ok: boolean; outcome: string; costUsd: number }
+
 async function runStep(
   run: ActiveRun,
   wf: Workflow,
   taskId: string,
   step: WorkflowStep,
   index: number,
-  total: number
-): Promise<{ ok: boolean; outcome: string; costUsd: number }> {
+  total: number,
+  vars: Record<string, string>
+): Promise<StepOutcome> {
   if (step.kind === 'action') {
     const a = step.action as AppAction
     if (FLOW_FORBIDDEN.has(a.action) || a.workspace !== undefined) {
@@ -490,7 +601,15 @@ async function runStep(
   }
 
   if (step.kind === 'prompt') {
-    return runModelStep(run, taskId, wf, index, total, step.prompt, step.timeout_min)
+    if (run.modelRuns >= MAX_MODEL_RUNS)
+      return { ok: false, outcome: `model-turn budget for one run used up (${MAX_MODEL_RUNS})`, costUsd: 0 }
+    run.modelRuns++
+    const r = await runModelStep(run, taskId, wf, index, total, step.prompt, step.timeout_min, step.into)
+    if (r.ok && step.into) {
+      vars[step.into] = screenValue((r.text ?? '').trim())
+      return { ok: true, outcome: `{{${step.into}}} = ${preview(vars[step.into])}`, costUsd: r.costUsd }
+    }
+    return r
   }
 
   if (step.kind === 'confirm') {
@@ -526,20 +645,74 @@ async function runStep(
         return { ok: true, outcome: `condition met after ${Math.round((Date.now() - deadline + timeoutMs) / 1000)}s`, costUsd: 0 }
       if (Date.now() > deadline)
         return { ok: false, outcome: `timed out after ${Math.round(timeoutMs / 1000)}s`, costUsd: 0 }
-      await new Promise((r) => setTimeout(r, 4000))
+      // Poll fast at first (most pages settle in a second or two), then back off.
+      await new Promise((r) => setTimeout(r, Date.now() - (deadline - timeoutMs) < 10_000 ? 700 : 3000))
     }
   }
 
-  // assert
-  const present = await paneManager.existsCondition(taskId, { label: step.label, text: step.text })
-  const ok = step.invert ? !present : present
-  return {
-    ok,
-    outcome: ok
-      ? 'assertion held'
-      : `assertion failed: ${step.invert ? 'still present' : 'not found'}: ${(step.label ?? step.text ?? '').slice(0, 60)}`,
-    costUsd: 0
+  if (step.kind === 'fill_form') {
+    const r = await paneManager.fillForm(taskId, step.fields, step.page)
+    const parts = [`filled ${r.filled.length}/${Object.keys(step.fields).length}`]
+    if (r.missing.length) parts.push(`not found: ${r.missing.join(', ')}`)
+    if (r.refused.length) parts.push(`skipped: ${r.refused.join(', ')}`)
+    const complete = r.missing.length === 0 && r.refused.length === 0
+    return {
+      ok: r.filled.length > 0 && (complete || !!step.allow_missing),
+      outcome: parts.join(' · ').slice(0, 500),
+      costUsd: 0
+    }
   }
+
+  if (step.kind === 'extract') {
+    const v = await paneManager.readValue(
+      taskId,
+      { label: step.label, selector: step.selector, pattern: step.pattern, from: step.from },
+      step.page
+    )
+    if (v === null || !v.trim())
+      return { ok: false, outcome: `nothing found for {{${step.into}}}`, costUsd: 0 }
+    vars[step.into] = screenValue(v.trim())
+    return { ok: true, outcome: `{{${step.into}}} = ${preview(vars[step.into])}`, costUsd: 0 }
+  }
+
+  if (step.kind === 'set') {
+    vars[step.name] = step.value.slice(0, 4000)
+    return { ok: true, outcome: `{{${step.name}}} = ${preview(vars[step.name])}`, costUsd: 0 }
+  }
+
+  if (step.kind === 'assert') {
+    const present = await paneManager.existsCondition(taskId, { label: step.label, text: step.text })
+    const ok = step.invert ? !present : present
+    return {
+      ok,
+      outcome: ok
+        ? 'assertion held'
+        : `assertion failed: ${step.invert ? 'still present' : 'not found'}: ${(step.label ?? step.text ?? '').slice(0, 60)}`,
+      costUsd: 0
+    }
+  }
+
+  // foreach / if are blocks — runBlock handles them, never runStep.
+  return { ok: false, outcome: `internal: ${step.kind} is not a leaf step`, costUsd: 0 }
+}
+
+function preview(v: string): string {
+  const one = v.replace(/\s+/g, ' ')
+  return `"${one.length > 120 ? one.slice(0, 117) + '…' : one}"`
+}
+
+async function evalCondition(
+  taskId: string,
+  step: Extract<WorkflowStep, { kind: 'if' }>,
+  vars: Record<string, string>
+): Promise<boolean> {
+  let hit: boolean
+  if (step.var) hit = !!vars[step.var]?.trim()
+  else if (step.url_contains) {
+    const url = (await paneManager.readValue(taskId, { from: 'url' }, step.page)) ?? ''
+    hit = url.toLowerCase().includes(step.url_contains.toLowerCase())
+  } else hit = await paneManager.existsCondition(taskId, { label: step.label, text: step.text }, step.page)
+  return step.invert ? !hit : hit
 }
 
 export async function runWorkflow(
@@ -581,7 +754,8 @@ export async function runWorkflow(
     cancelled: false,
     confirmMessage: null,
     resolveConfirm: null,
-    cancelModelStep: null
+    cancelModelStep: null,
+    modelRuns: 0
   }
   pushEvent({ type: 'run-started', runId, name: wf.name })
   reportActivity(`wf-${runId}`, {
@@ -595,75 +769,142 @@ export async function runWorkflow(
   return { started: true, runId }
 }
 
+interface RunCtx {
+  run: ActiveRun
+  wf: Workflow
+  taskId: string
+  vars: Record<string, string>
+  results: WorkflowStepResult[]
+  cost: number
+  startedAt: number
+  /** Top-level step currently executing (what the progress bar counts). */
+  top: number
+}
+
+type BlockResult = 'ok' | 'failed' | 'rejected' | 'cancelled'
+
+function record(ctx: RunCtx, path: string, kind: string, r: StepOutcome, ms: number): void {
+  ctx.results.push({ index: ctx.top, path, kind, outcome: r.outcome, ok: r.ok, ms })
+  // History is a log, not a dump: a 100-item loop keeps its last 400 lines.
+  if (ctx.results.length > 400) ctx.results.splice(0, ctx.results.length - 400)
+  updateRun(ctx.run.runId, {
+    current_step: ctx.top + 1,
+    step_results_json: JSON.stringify(ctx.results),
+    cost_usd: ctx.cost
+  })
+  pushEvent({
+    type: 'step-done',
+    runId: ctx.run.runId,
+    index: ctx.top,
+    path,
+    ok: r.ok,
+    outcome: r.outcome.slice(0, 200)
+  })
+  reportActivity(`wf-${ctx.run.runId}`, {
+    kind: 'chat',
+    taskId: ctx.run.taskId,
+    label: `⚙ ${ctx.wf.name}`,
+    detail: `${r.ok ? '✓' : '✗'} step ${path} of ${ctx.wf.steps.length}`
+  })
+}
+
+/** Run one block of steps (top level, a loop body, a branch). */
+async function runBlock(ctx: RunCtx, steps: WorkflowStep[], path: string): Promise<BlockResult> {
+  for (const [i, raw] of steps.entries()) {
+    if (ctx.run.cancelled) return 'cancelled'
+    if (!path) ctx.top = i
+    const here = path ? `${path}.${i + 1}` : `${i + 1}`
+    if (Date.now() - ctx.startedAt > MAX_RUN_MS) {
+      record(ctx, here, raw.kind, { ok: false, outcome: 'run exceeded 30 minutes', costUsd: 0 }, 0)
+      return 'failed'
+    }
+    const step = substitute(raw, ctx.vars)
+
+    if (step.kind === 'foreach') {
+      const cap = Math.min(HARD_MAX_ITEMS, Math.max(1, step.max_items ?? DEFAULT_MAX_ITEMS))
+      const all = splitItems(step.items)
+      const items = all.slice(0, cap)
+      let failed = 0
+      for (const [n, item] of items.entries()) {
+        if (ctx.run.cancelled) return 'cancelled'
+        ctx.vars[step.as] = item
+        ctx.vars[`${step.as}_number`] = String(n + 1)
+        const r = await runBlock(ctx, step.steps, `${here}[${n + 1}/${items.length}]`)
+        if (r === 'cancelled') return r
+        if (r !== 'ok') {
+          failed++
+          if (step.on_item_failure === 'stop') return r
+        }
+      }
+      const note = all.length > items.length ? ` (${all.length - items.length} over the ${cap}-item cap skipped)` : ''
+      record(
+        ctx,
+        here,
+        'foreach',
+        {
+          ok: items.length > 0,
+          outcome:
+            items.length === 0
+              ? 'the list was empty'
+              : `${items.length - failed}/${items.length} item(s) completed${failed ? `, ${failed} skipped after failing` : ''}${note}`,
+          costUsd: 0
+        },
+        0
+      )
+      if (items.length === 0) return 'failed'
+      continue
+    }
+
+    if (step.kind === 'if') {
+      const t0 = Date.now()
+      const hit = await evalCondition(ctx.taskId, step, ctx.vars)
+      record(ctx, here, 'if', { ok: true, outcome: hit ? 'condition true → then' : 'condition false → else', costUsd: 0 }, Date.now() - t0)
+      const branch = hit ? step.then : (step.else ?? [])
+      const r = await runBlock(ctx, branch, `${here}.${hit ? 'then' : 'else'}`)
+      if (r !== 'ok') return r
+      continue
+    }
+
+    const policy = failurePolicy('on_failure' in step ? step.on_failure : undefined)
+    const t0 = Date.now()
+    let result = await runStep(ctx.run, ctx.wf, ctx.taskId, step, ctx.top, ctx.wf.steps.length, ctx.vars)
+    ctx.cost += result.costUsd
+    for (let attempt = 0; !result.ok && attempt < policy.retries && !ctx.run.cancelled; attempt++) {
+      await new Promise((r) => setTimeout(r, policy.delayMs))
+      result = await runStep(ctx.run, ctx.wf, ctx.taskId, step, ctx.top, ctx.wf.steps.length, ctx.vars)
+      ctx.cost += result.costUsd
+    }
+    record(ctx, here, step.kind, result, Date.now() - t0)
+    if (ctx.run.cancelled) return 'cancelled'
+    // A rejected confirm reads as a cancel, not a failure.
+    if (!result.ok && !policy.continueOnFail) return step.kind === 'confirm' ? 'rejected' : 'failed'
+  }
+  return 'ok'
+}
+
 async function executeRun(
   run: ActiveRun,
   wf: Workflow,
   runTaskId: string,
   params: Record<string, string>
 ): Promise<void> {
-  const results: WorkflowStepResult[] = []
-  const startedAt = Date.now()
+  const ctx: RunCtx = {
+    run,
+    wf,
+    taskId: runTaskId,
+    vars: { ...params },
+    results: [],
+    cost: 0,
+    startedAt: Date.now(),
+    top: 0
+  }
   let status: WorkflowRunStatus = 'succeeded'
-  let cost = 0
   try {
-    for (const [index, raw] of wf.steps.entries()) {
-      if (run.cancelled) {
-        status = 'cancelled'
-        break
-      }
-      if (Date.now() - startedAt > MAX_RUN_MS) {
-        results.push({ index, kind: raw.kind, outcome: 'run exceeded 30 minutes', ok: false, ms: 0 })
-        status = 'failed'
-        break
-      }
-      const step = substitute(raw, params)
-      const policy = failurePolicy('on_failure' in step ? step.on_failure : undefined)
-      const t0 = Date.now()
-      let result = await runStep(run, wf, runTaskId, step, index, wf.steps.length)
-      cost += result.costUsd
-      for (let attempt = 0; !result.ok && attempt < policy.retries && !run.cancelled; attempt++) {
-        await new Promise((r) => setTimeout(r, policy.delayMs))
-        result = await runStep(run, wf, runTaskId, step, index, wf.steps.length)
-        cost += result.costUsd
-      }
-      results.push({
-        index,
-        kind: step.kind,
-        outcome: result.outcome,
-        ok: result.ok,
-        ms: Date.now() - t0
-      })
-      updateRun(run.runId, {
-        current_step: index + 1,
-        step_results_json: JSON.stringify(results),
-        cost_usd: cost
-      })
-      pushEvent({
-        type: 'step-done',
-        runId: run.runId,
-        index,
-        ok: result.ok,
-        outcome: result.outcome.slice(0, 200)
-      })
-      reportActivity(`wf-${run.runId}`, {
-        kind: 'chat',
-        taskId: run.taskId,
-        label: `⚙ ${wf.name}`,
-        detail: `${result.ok ? '✓' : '✗'} step ${index + 1}/${wf.steps.length}`
-      })
-      if (run.cancelled) {
-        status = 'cancelled'
-        break
-      }
-      if (!result.ok && !policy.continueOnFail) {
-        // A rejected confirm reads as a cancel, not a failure.
-        status = step.kind === 'confirm' ? 'cancelled' : 'failed'
-        break
-      }
-    }
+    const r = await runBlock(ctx, wf.steps, '')
+    status = r === 'ok' ? 'succeeded' : r === 'failed' ? 'failed' : 'cancelled'
   } catch (err) {
-    results.push({
-      index: results.length,
+    ctx.results.push({
+      index: ctx.top,
       kind: 'internal',
       outcome: err instanceof Error ? err.message : String(err),
       ok: false,
@@ -675,8 +916,8 @@ async function executeRun(
     updateRun(run.runId, {
       status,
       finished_at: nowIso(),
-      step_results_json: JSON.stringify(results),
-      cost_usd: cost
+      step_results_json: JSON.stringify(ctx.results),
+      cost_usd: ctx.cost
     })
     // A follow-up model turn (or the user) sees the outcome, like runFlow.
     try {

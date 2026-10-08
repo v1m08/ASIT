@@ -328,6 +328,8 @@ function BrowserSection({
         </label>
       )}
 
+      {toggle('searchSuggestions', 'Search suggestions while you type',
+        'Sends what you type in the command bar to your search engine for suggestions, like any browser.')}
       {toggle('adBlock', `Block ads & trackers${blocked ? ` — ${blocked} blocked so far` : ''}`,
         'Blocks known ad and tracking domains in every embedded page.')}
       <ListField

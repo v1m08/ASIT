@@ -1,5 +1,15 @@
 import type { BrowserWindow } from 'electron'
-import { existsSync, mkdirSync, readFileSync, statSync, watch, writeFileSync, type FSWatcher } from 'fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  unwatchFile,
+  watch,
+  watchFile,
+  writeFileSync,
+  type FSWatcher
+} from 'fs'
 import { join } from 'path'
 import { IPC } from '@shared/ipc-contract'
 import type { UpdateTaskInput } from '@shared/types'
@@ -138,6 +148,8 @@ export function actionsFileFor(taskFolder: string): string {
 // corrupt each other's offsets.
 class ActionsWatcher {
   private watcher: FSWatcher | null = null
+  /** Set when fs.watch was refused and we fell back to stat polling. */
+  private polledFile: string | null = null
   private taskId: string | null = null
   private processedBytes = 0
   private debounceTimer: NodeJS.Timeout | null = null
@@ -171,8 +183,7 @@ class ActionsWatcher {
     this.batchCounter = 0
     this.recentBatches = []
 
-    this.watcher = watch(dir, (_event, filename) => {
-      if (filename !== 'actions.ndjson') return
+    const onChange = (): void => {
       if (this.debounceTimer) clearTimeout(this.debounceTimer)
       // Serialize batches: processNewLines awaits page settles/snapshots, and
       // a second fs event mid-run must not interleave its actions with ours.
@@ -181,10 +192,26 @@ class ActionsWatcher {
       this.debounceTimer = setTimeout(() => {
         this.chain = this.chain.then(() => this.processNewLines(taskId, file)).catch(() => undefined)
       }, 40)
-    })
-    // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
-    // renamed; without a handler that would crash the main process.
-    this.watcher.on('error', () => this.stop())
+    }
+    try {
+      this.watcher = watch(dir, (_event, filename) => {
+        if (filename === 'actions.ndjson') onChange()
+      })
+      // Windows fs.watch emits 'error' (EPERM) if the watched dir is deleted or
+      // renamed; without a handler that would crash the main process.
+      this.watcher.on('error', () => this.stop())
+    } catch (err) {
+      // fs.watch can also THROW synchronously: macOS refuses a watch inside
+      // ~/Documents to a process without the Documents privacy grant (EPERM)
+      // even while mkdir/stat there succeed. That used to propagate out of
+      // scratch:get and leave the shell with no tab group at all. Degrade to
+      // stat polling — slower to notice a write, but the agent still works.
+      console.warn(`[actions] fs.watch refused (${(err as NodeJS.ErrnoException).code ?? err}); polling ${file}`)
+      this.polledFile = file
+      watchFile(file, { interval: 300 }, (cur, prev) => {
+        if (cur.size !== prev.size || cur.mtimeMs !== prev.mtimeMs) onChange()
+      })
+    }
   }
 
   current(): string | null {
@@ -194,6 +221,8 @@ class ActionsWatcher {
   stop(): void {
     this.watcher?.close()
     this.watcher = null
+    if (this.polledFile) unwatchFile(this.polledFile)
+    this.polledFile = null
     this.taskId = null
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
   }

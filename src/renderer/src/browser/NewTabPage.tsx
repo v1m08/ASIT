@@ -7,6 +7,7 @@ import { groupColor } from './GroupBar'
 import TodoList from '../components/TodoList'
 import NtpAutomations from './NtpAutomations'
 import NtpStats from './NtpStats'
+import { browseForMePrompt } from '../lib/agentPrompts'
 
 // The new-tab page — and, since the home screen was retired, the dashboard.
 //
@@ -33,15 +34,7 @@ function greeting(now = new Date()): string {
   return 'Good evening'
 }
 
-/** The agent turn "Browse for me" sends. The question is the user's own. */
-export function browseForMePrompt(query: string): string {
-  return (
-    `Browse for me: ${query}\n\n` +
-    'Look this up on the web using the browser — open a few good sources in tabs ' +
-    'and read them — then give me a short, well-organised answer: the key points ' +
-    'first, details after, and the links you used.'
-  )
-}
+export { browseForMePrompt } from '../lib/agentPrompts'
 
 function daysUntil(dueDate: string): number {
   return Math.ceil((new Date(dueDate + 'T23:59:59').getTime() - Date.now()) / 86400000)

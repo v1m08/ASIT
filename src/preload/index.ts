@@ -57,6 +57,7 @@ const api = {
     park: () => ipcRenderer.invoke(IPC.PANES_PARK),
     typeActive: (text: string) => ipcRenderer.invoke(IPC.PANES_TYPE_ACTIVE, text),
     focus: (paneId: string) => ipcRenderer.invoke(IPC.PANES_FOCUS, paneId),
+    captureVisible: () => ipcRenderer.invoke(IPC.PANES_CAPTURE_VISIBLE),
     domFocus: (focused: boolean) => ipcRenderer.send(IPC.PANES_DOM_FOCUS, focused),
     find: (paneId: string, text: string, forward = true, findNext = false) =>
       ipcRenderer.invoke(IPC.PANES_FIND, paneId, text, forward, findNext),
@@ -93,6 +94,8 @@ const api = {
   },
   browser: {
     stats: () => ipcRenderer.invoke(IPC.BROWSER_STATS),
+    suggest: (q: string) => ipcRenderer.invoke(IPC.SEARCH_SUGGEST, q),
+    preconnect: () => ipcRenderer.send(IPC.SEARCH_PRECONNECT),
     extList: () => ipcRenderer.invoke(IPC.BROWSER_EXT_LIST),
     extAdd: () => ipcRenderer.invoke(IPC.BROWSER_EXT_ADD),
     extRemove: (path: string) => ipcRenderer.invoke(IPC.BROWSER_EXT_REMOVE, path)
@@ -170,7 +173,8 @@ const api = {
       ipcRenderer.invoke(IPC.WORKFLOWS_CONFIRM, runId, approved),
     runs: (limit?: number) => ipcRenderer.invoke(IPC.WORKFLOWS_RUNS, limit),
     runState: () => ipcRenderer.invoke(IPC.WORKFLOWS_RUN_STATE),
-    importSkill: (name: string) => ipcRenderer.invoke(IPC.WORKFLOWS_IMPORT_SKILL, name)
+    importSkill: (name: string) => ipcRenderer.invoke(IPC.WORKFLOWS_IMPORT_SKILL, name),
+    draft: (input: unknown) => ipcRenderer.invoke(IPC.WORKFLOWS_DRAFT, input)
   },
   schedules: {
     list: () => ipcRenderer.invoke(IPC.SCHEDULES_LIST),
