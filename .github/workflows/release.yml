@@ -38,6 +38,13 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The postinstall native rebuild (electron-builder install-app-deps →
+      # node-gyp) imports distutils, which Python 3.12 removed. The runner's
+      # default Python moved past it, which is why v1.0.22 died in `npm ci`.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       # `npm ci` runs the postinstall that rebuilds better-sqlite3 and friends
       # against Electron's ABI — the packaged app is unusable without it.
       # On failure, surface the real npm error: the run logs need repo-admin
